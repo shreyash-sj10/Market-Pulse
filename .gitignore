@@ -1,0 +1,8 @@
+# Logs
+backend/logs/
+*.log
+
+# Optional (good practice)
+node_modules/
+.env
+dist/
