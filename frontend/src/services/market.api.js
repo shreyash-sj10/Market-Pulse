@@ -149,70 +149,45 @@ export const getStockPriceINR = async (symbol) => {
 // ─── Legacy/Compatibility wrapper ──────────────────────────────────────────
 export const getStockPrice = getStockPriceINR;
 
-// ─── Historical Candles (Converted to INR) ──────────────────────────────────
-export const getHistoricalPrices = async (symbol, timeframe = "1M") => {
+// ─── Professional Historical Data (Backend Source) ──────────────────────────
+export const getHistoricalPrices = async (symbol, timeframe = "1mo") => {
   if (!symbol) return { data: [], isSimulated: false };
 
-  const isUS = !isIndianSymbol(symbol);
-  const rate = getExchangeRate();
-
-  const finnhubSymbol = symbol.endsWith(".NS")
-    ? `NSE:${symbol.replace(".NS", "")}`
-    : symbol;
-
   try {
-    const to = Math.floor(Date.now() / 1000);
-    let from;
-    let resolution;
-
-    switch (timeframe) {
-      case "1D":
-        from = to - 1 * 24 * 60 * 60;
-        resolution = "60";
-        break;
-      case "1W":
-        from = to - 7 * 24 * 60 * 60;
-        resolution = "D";
-        break;
-      case "1M":
-      default:
-        from = to - 30 * 24 * 60 * 60;
-        resolution = "D";
-        break;
-    }
-
-    const res = await axios.get(
-      `https://finnhub.io/api/v1/stock/candle?symbol=${finnhubSymbol}&resolution=${resolution}&from=${from}&to=${to}&token=${FINNHUB_KEY}`,
-      { timeout: 8000 }
-    );
-
-    if (res.status === 403 || res.data.s === "no_data" || !res.data.t) {
-      const realPrice = await getStockPriceINR(symbol);
-      return {
-        data: generateSimulatedHistory(realPrice || 100, false, 30),
-        isSimulated: true
-      };
-    }
-
-    const data = res.data.t.map((timestamp, i) => {
-      const dateObj = new Date(timestamp * 1000);
-      return {
-        date: resolution === "D"
-          ? dateObj.toISOString().split("T")[0]
-          : dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        fullDate: dateObj.toISOString().split("T")[0],
-        price: Number((res.data.c[i] * (isUS ? rate : 1)).toFixed(2)),
-        volume: res.data.v[i],
-      };
-    });
-
-    return { data, isSimulated: false };
-  } catch (error) {
-    const realPrice = await getStockPriceINR(symbol);
-    return {
-      data: generateSimulatedHistory(realPrice || 100, false, 30),
-      isSimulated: true
+    // Map timeframes to Yahoo-compatible periods
+    const periodMap = {
+      "1D": "1d",
+      "1W": "1wk",
+      "1M": "1mo",
+      "3M": "3mo",
+      "1Y": "1y"
     };
+    
+    const period = periodMap[timeframe] || "1mo";
+    const res = await api.get(`/market/history?symbol=${symbol}&period=${period}`);
+
+    if (!res.data || !res.data.success || !res.data.data.prices) {
+      throw new Error("Invalid history response");
+    }
+
+    // Response structure from backend is { success, data: { prices: [...] } }
+    const prices = res.data.data.prices.map(p => ({
+      time: p.date, // Backend uses date string
+      open: p.open,
+      high: p.high,
+      low: p.low,
+      close: p.close,
+      volume: p.volume
+    }));
+
+    return { 
+      data: prices, 
+      isSimulated: false,
+      source: res.data.data.source
+    };
+  } catch (error) {
+    console.warn("[MarketAPI] History fetch failed:", error.message);
+    return { data: [], isSimulated: false };
   }
 };
 

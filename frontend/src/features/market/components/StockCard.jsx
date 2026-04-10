@@ -44,10 +44,10 @@ const StockCard = memo(({ stock, isOwned, onOpenChart }) => {
       onClick={() => setIsFlipped(!isFlipped)}
     >
       <motion.div
-        className="w-full h-full relative preserve-3d transition-all duration-500"
+        className="w-full h-full relative preserve-3d"
         initial={false}
         animate={{ rotateY: shouldFlip ? 180 : 0 }}
-        transition={{ type: "spring", stiffness: 260, damping: 20 }}
+        transition={{ type: "spring", stiffness: 200, damping: 25 }}
       >
         {/* ── FRONT SIDE (The High-Fidelity Price View) ── */}
         <div className="absolute inset-0 backface-hidden bg-white rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col p-10 overflow-hidden">

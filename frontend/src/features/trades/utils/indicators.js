@@ -5,20 +5,20 @@
  * @returns {Array} Data with attached 'rsi' values
  */
 export const calculateRSI = (data, period = 14) => {
-  if (!data || data.length < period) return data.map(d => ({ ...d, rsi: null }));
+  if (!data || data.length <= period) return data.map(d => ({ ...d, rsi: null }));
 
   let gains = [];
   let losses = [];
 
   // 1. Calculate daily changes
   for (let i = 1; i < data.length; i++) {
-    const change = data[i].price - data[i - 1].price;
+    const change = data[i].close - data[i - 1].close;
     gains.push(change > 0 ? change : 0);
     losses.push(change < 0 ? Math.abs(change) : 0);
   }
 
   const results = [...data];
-  results[0].rsi = null; // First element has no RSI
+  for (let i = 0; i < period; i++) results[i].rsi = null;
 
   // 2. Initial averages (SMA)
   let avgGain = gains.slice(0, period).reduce((a, b) => a + b, 0) / period;
@@ -26,7 +26,7 @@ export const calculateRSI = (data, period = 14) => {
 
   // Set the first RSI value at index 'period'
   const firstRS = avgLoss === 0 ? 100 : avgGain / avgLoss;
-  results[period].rsi = 100 - 100 / (1 + firstRS);
+  results[period].rsi = Number((100 - 100 / (1 + firstRS)).toFixed(2));
 
   // 3. Smooth the rest of the values (Wilder's Smoothing)
   for (let i = period + 1; i < data.length; i++) {
@@ -49,13 +49,9 @@ export const calculateRSI = (data, period = 14) => {
  * @returns {Array} Data with attached 'volumeColor'
  */
 export const calculateVolumeColors = (data) => {
-  if (!data || data.length === 0) return [];
-  
-  return data.map((d, index) => {
-    if (index === 0) return { ...d, volumeColor: "#10b981" }; // Default green for first bar
-    
-    // Green if current price >= previous price, else Red
-    const isUp = d.price >= data[index - 1].price;
+  return data.map((d) => {
+    // Green if current close >= current open, else Red (Standard Candlestick)
+    const isUp = d.close >= d.open;
     return {
       ...d,
       volumeColor: isUp ? "#10b981" : "#f43f5e"

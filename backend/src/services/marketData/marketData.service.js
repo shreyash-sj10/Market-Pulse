@@ -1,4 +1,4 @@
-const liveProvider = require('./live.provider');
+const { getLivePrice, getLivePricesBatch } = require('./live.provider');
 const historicalProvider = require('./historical.provider');
 const newsProvider = require('./news.provider');
 const Stock = require('../../models/stock.model');
@@ -12,13 +12,13 @@ const { NIFTY_500 } = require("../../constants/nifty500");
  * Centralized entry point for all market intelligence requests.
  */
 
-const getLivePrice = async (symbol) => {
-  return await liveProvider.getLivePrice(symbol);
+const getLivePriceLocal = async (symbol) => {
+  return await getLivePrice(symbol);
 };
 
 const validateSymbol = async (symbol) => {
   try {
-    const data = await getLivePrice(symbol);
+    const data = await getLivePriceLocal(symbol);
     return { isValid: !!data && !!data.price, data };
   } catch (err) {
     return { isValid: false };
@@ -38,7 +38,7 @@ const getNews = async (symbol) => {
  * Fetch from DB or update from Yahoo if stale (> 24h)
  */
 const getFundamentals = async (symbol) => {
-  const normSymbol = (symbol.startsWith('^') || symbol.includes('.')) 
+  const normSymbol = (symbol.startsWith('^') || symbol.includes('.') || symbol.endsWith('=F') || symbol.endsWith('=X')) 
     ? symbol.toUpperCase() 
     : `${symbol.toUpperCase()}.NS`;
   
@@ -79,6 +79,7 @@ const getFundamentals = async (symbol) => {
     sector: stock.sector,
     marketCap: stock.marketCap,
     peRatio: stock.peRatio,
+    volume: stock.volume,
     source: 'DB'
   };
 };
@@ -95,19 +96,29 @@ const getExploreData = async (limit = 16, offset = 0, query = "") => {
 
   const watchList = fullUniverse.slice(offset, offset + limit);
 
+  // 1. Batch Fetch Live Prices for the page
+  const livePrices = await getLivePricesBatch(watchList);
+  
   const results = await Promise.all(
     watchList.map(async (s) => {
       try {
-        const live = await getLivePrice(s);
+        const normSymbol = (s.startsWith('^') || s.includes('.') || s.endsWith('=F') || s.endsWith('=X')) 
+          ? s.toUpperCase() 
+          : `${s.toUpperCase()}.NS`;
+        
+        const priceObj = livePrices[normSymbol];
+        const price = priceObj?.price || 0;
         const fundamentals = await getFundamentals(s);
+        
         return {
           symbol: s,
-          price: live?.price || 0,
-          changePercent: live?.changePercent || 0,
+          price: price,
+          changePercent: priceObj?.changePercent || 0,
           sector: fundamentals?.sector || "Discovery",
           marketCap: fundamentals?.marketCap || 0,
           peRatio: fundamentals?.peRatio || 0,
-          trend: live?.changePercent > 1 ? "BULLISH" : live?.changePercent < -1 ? "BEARISH" : "SIDEWAYS"
+          volume: fundamentals?.volume || 0,
+          trend: "SIDEWAYS"
         };
       } catch (err) {
         // Return a baseline partial object to keep the UI shell alive
@@ -126,27 +137,16 @@ const getExploreData = async (limit = 16, offset = 0, query = "") => {
   return results; // No filter, keep all cards
 };
 
-const getLivePrices = async (symbols) => {
+const getLivePricesForSummary = async (symbols) => {
   if (!symbols || !symbols.length) return {};
-  const results = await Promise.all(
-    symbols.map(async (s) => {
-      try {
-        const data = await liveProvider.getLivePrice(s);
-        return { symbol: s, price: data.price };
-      } catch (err) {
-        return null;
-      }
-    })
-  );
+  const results = await getLivePricesBatch(symbols);
   
+  // Map batch objects to flat price numbers for calculation compatibility
   const priceMap = {};
-  results.forEach(r => {
-    if (r) {
-      priceMap[r.symbol] = r.price;
-      const bare = r.symbol.split('.')[0];
-      priceMap[bare] = r.price;
-      priceMap[`${bare}.NS`] = r.price;
-    }
+  Object.entries(results).forEach(([sym, data]) => {
+    priceMap[sym] = data.price;
+    const bare = sym.split('.')[0];
+    priceMap[bare] = data.price;
   });
   return priceMap;
 };
@@ -165,7 +165,7 @@ const getMarketIndices = async () => {
   const results = await Promise.all(
     symbols.map(async (item) => {
       try {
-        const live = await liveProvider.getLivePrice(item.symbol);
+        const live = await getLivePriceLocal(item.symbol);
         return {
           key: item.key,
           symbol: item.symbol,
@@ -188,7 +188,7 @@ const getGlobalNews = async () => {
 
 module.exports = {
   getLivePrice,
-  getLivePrices,
+  getLivePrices: getLivePricesForSummary,
   getHistorical,
   getNews,
   getFundamentals,

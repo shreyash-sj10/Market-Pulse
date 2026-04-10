@@ -13,7 +13,7 @@ const CACHE_TTL = 3600000; // 1 Hour
  */
 const getHistory = async (symbol, period = '1mo', interval = '1d') => {
   const cacheKey = `${symbol}_${period}_${interval}`;
-  const normSymbol = (symbol.startsWith('^') || symbol.includes('.')) 
+  const normSymbol = (symbol.startsWith('^') || symbol.includes('.') || symbol.endsWith('=F') || symbol.endsWith('=X')) 
     ? symbol.toUpperCase() 
     : `${symbol.toUpperCase()}.NS`;
   
@@ -46,11 +46,40 @@ const getHistory = async (symbol, period = '1mo', interval = '1d') => {
     
     // 3. Native Fallback (Yahoo Finance Node)
     try {
-      // Map period/interval to Yahoo format
-      // Yahoo uses '1mo', '1y' etc. Interval '1d', '1h' etc.
+      const now = new Date();
+      let period1;
+      let intervalRequest = interval;
+      
+      // Calculate start date with buffer for indicators (EMA20/RSI14 needs ~20-30 data points)
+      switch(period) {
+        case '1d': 
+          period1 = new Date(now.getTime() - 3 * 86400000); // 3 days
+          intervalRequest = '1h'; 
+          break;
+        case '1wk': 
+          period1 = new Date(now.getTime() - 21 * 86400000); 
+          intervalRequest = '1h';
+          break;
+        case '1mo': 
+          period1 = new Date(now.getTime() - 60 * 86400000); 
+          intervalRequest = '1d';
+          break;
+        case '3mo': 
+          period1 = new Date(now.getTime() - 150 * 86400000); 
+          intervalRequest = '1d';
+          break;
+        case '1y': 
+          period1 = new Date(now.getTime() - 450 * 86400000); 
+          intervalRequest = '1wk';
+          break;
+        default: 
+          period1 = new Date(now.getTime() - 60 * 86400000);
+      }
+
       const result = await yahooFinance.chart(normSymbol, {
-        period1: period, // Yahoo-finance2 chart can handle period strings in newer versions or use period1/period2
-        interval: interval
+        period1,
+        period2: now,
+        interval: intervalRequest
       });
 
       if (!result || !result.quotes) throw new Error('YAHOO_NATIVE_EMPTY');

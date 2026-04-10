@@ -21,7 +21,8 @@ export const initCurrency = async () => {
  * @param {boolean} isUSD - If true, converts from USD to INR first
  */
 export const formatINR = (value, isUSD = false) => {
-  const amount = isUSD ? value * exchangeRate : value;
+  // Input is now in paise (integers)
+  const amount = (isUSD ? value * exchangeRate : value) / 100;
   
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',

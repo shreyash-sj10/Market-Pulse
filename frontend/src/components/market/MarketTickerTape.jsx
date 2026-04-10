@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getMarketIndices } from "../../services/market.api";
 import { TrendingUp, TrendingDown } from "lucide-react";
 import { motion } from "framer-motion";
+import { formatINR } from "../../utils/currency.utils";
 
 export default function MarketTickerTape() {
   const { data: indices, isLoading } = useQuery({
@@ -27,19 +28,17 @@ export default function MarketTickerTape() {
         {tickerItems.map((item, index) => {
           const isUp = item.change >= 0;
           return (
-            <div key={`${item.key}-${index}`} className="flex items-center gap-4 px-8 border-r border-slate-100">
+            <div key={`${item.symbol}-${index}`} className="flex items-center gap-4 px-8 border-r border-slate-100">
               <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">
-                {item.key}
+                {item.symbol}
               </span>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-black text-slate-900">
-                   {item.price !== null ? (
-                     `${item.currency === 'INR' ? '₹' : item.currency === 'USD' ? '$' : ''}${item.price.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`
-                   ) : '---'}
+                   {item.price !== null ? formatINR(item.price) : '---'}
                 </span>
                 <div className={`flex items-center gap-1 text-[10px] font-black ${isUp ? 'text-emerald-500' : 'text-rose-500'}`}>
-                  {isUp ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
-                  <span>{Math.abs(item.change).toFixed(2)}%</span>
+                   {isUp ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
+                   <span>{item.changePercent.toFixed(2)}%</span>
                 </div>
               </div>
             </div>

@@ -21,9 +21,9 @@ const classifySentiment = (headline) => {
  * PORTFOLIO-AWARE RELEVANCE
  */
 const calculateRelevance = (symbol, userHoldings = {}, stockSector = "") => {
-  if (userHoldings.hasOwnProperty(symbol)) return "HIGH";
+  const norm = symbol.toUpperCase().split('.')[0];
+  if (userHoldings.hasOwnProperty(norm) || userHoldings.hasOwnProperty(`${norm}.NS`)) return "HIGH";
   
-  // Potential for sector-match logic if sector information is passed
   return "LOW";
 };
 
@@ -98,7 +98,8 @@ const getProcessedNews = async (symbol, userHoldings = {}) => {
  * PORTFOLIO NEWS AGGREGATOR
  */
 const getPortfolioNews = async (userHoldings = {}) => {
-  const symbols = Object.keys(userHoldings);
+  // Limit to top 5 holdings to prevent API saturation
+  const symbols = Object.keys(userHoldings).slice(0, 5);
   if (!symbols.length) return { news: [] };
 
   const results = await Promise.allSettled(

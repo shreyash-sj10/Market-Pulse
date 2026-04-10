@@ -4,7 +4,7 @@ backend/logs/*.log
 *.log
 npm-debug.log*
 yarn-debug.log*
-yarn-error.log*
+yarn-error.lo*
 pnpm-debug.log*
 lerna-debug.log*
 

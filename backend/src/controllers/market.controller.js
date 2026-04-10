@@ -1,4 +1,4 @@
-const marketDataService = require('../services/marketData/marketData.service');
+const marketDataService = require('../services/marketData.service');
 
 const getPrice = async (req, res, next) => {
   try {
@@ -27,7 +27,7 @@ const newsEngine = require('../services/news/news.engine');
 const getNews = async (req, res, next) => {
   try {
     const { symbol } = req.query;
-    
+
     let data;
     if (symbol) {
       const userHoldings = req.user?.holdings || {};
@@ -35,10 +35,10 @@ const getNews = async (req, res, next) => {
     } else {
       data = await newsEngine.getTopNews();
     }
-    
+
     // For general news page compatibility (it expects an array)
     if (!symbol) {
-       return res.json(data.news);
+      return res.json(data.news);
     }
 
     res.json({ success: true, ...data });

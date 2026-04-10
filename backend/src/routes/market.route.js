@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const marketController = require('../controllers/market.controller');
-const marketDataService = require('../services/marketData/marketData.service');
+const marketDataService = require('../services/marketData.service');
 
 // ─── NEW MARKET INTELLIGENCE LAYER ───
 router.get('/indices', marketController.getIndices);

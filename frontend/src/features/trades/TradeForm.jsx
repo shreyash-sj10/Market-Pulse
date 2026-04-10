@@ -20,6 +20,8 @@ import { getStockPrice, validateSymbol } from "../../services/market.api.js";
 import { getPositions } from "../../services/portfolio.api.js";
 import { formatINR } from "../../utils/currency.utils";
 import PriceChart from "./components/PriceChart.jsx";
+import TradeReviewCard from "./components/TradeReviewCard.jsx";
+import TradeInsight from "./components/TradeInsight.jsx";
 
 const TradeForm = () => {
   const location = useLocation();
@@ -33,6 +35,7 @@ const TradeForm = () => {
   const [targetPrice, setTargetPrice] = useState("");
   const [reason, setReason] = useState("");
   const [userThinking, setUserThinking] = useState("");
+  const [rawIntent, setRawIntent] = useState("");
   const [tradeType, setTradeType] = useState(location.state?.type || "BUY");
 
   // UI State
@@ -65,7 +68,7 @@ const TradeForm = () => {
         setIsValidSymbol(validation.isValid);
         
         if (validation.isValid && validation.data) {
-          setPrice(validation.data.price.toString());
+          setPrice((validation.data.price / 100).toString());
         }
       } catch (err) {
         console.warn("Validation service unavailable");
@@ -80,7 +83,7 @@ const TradeForm = () => {
     setTradeType("SELL");
     setSymbol(pos.fullSymbol || pos.symbol);
     setQuantity(pos.quantity.toString());
-    setPrice(pos.currentPrice.toString());
+    setPrice((pos.currentPrice / 100).toString());
     setActiveStep(1); // Reset to first step to review
     toast.success(`Configured exit for ${pos.symbol}`);
   };
@@ -97,11 +100,12 @@ const TradeForm = () => {
       const payload = {
         symbol: symbol.toUpperCase(),
         quantity: parseInt(quantity, 10),
-        price: parseFloat(price),
-        stopLoss: stopLoss ? parseFloat(stopLoss) : null,
-        targetPrice: targetPrice ? parseFloat(targetPrice) : null,
+        price: Math.round(parseFloat(price) * 100),
+        stopLoss: stopLoss ? Math.round(parseFloat(stopLoss) * 100) : null,
+        targetPrice: targetPrice ? Math.round(parseFloat(targetPrice) * 100) : null,
         reason,
-        userThinking
+        userThinking,
+        rawIntent
       };
 
       const data = tradeType === "BUY" ? await buyTrade(payload) : await sellTrade(payload);
@@ -113,6 +117,7 @@ const TradeForm = () => {
       setTargetPrice("");
       setReason("");
       setUserThinking("");
+      setRawIntent("");
       
       queryClient.invalidateQueries({ queryKey: ["portfolio"] });
       queryClient.invalidateQueries({ queryKey: ["trades"] });
@@ -223,11 +228,11 @@ const TradeForm = () => {
                             </div>
                             
                             <button 
-                                disabled={!symbol || isValidSymbol !== true || fetchingPrice}
+                                disabled={!symbol || isValidSymbol !== true || fetchingPrice || parseFloat(price) <= 0}
                                 onClick={() => setActiveStep(2)}
                                 className="w-full py-5 bg-slate-900 hover:bg-black text-white rounded-xl font-bold text-[10px] uppercase tracking-[0.2em] transition-all disabled:opacity-50"
                             >
-                                Advance to Risk Management
+                                {parseFloat(price) <= 0 ? 'Price Identification Failed' : 'Advance to Risk Management'}
                             </button>
                         </motion.div>
                     )}
@@ -324,12 +329,21 @@ const TradeForm = () => {
                         >
                             <div className="space-y-8">
                                 <div>
+                                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 ml-1">Trade Intent (Why this trade?)</label>
+                                    <textarea
+                                        value={rawIntent}
+                                        onChange={(e) => setRawIntent(e.target.value)}
+                                        placeholder="Explicitly state your intent (e.g., Playing the breakout of a weekly high, scalping a minor pullback...)"
+                                        className="w-full bg-slate-50 border border-indigo-600/30 focus:border-indigo-600 rounded-xl px-6 py-4 font-semibold text-slate-900 placeholder:text-slate-300 outline-none transition-all h-[100px] resize-none"
+                                    />
+                                </div>
+                                <div>
                                     <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 ml-1">Logical Rationale</label>
                                     <textarea
                                         value={reason}
                                         onChange={(e) => setReason(e.target.value)}
                                         placeholder="Describe the trade setup (e.g., Retesting weekly support level, MACD crossover...)"
-                                        className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-600 rounded-xl px-6 py-4 font-semibold text-slate-900 placeholder:text-slate-300 outline-none transition-all h-[120px] resize-none"
+                                        className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-600 rounded-xl px-6 py-4 font-semibold text-slate-900 placeholder:text-slate-300 outline-none transition-all h-[100px] resize-none"
                                     />
                                 </div>
                                 <div>
@@ -338,14 +352,14 @@ const TradeForm = () => {
                                         value={userThinking}
                                         onChange={(e) => setUserThinking(e.target.value)}
                                         placeholder="Be honest—what are you feeling? (e.g., FOMO, calm confidence, desperate to recover losses...)"
-                                        className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-600 rounded-xl px-6 py-4 font-semibold text-slate-900 placeholder:text-slate-300 outline-none transition-all h-[120px] resize-none"
+                                        className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-600 rounded-xl px-6 py-4 font-semibold text-slate-900 placeholder:text-slate-300 outline-none transition-all h-[100px] resize-none"
                                     />
                                 </div>
                             </div>
 
                             <div className="pt-4 space-y-4">
                                 <button 
-                                    disabled={loading}
+                                    disabled={loading || parseFloat(price) <= 0 || isValidSymbol !== true}
                                     onClick={() => setShowConfirmModal(true)}
                                     className={`w-full py-6 rounded-xl text-white font-bold text-xs uppercase tracking-[0.25em] shadow-lg transition-all transform active:scale-95 ${tradeType === 'BUY' ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/20' : 'bg-rose-600 hover:bg-rose-700 shadow-rose-500/20'}`}
                                 >
@@ -449,7 +463,7 @@ const TradeForm = () => {
                      <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest opacity-50">Ref #{(result.id || result._id || "NEW").slice(-6).toUpperCase()}</span>
                   </div>
                   
-                  <div className="p-10 space-y-10">
+                  <div className="p-8 space-y-8">
                     <div>
                         <h2 className="text-5xl font-bold tracking-tighter text-slate-900 mb-2">
                             {result.quantity} <span className="text-indigo-600">{result.symbol.replace(".NS", "")}</span>
@@ -457,31 +471,35 @@ const TradeForm = () => {
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Average Fill: {formatINR(result.price)}</span>
                     </div>
 
+                    {result.analysis?.review ? (
+                        <TradeReviewCard trade={result} review={result.analysis.review} />
+                    ) : (
+                        <div className="p-6 bg-slate-50 rounded-2xl border border-slate-100 animate-pulse">
+                           <div className="flex items-center gap-2 mb-3 text-indigo-400">
+                               <Zap size={18} />
+                               <span className="text-[10px] font-bold uppercase tracking-widest">AI Audit Synthesis In Progress...</span>
+                           </div>
+                           <div className="h-4 w-full bg-slate-200/50 rounded" />
+                        </div>
+                    )}
+
                     <div className="space-y-6">
-                        <div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
+                        <div className="p-6 bg-slate-100/50 rounded-2xl border border-slate-200">
                            <div className="flex items-center gap-2 mb-3 text-indigo-600">
                                <ShieldCheck size={18} />
-                               <span className="text-[10px] font-bold uppercase tracking-widest">Risk explanation</span>
+                               <span className="text-[10px] font-black uppercase tracking-widest">System Explanation</span>
                            </div>
-                           <p className="text-[11px] text-slate-600 leading-relaxed font-medium">
-                               {result.analysis?.explanation || "No immediate risk violations detected."}
+                           <p className="text-[11px] text-slate-600 leading-relaxed font-semibold">
+                               {result.analysis?.explanation || "Logical invariants verified. No risk breaches detected in the current narrative."}
                            </p>
                         </div>
 
-                        <div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
-                           <div className="flex items-center gap-2 mb-3 text-indigo-600">
-                               <Brain size={18} />
-                               <span className="text-[10px] font-bold uppercase tracking-widest">Mindset Audit</span>
-                           </div>
-                           <p className="text-[11px] text-slate-600 leading-relaxed italic font-medium">
-                               {result.analysis?.humanBehavior || "Psychological profile building in progress."}
-                           </p>
-                        </div>
+                        <TradeInsight symbol={result.symbol} trade={result} />
                     </div>
 
                     <button 
                         onClick={() => setResult(null)}
-                        className="w-full py-4 text-slate-400 hover:text-slate-900 font-bold text-[10px] uppercase tracking-widest transition-all border-t border-slate-100"
+                        className="w-full py-4 text-slate-400 hover:text-slate-900 font-bold text-[10px] uppercase tracking-widest transition-all border-t border-slate-100 bg-slate-50/30"
                     >
                         Initiate New Plan
                     </button>

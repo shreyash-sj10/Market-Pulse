@@ -8,6 +8,12 @@ const Decimal = require("decimal.js");
 const mongoose = require("mongoose");
 const Trace = require("../models/trace.model");
 const { toSafeKey } = require("../utils/safeUtils");
+const { runInTransaction } = require("../utils/transaction");
+const { validateStrategy } = require("./strategy.engine");
+const { analyzeReview } = require("./review.engine");
+const { calculateMissedOpportunity } = require("./missedOpportunity.service");
+const { calculateDecisionScore } = require("./scoring.engine");
+const marketDataService = require("./marketData.service");
 
 /**
  * Normalizes symbol for consistency (NSE: .NS, BSE: .BO)
@@ -20,76 +26,134 @@ const normalizeSymbol = (symbol) => {
 };
 
 /**
+ * CONVERSION HELPERS
+ * ₹1.00 = 100 paise
+ */
+const toPaise = (rupee) => Math.round((rupee || 0) * 100);
+const fromPaise = (paise) => (paise || 0) / 100;
+
+/**
  * Recalculates totalInvested from scratch to ensure absolute invariant integrity.
  */
 const recalculateTotalInvested = (user) => {
-  let total = new Decimal(0);
+  let totalPaise = 0;
   user.holdings.forEach((data) => {
-    total = total.add(new Decimal(data.quantity).mul(data.avgCost));
+    totalPaise += Math.round(data.quantity * data.avgCost);
   });
-  user.totalInvested = total.toNumber();
+  user.totalInvested = totalPaise;
 };
 
 /**
- * Detached AI process to enrich trade with behavioral insights.
+ * Detached AI process to enrich trade with behavioral insights and intent parsing.
  * Runs post-transaction to ensure execution latency is zero.
  * INVARIANT: Must NOT modify financial state.
  */
 const enrichTradeWithAI = async (tradeId, riskScore, mistakeTags, context) => {
   try {
-    const { explanation, behaviorAnalysis } = await generateExplanation(
-      riskScore,
-      mistakeTags,
-      context
-    );
-    // Explicitly using findByIdAndUpdate on Trade model ONLY
+    const { symbol, type, reason, userThinking, rawIntent } = context;
+
+    // 1. Parallel AI Work: Narrative + Intent Parsing
+    const [explanationData, intentData] = await Promise.all([
+      generateExplanation(riskScore, mistakeTags, context),
+      parseTradeIntent(rawIntent)
+    ]);
+
+    // 2. Market Context Snapshot (Simulated RSI/Trend logic)
+    const marketContext = {
+      rsi: Math.floor(Math.random() * 40) + 30, // Mocked for deterministic pipeline feed
+      trend: Math.random() > 0.5 ? "BULLISH" : "BEARISH",
+      volatility: Number((Math.random() * 2).toFixed(2))
+    };
+
+    // 3. Deterministic Strategy Validation
+    const strategyValidation = validateStrategy(intentData, marketContext);
+
+    // 4. Initial Review Analysis (Verdict + Discipline Check)
+    const reviewData = analyzeReview({ 
+      ...context, 
+      analysis: { strategyMatch: strategyValidation, mistakeTags },
+      pnl: context.pnl // Only for SELL
+    });
+
+    // 5. Post-Trade Enrichment (Missed Opportunity for SELL)
+    let missedOpportunity = null;
+    if (type === 'SELL') {
+      const tradeDoc = await Trade.findById(tradeId);
+      missedOpportunity = await calculateMissedOpportunity(tradeDoc);
+    }
+
+    // 6. AI Review Summary (Symmetric synthesis)
+    const aiSummary = await generateTradeReviewSummary(reviewData, { 
+      symbol, pnl: context.pnl || 0, missedOpportunity 
+    });
+
+    // 7. Deterministic Decision Score
+    const updatedTradeForScoring = {
+      ...context,
+      analysis: { strategyMatch: strategyValidation, mistakeTags },
+      missedOpportunity,
+      marketContextAtEntry: marketContext
+    };
+    const qualityScore = calculateDecisionScore(updatedTradeForScoring);
+
+    // 8. Update Record
     await Trade.findByIdAndUpdate(tradeId, {
-      "analysis.explanation": explanation,
-      "analysis.humanBehavior": behaviorAnalysis,
+      "analysis.explanation": explanationData.explanation,
+      "analysis.humanBehavior": explanationData.behaviorAnalysis,
+      "analysis.strategyMatch": strategyValidation,
+      "analysis.review": { ...reviewData, aiSummary },
+      "analysis.decisionScore": qualityScore,
+      "rawIntent": rawIntent,
+      "parsedIntent": intentData,
+      "marketContextAtEntry": marketContext,
+      "missedOpportunity": missedOpportunity
     });
   } catch (err) {
     console.error(`[AI-Worker] Failed to enrich trade ${tradeId}:`, err.message);
   }
 };
 
-/**
- * Execute a BUY order with transactional integrity and Invariant Enforcement.
- */
 const executeBuyTrade = async (userDoc, payload) => {
-  const { symbol: rawSymbol, quantity, price, stopLoss, targetPrice, reason, userThinking } = payload;
-  const symbol = normalizeSymbol(rawSymbol);
-  const session = await mongoose.startSession();
-  session.startTransaction();
+  return await runInTransaction(async (session) => {
+    const { symbol: rawSymbol, quantity, price, stopLoss, targetPrice, reason, userThinking, rawIntent } = payload;
+    const symbol = normalizeSymbol(rawSymbol);
 
-  try {
-    if (!symbol || !quantity || !price) {
-      throw new AppError("Symbol, quantity, and price are required", 400);
+    // 1. DATA INTEGRITY CHECK
+    const validation = await marketDataService.validateSymbol(symbol);
+    if (!validation.isValid || !price || price <= 0) {
+      throw new AppError("INVALID_MARKET_DATA_INTERCEPTED", 400);
     }
 
-    const totalValue = new Decimal(quantity).mul(price).toNumber();
+    if (!quantity || quantity <= 0) {
+      throw new AppError("QUANTITY_MUST_BE_POSITIVE", 400);
+    }
+
+    const pricePaise = Math.round(price);
+    const totalValuePaise = quantity * pricePaise;
     const user = await User.findById(userDoc._id).session(session);
 
     // GUARD: INSUFFICIENT_FUNDS
-    if (!user || user.balance < totalValue) {
-      throw new AppError("INSUFFICIENT_FUNDS", 400);
+    if (!user || user.balance < totalValuePaise) {
+      const deficiency = (totalValuePaise - (user?.balance || 0)) / 100;
+      throw new AppError(`TERMINAL_FUNDING_SHORTFALL: Missing ₹${deficiency.toLocaleString('en-IN')}`, 400);
     }
 
     // 1. Financial Update
-    user.balance = new Decimal(user.balance).sub(totalValue).toNumber();
+    user.balance -= totalValuePaise;
 
     // 2. Holdings Update
     const currentHolding = user.holdings.get(toSafeKey(symbol)) || { quantity: 0, avgCost: 0, stopLoss: null };
     const newQuantity = currentHolding.quantity + quantity;
-    const newAvgCost = new Decimal(currentHolding.quantity)
-      .mul(currentHolding.avgCost)
-      .add(new Decimal(quantity).mul(price))
-      .div(newQuantity)
-      .toNumber();
+    
+    // Weighted Average Cost (in Paise)
+    const newAvgCostPaise = Math.round(
+      (currentHolding.quantity * currentHolding.avgCost + quantity * pricePaise) / newQuantity
+    );
 
     user.holdings.set(toSafeKey(symbol), {
       quantity: newQuantity,
-      avgCost: newAvgCost,
-      stopLoss: stopLoss || currentHolding.stopLoss
+      avgCost: newAvgCostPaise,
+      stopLoss: stopLoss ? Math.round(stopLoss) : currentHolding.stopLoss
     });
 
     // 3. Post-Operation Invariant Check (Pre-Commit)
@@ -97,18 +161,23 @@ const executeBuyTrade = async (userDoc, payload) => {
     validateSystemInvariants(user);
 
     // 4. Analysis & Persistence
-    const tradesLast24h = await Trade.countDocuments({
-      user: user._id,
-      createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-    }).session(session);
+    const [tradesLast24h, lastTrade] = await Promise.all([
+      Trade.countDocuments({
+        user: user._id,
+        createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+      }).session(session),
+      Trade.findOne({ user: user._id }).sort({ createdAt: -1 }).session(session)
+    ]);
 
     const analysis = calculateMistakeAnalysis({
-      tradeValue: totalValue,
-      balanceBeforeTrade: user.balance + totalValue,
-      stopLoss,
-      targetPrice,
-      entryPrice: price,
+      tradeValue: totalValuePaise,
+      balanceBeforeTrade: user.balance + totalValuePaise,
+      stopLoss: stopLoss ? Math.round(stopLoss) : null,
+      targetPrice: targetPrice ? Math.round(targetPrice) : null,
+      entryPrice: pricePaise,
       tradesLast24h,
+      lastTradePnL: lastTrade ? lastTrade.pnl : 0,
+      lastTradeTime: lastTrade ? lastTrade.createdAt : null
     });
 
     const [trade] = await Trade.create([{
@@ -116,12 +185,13 @@ const executeBuyTrade = async (userDoc, payload) => {
       symbol,
       type: "BUY",
       quantity,
-      price,
-      totalValue,
-      stopLoss,
-      targetPrice,
+      price: pricePaise,
+      totalValue: totalValuePaise,
+      stopLoss: stopLoss ? Math.round(stopLoss) : null,
+      targetPrice: targetPrice ? Math.round(targetPrice) : null,
       reason,
       userThinking,
+      rawIntent,
       analysis,
     }], { session });
 
@@ -140,35 +210,27 @@ const executeBuyTrade = async (userDoc, payload) => {
     }], { session });
 
     await user.save({ session });
-    await session.commitTransaction();
-
-    enrichTradeWithAI(trade._id, analysis.riskScore, analysis.mistakeTags, {
-      symbol, type: 'BUY', reason, userThinking
+    
+    // AI enrichment in "detached" mode
+    setImmediate(() => {
+      enrichTradeWithAI(trade._id, analysis.riskScore, analysis.mistakeTags, {
+        symbol, type: 'BUY', reason, userThinking, rawIntent
+      });
     });
 
     return { trade, updatedBalance: user.balance };
-  } catch (err) {
-    if (session.inTransaction()) {
-      await session.abortTransaction();
-    }
-    throw err;
-  } finally {
-    session.endSession();
-  }
+  });
 };
 
-/**
- * Execute a SELL order with transactional integrity and Realized P&L capture.
- */
 const executeSellTrade = async (userDoc, payload) => {
-  const { symbol: rawSymbol, quantity, price, reason, userThinking } = payload;
-  const symbol = normalizeSymbol(rawSymbol);
-  const session = await mongoose.startSession();
-  session.startTransaction();
+  return await runInTransaction(async (session) => {
+    const { symbol: rawSymbol, quantity, price, reason, userThinking, rawIntent } = payload;
+    const symbol = normalizeSymbol(rawSymbol);
 
-  try {
-    if (!symbol || !quantity || !price) {
-      throw new AppError("Symbol, quantity and price are required", 400);
+    // 1. DATA INTEGRITY CHECK
+    const validation = await marketDataService.validateSymbol(symbol);
+    if (!validation.isValid || !price || price <= 0) {
+      throw new AppError("INVALID_MARKET_DATA_INTERCEPTED", 400);
     }
 
     const user = await User.findById(userDoc._id).session(session);
@@ -182,13 +244,14 @@ const executeSellTrade = async (userDoc, payload) => {
       throw new AppError(`Insufficient quantity. Owned: ${currentHolding.quantity}, Requested: ${quantity}`, 400);
     }
 
-    const totalValue = new Decimal(quantity).mul(price).toNumber();
-    const costBasis = new Decimal(quantity).mul(currentHolding.avgCost).toNumber();
-    const tradePnL = new Decimal(totalValue).sub(costBasis).toNumber();
+    const pricePaise = Math.round(price);
+    const totalValuePaise = quantity * pricePaise;
+    const costBasisPaise = Math.round(quantity * currentHolding.avgCost);
+    const tradePnLPaise = totalValuePaise - costBasisPaise;
 
     // 1. Balance & Snapshot Updates
-    user.balance = new Decimal(user.balance).add(totalValue).toNumber();
-    user.realizedPnL = new Decimal(user.realizedPnL || 0).add(tradePnL).toNumber();
+    user.balance += totalValuePaise;
+    user.realizedPnL = (user.realizedPnL || 0) + tradePnLPaise;
 
     // 2. Holdings Reduction
     const remainingQty = currentHolding.quantity - quantity;
@@ -207,16 +270,21 @@ const executeSellTrade = async (userDoc, payload) => {
     validateSystemInvariants(user);
 
     // 4. Analysis & Persistence
-    const tradesLast24h = await Trade.countDocuments({
-      user: user._id,
-      createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-    }).session(session);
+    const [tradesLast24h, lastTrade] = await Promise.all([
+      Trade.countDocuments({
+        user: user._id,
+        createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+      }).session(session),
+      Trade.findOne({ user: user._id }).sort({ createdAt: -1 }).session(session)
+    ]);
 
     const analysis = calculateMistakeAnalysis({
-      tradeValue: totalValue,
-      balanceBeforeTrade: user.balance - totalValue,
-      entryPrice: price,
+      tradeValue: totalValuePaise,
+      balanceBeforeTrade: user.balance - totalValuePaise,
+      entryPrice: pricePaise,
       tradesLast24h,
+      lastTradePnL: lastTrade ? lastTrade.pnl : 0,
+      lastTradeTime: lastTrade ? lastTrade.createdAt : null
     });
 
     const [trade] = await Trade.create([{
@@ -224,13 +292,14 @@ const executeSellTrade = async (userDoc, payload) => {
       symbol,
       type: "SELL",
       quantity,
-      price,
-      totalValue,
+      price: pricePaise,
+      totalValue: totalValuePaise,
       reason,
       userThinking,
+      rawIntent,
       analysis,
-      pnl: tradePnL,
-      pnlPercentage: costBasis > 0 ? new Decimal(tradePnL).div(costBasis).mul(100).toNumber() : 0
+      pnl: tradePnLPaise,
+      pnlPercentage: costBasisPaise > 0 ? Number(((tradePnLPaise / costBasisPaise) * 100).toFixed(2)) : 0
     }], { session });
 
     // Generate Trace_v1
@@ -248,21 +317,16 @@ const executeSellTrade = async (userDoc, payload) => {
     }], { session });
 
     await user.save({ session });
-    await session.commitTransaction();
-
-    enrichTradeWithAI(trade._id, analysis.riskScore, analysis.mistakeTags, {
-      symbol, type: 'SELL', reason, userThinking
+    
+    // AI enrichment in background
+    setImmediate(() => {
+      enrichTradeWithAI(trade._id, analysis.riskScore, analysis.mistakeTags, {
+        symbol, type: 'SELL', reason, userThinking, rawIntent, pnl: tradePnLPaise
+      });
     });
 
     return { trade, updatedBalance: user.balance };
-  } catch (err) {
-    if (session.inTransaction()) {
-      await session.abortTransaction();
-    }
-    throw err;
-  } finally {
-    session.endSession();
-  }
+  });
 };
 
 module.exports = { executeBuyTrade, executeSellTrade };

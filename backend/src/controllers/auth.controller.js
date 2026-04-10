@@ -58,7 +58,7 @@ const login = async (req, res, next) => {
 
     const user = await User.findOne({ email }).select("+password");
     if (!user) {
-      return next(new AppError("Invalid credentials", 401));
+      return next(new AppError("Account not found. Please register to initialize your terminal.", 401));
     }
 
     const isMatch = await user.comparePassword(password);

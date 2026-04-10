@@ -3,18 +3,21 @@ import StockCard from "./components/StockCard.jsx";
 import {
   Layers, Activity, TrendingUp, Search,
   X, BarChart, TrendingDown, ChevronDown,
-  Navigation
+  Navigation, AlertTriangle, Disc
 } from "lucide-react";
 import { useState, useMemo, useEffect } from "react";
+import { useInView } from "react-intersection-observer";
 import { getExplorerData } from "../../services/market.api.js";
 import { getPositions } from "../../services/portfolio.api.js";
 import PriceChart from "../trades/components/PriceChart.jsx";
 import StockNews from "../../components/market/StockNews.jsx";
 import { useQuery } from "@tanstack/react-query";
+import { formatINR } from "../../utils/currency.utils";
 
 // ─── Pro Modal Component ───────────────────────────────────────────────────
 const ProModal = ({ stock, onClose }) => {
   const symbol = stock.symbol;
+  const [activePoint, setActivePoint] = useState(null);
 
   return (
     <motion.div
@@ -57,7 +60,7 @@ const ProModal = ({ stock, onClose }) => {
         <div className="flex-grow overflow-y-auto p-8 custom-scrollbar">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
             <div className="lg:col-span-8 h-[550px] rounded-2xl overflow-hidden border border-slate-100 bg-slate-50 relative">
-              <PriceChart symbol={stock.symbol} />
+              <PriceChart symbol={stock.symbol} onHover={setActivePoint} />
             </div>
 
             <div className="lg:col-span-4 space-y-6 flex flex-col">
@@ -66,22 +69,33 @@ const ProModal = ({ stock, onClose }) => {
                   <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-2 block">System Pulse</span>
                   <p className="text-lg font-bold tracking-tight mb-2 text-slate-900">Metric Dashboard</p>
                   <div className="space-y-3 mt-4">
-                      {stock.peRatio && (
-                        <div className="flex justify-between py-2 border-b border-slate-200">
-                           <span className="text-[10px] font-bold text-slate-400 uppercase">P/E Ratio</span>
-                           <span className="text-sm font-bold text-slate-900">{stock.peRatio}</span>
-                        </div>
-                      )}
-                      {stock.marketCap && (
-                        <div className="flex justify-between py-2 border-b border-slate-200">
-                           <span className="text-[10px] font-bold text-slate-400 uppercase">Market Cap</span>
-                           <span className="text-sm font-bold text-slate-900">{(stock.marketCap / 1e12).toFixed(2)}T</span>
-                        </div>
-                      )}
-                      <div className="flex justify-between py-2">
-                         <span className="text-[10px] font-bold text-slate-400 uppercase">Volume</span>
-                         <span className="text-sm font-bold text-slate-900">{(stock.volume / 1e6).toFixed(1)}M</span>
-                      </div>
+                    <div className="flex justify-between py-2 border-b border-slate-200">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase">{activePoint ? 'Historical Price' : 'Last Traded Price'}</span>
+                      <span className="text-sm font-black text-indigo-600">{formatINR(activePoint ? activePoint.close : stock.price)}</span>
+                    </div>
+
+                    <div className="flex justify-between py-2 border-b border-slate-200">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase">Analysis RSI</span>
+                      <span className={`text-sm font-black ${activePoint?.rsi > 70 ? 'text-rose-500' : activePoint?.rsi < 30 ? 'text-emerald-500' : 'text-slate-900'}`}>
+                        {activePoint ? activePoint.rsi.toFixed(1) : 'Live Compute'}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between py-2 border-b border-slate-200">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase">Pulse Volume</span>
+                      <span className="text-sm font-bold text-slate-900">
+                        {activePoint 
+                          ? (activePoint.volume / 1000).toFixed(1) + 'K' 
+                          : (stock.volume / 1e6).toFixed(1) + 'M'}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between py-2">
+                       <span className="text-[10px] font-bold text-slate-400 uppercase">Session Date</span>
+                       <span className="text-xs font-bold text-slate-500 italic">
+                         {activePoint ? activePoint.time : 'Real-time Feeds'}
+                       </span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -99,8 +113,8 @@ const ProModal = ({ stock, onClose }) => {
         {/* Footer */}
         <div className="px-8 py-5 bg-slate-50 flex items-center justify-between border-t border-slate-100">
           <div className="flex items-center gap-3">
-             <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
-             <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Feed Fidelity: High</span>
+            <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Feed Fidelity: High</span>
           </div>
           <button
             onClick={onClose}
@@ -114,38 +128,52 @@ const ProModal = ({ stock, onClose }) => {
   );
 };
 
+// ─── Market Explorer Component ─────────────────────────────────────────────
 const MarketExplorer = () => {
-  // State
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedStock, setSelectedStock] = useState(null);
   const [allLoadedStocks, setAllLoadedStocks] = useState([]);
   const [offset, setOffset] = useState(0);
 
-  // Debounce search to prevent API flooding
+  const { ref: loadMoreRef, inView } = useInView({
+    threshold: 0.5,
+    triggerOnce: false
+  });
+
+  // Debounce search
   useEffect(() => {
     const timeout = setTimeout(() => {
       setDebouncedSearch(searchQuery);
-      setOffset(0);            // Reset pagination on new search
-      setAllLoadedStocks([]);  // Clear buffer on new search
-    }, 600);
+      setOffset(0);
+      setAllLoadedStocks([]);
+    }, 500);
     return () => clearTimeout(timeout);
   }, [searchQuery]);
 
-  // Queries
-  const { data: currentChunk, isLoading: marketLoading } = useQuery({
+  // Infinite Scroll Trigger
+  useEffect(() => {
+    if (inView && !marketLoading && hasMore) {
+       setOffset(prev => prev + 20);
+    }
+  }, [inView]);
+
+  // Data Fetching
+  const { data: currentChunk, isLoading: marketLoading, isError, refetch } = useQuery({
     queryKey: ["explorer", offset, debouncedSearch],
-    queryFn: () => getExplorerData(16, offset, debouncedSearch),
-    refetchInterval: 30000,
-    keepPreviousData: true
+    queryFn: () => getExplorerData(20, offset, debouncedSearch),
+    staleTime: 30000,
+    keepPreviousData: true,
+    retry: 1
   });
 
-  // Sync loaded stocks
+  // Sync state
   useEffect(() => {
     if (currentChunk?.stocks) {
       setAllLoadedStocks(prev => {
+        const incoming = currentChunk.stocks;
         const seen = new Set(prev.map(s => s.symbol));
-        const filtered = currentChunk.stocks.filter(s => !seen.has(s.symbol));
+        const filtered = incoming.filter(s => !seen.has(s.symbol));
         return [...prev, ...filtered];
       });
     }
@@ -160,12 +188,25 @@ const MarketExplorer = () => {
     return new Set(posResponse?.positions?.map(p => p.fullSymbol) || []);
   }, [posResponse]);
 
-  const hasMore = offset < 480; 
-  const visibleStocks = allLoadedStocks;
+  const hasMore = allLoadedStocks.length < 150 && !searchQuery;
 
-  const handleLoadMore = () => {
-    setOffset(prev => prev + 16);
-  };
+  if (isError) return (
+    <div className="max-w-[1500px] mx-auto min-h-[60vh] flex items-center justify-center p-4">
+      <div className="text-center p-12 bg-white rounded-[3rem] border border-rose-100 shadow-xl max-w-xl w-full">
+         <div className="w-16 h-16 bg-rose-50 rounded-2xl flex items-center justify-center mx-auto mb-6 text-rose-500">
+            <AlertTriangle size={32} />
+         </div>
+         <h2 className="text-3xl font-black text-slate-900 tracking-tight mb-3">Market Feed Disrupted</h2>
+         <p className="text-slate-500 font-medium mb-8">Our connection to the NSE terminal has been momentarily severed. The system is attempting automatic re-interpolation.</p>
+         <button 
+           onClick={() => refetch()}
+           className="w-full py-4 bg-indigo-600 hover:bg-black text-white rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-lg shadow-indigo-600/20"
+         >
+           Force Manual Recalibration
+         </button>
+      </div>
+    </div>
+  );
 
   return (
     <div className="max-w-[1500px] mx-auto pb-20 px-4 mt-8">
@@ -179,90 +220,85 @@ const MarketExplorer = () => {
       </AnimatePresence>
 
       <div className="mb-12 flex flex-col lg:flex-row lg:items-end justify-between gap-6">
-          <div className="border-l-2 border-indigo-600 pl-8">
-              <h1 className="text-4xl font-black text-slate-900 tracking-tight mb-2">Market Discovery</h1>
-              <p className="text-slate-500 font-medium text-lg leading-relaxed max-w-2xl">
-                Analyzing curated <span className="text-indigo-600 font-bold">liquid assets</span> across the NSE with real-time protocol verification.
-              </p>
+        <div className="border-l-2 border-indigo-600 pl-8">
+          <h1 className="text-4xl font-black text-slate-900 tracking-tight mb-2">Discovery Hub</h1>
+          <p className="text-slate-500 font-medium text-lg leading-relaxed max-w-2xl">
+            Analyzing <span className="text-indigo-600 font-bold">NIFTY 500</span> liquidity pool with real-time O(1) protocol verification.
+          </p>
+        </div>
+        <div className="flex items-center gap-3 px-6 py-4 bg-white border border-slate-100 rounded-3xl shadow-sm">
+          <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
+            <Activity size={16} />
           </div>
-          <div className="flex items-center gap-3 px-6 py-4 bg-white border border-slate-100 rounded-3xl shadow-sm">
-             <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
-                <Activity size={16} />
-             </div>
-             <div>
-                <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-widest leading-none mb-1">Exchange Status</span>
-                <span className="block text-xs font-bold text-slate-900 uppercase">Live Feed Active</span>
-             </div>
+          <div>
+            <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-widest leading-none mb-1">Exchange Status</span>
+            <span className="block text-xs font-bold text-slate-900 uppercase">Live Feed Active</span>
           </div>
+        </div>
       </div>
 
       <div className="mb-10 group relative max-w-3xl">
-          <div className="absolute inset-y-0 left-6 flex items-center pointer-events-none text-slate-300 group-focus-within:text-indigo-600 transition-colors">
-            <Search size={22} />
-          </div>
-          <input
-            type="text"
-            placeholder="Search by ticker symbol..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-16 pr-8 py-5 bg-white border border-slate-200 rounded-2xl shadow-sm focus:ring-4 focus:ring-indigo-600/5 focus:border-indigo-600 outline-none font-bold text-lg text-slate-900 transition-all placeholder:text-slate-300"
-          />
+        <div className="absolute inset-y-0 left-6 flex items-center pointer-events-none text-slate-300 group-focus-within:text-indigo-600 transition-colors">
+          <Search size={22} />
+        </div>
+        <input
+          type="text"
+          placeholder="Search 500+ Nifty tickers..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full pl-16 pr-8 py-5 bg-white border border-slate-200 rounded-2xl shadow-sm focus:ring-4 focus:ring-indigo-600/5 focus:border-indigo-600 outline-none font-bold text-lg text-slate-900 transition-all placeholder:text-slate-300"
+        />
       </div>
 
-      {marketLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-          {[...Array(8)].map((_, i) => (
-            <div key={i} className="h-[400px] rounded-3xl bg-white border border-slate-100 animate-pulse" />
-          ))}
-        </div>
-      ) : (
-        <>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
-            <AnimatePresence mode="popLayout">
-              {visibleStocks.map((stock) => (
-                <motion.div
-                  key={stock.symbol}
-                  layout
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
-                  transition={{ duration: 0.3 }}
-                >
-                  <StockCard 
-                    stock={stock} 
-                    isOwned={ownedSymbols.has(`${stock.symbol}.NS`)}
-                    onOpenChart={() => setSelectedStock(stock)}
-                  />
-                </motion.div>
-              ))}
-            </AnimatePresence>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+        {allLoadedStocks.map((stock) => (
+          <motion.div
+            key={stock.symbol}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4 }}
+          >
+            <StockCard
+              stock={stock}
+              isOwned={ownedSymbols.has(`${stock.symbol}.NS`)}
+              onOpenChart={() => setSelectedStock(stock)}
+            />
+          </motion.div>
+        ))}
+        
+        {/* Loading Skeletons */}
+        {marketLoading && [...Array(4)].map((_, i) => (
+          <div key={`loader-${i}`} className="h-[440px] bg-slate-50 border border-slate-100 rounded-[2.5rem] animate-pulse flex flex-col p-10">
+             <div className="w-1/2 h-8 bg-slate-200 rounded-lg mb-4" />
+             <div className="w-1/3 h-4 bg-slate-100 rounded-lg mb-auto" />
+             <div className="w-full h-12 bg-slate-200 rounded-xl" />
           </div>
+        ))}
+      </div>
 
-          <div className="mt-16 flex flex-col items-center">
-            {visibleStocks.length === 0 ? (
-              <div className="text-center py-20 bg-white rounded-[3rem] border border-slate-100 shadow-sm w-full max-w-2xl px-8 flex flex-col items-center">
-                <div className="p-6 bg-slate-50 rounded-2xl mb-6 border border-slate-100">
-                  <Search size={32} className="text-slate-300" />
-                </div>
-                <h3 className="text-2xl font-black text-slate-900 tracking-tight">No Tickers Identified</h3>
-                <p className="text-slate-400 text-xs font-bold uppercase tracking-[0.2em] mt-3">Try checking for typos or searching by full symbol.</p>
-                <button 
-                  onClick={() => setSearchQuery("")}
-                  className="mt-8 px-8 py-3 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-600/20"
-                >
-                  Clear Filters
-                </button>
-              </div>
-            ) : hasMore ? (
-              <button
-                onClick={handleLoadMore}
-                className="flex items-center gap-3 py-4 px-10 bg-slate-900 hover:bg-black text-white rounded-2xl font-bold text-[10px] uppercase tracking-widest transition-all shadow-xl shadow-slate-900/20"
-              >
-                Reveal more assets <ChevronDown size={14} />
-              </button>
-            ) : null}
+      {/* Persistence Point for Infinite Scroll */}
+      <div ref={loadMoreRef} className="h-20 mt-10 flex items-center justify-center">
+        {hasMore && !marketLoading && (
+          <div className="flex items-center gap-3 text-slate-300">
+             <Disc size={20} className="animate-spin" />
+             <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Loading next tier...</span>
           </div>
-        </>
+        )}
+      </div>
+
+      {allLoadedStocks.length === 0 && !marketLoading && (
+        <div className="text-center py-20 bg-white rounded-[3rem] border border-slate-100 shadow-sm w-full max-w-2xl mx-auto px-8 flex flex-col items-center">
+          <div className="p-6 bg-slate-50 rounded-2xl mb-6 border border-slate-100">
+            <Search size={32} className="text-slate-300" />
+          </div>
+          <h3 className="text-2xl font-black text-slate-900 tracking-tight">No Tickers Identified</h3>
+          <button
+            onClick={() => setSearchQuery("")}
+            className="mt-8 px-8 py-3 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all"
+          >
+            Clear Filters
+          </button>
+        </div>
       )}
     </div>
   );

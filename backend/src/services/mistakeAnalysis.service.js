@@ -5,6 +5,8 @@ const calculateMistakeAnalysis = ({
   targetPrice,
   entryPrice,
   tradesLast24h,
+  lastTradePnL,
+  lastTradeTime
 }) => {
   let riskScore = 0;
   const mistakeTags = new Set();
@@ -54,6 +56,15 @@ const calculateMistakeAnalysis = ({
   } else if (tradesLast24h > 5) {
     riskScore += 10;
     mistakeTags.add("OVERTRADING");
+  }
+
+  // ================= RULE 5 — REVENGE TRADING =================
+  if (lastTradePnL < 0 && lastTradeTime) {
+    const timeSinceLoss = (Date.now() - new Date(lastTradeTime).getTime()) / (1000 * 60 * 60);
+    if (timeSinceLoss < 2) {
+      riskScore += 30;
+      mistakeTags.add("REVENGE_TRADING");
+    }
   }
 
   // Clamp score

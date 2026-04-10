@@ -66,7 +66,7 @@ function StockNews({ symbol = "RELIANCE" }) {
       </div>
 
       <div className="grid gap-3">
-        {data.news.map((item, idx) => (
+        {data.news.filter(item => item.relevance === 'HIGH').map((item, idx) => (
           <a
             key={idx}
             href={item.url}
@@ -100,17 +100,15 @@ function StockNews({ symbol = "RELIANCE" }) {
                  <div className="flex items-center gap-1.5">
                     <Clock size={12} className="text-slate-400" />
                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                       {new Date(item.timestamp).toLocaleDateString()}
+                       {item.timestamp ? new Date(item.timestamp).toLocaleDateString() : 'Recent'}
                     </span>
                  </div>
                  <div className="w-1 h-1 rounded-full bg-slate-200" />
                  <span className="text-[10px] font-black text-indigo-500/80 uppercase tracking-widest">{item.source}</span>
                  
-                 {item.relevance === 'HIGH' && (
-                    <div className="ml-auto px-2 py-0.5 bg-indigo-600 text-white text-[8px] font-black rounded-md uppercase tracking-[0.1em]">
-                       Portfolio Impact
-                    </div>
-                 )}
+                 <div className="ml-auto px-2 py-0.5 bg-indigo-600 text-white text-[8px] font-black rounded-md uppercase tracking-[0.1em]">
+                    High Relevance
+                 </div>
               </div>
             </div>
           </a>

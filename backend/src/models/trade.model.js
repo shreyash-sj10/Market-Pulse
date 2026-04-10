@@ -75,6 +75,25 @@ const tradeSchema = new mongoose.Schema(
       type: Number,
       default: null, // Only for SELL trades
     },
+    rawIntent: {
+      type: String,
+      trim: true
+    },
+    parsedIntent: {
+      strategy: { type: String, default: 'General' },
+      confidence: { type: Number, default: 50 },
+      keywords: [String]
+    },
+    marketContextAtEntry: {
+      rsi: Number,
+      trend: String,
+      volatility: Number
+    },
+    missedOpportunity: {
+      maxPotentialProfit: { type: Number, default: 0 },
+      maxProfitPct: { type: Number, default: 0 },
+      peakPrice: { type: Number, default: 0 }
+    }
   },
   {
     timestamps: true,

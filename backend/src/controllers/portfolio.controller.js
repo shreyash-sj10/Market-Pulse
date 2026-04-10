@@ -1,6 +1,6 @@
 const User = require("../models/user.model");
 const Trade = require("../models/trade.model");
-const { getLivePrices } = require("../services/marketData/marketData.service");
+const { getLivePrices } = require("../services/marketData.service");
 const Decimal = require("decimal.js");
 const { analyzeBehavior } = require("../services/behavior.engine");
 const { analyzeProgression } = require("../services/progression.engine");
@@ -31,10 +31,14 @@ const getPortfolioSummary = async (req, res, next) => {
     user.holdings.forEach((data, safeSymbol) => {
       const symbol = fromSafeKey(safeSymbol);
       const livePrice = livePrices[symbol];
+      
+      // Fallback: If live price is temporarily missing, use avgCost as MTM estimate to prevent 503
+      const effectivePrice = livePrice !== undefined ? livePrice : data.avgCost;
       if (livePrice === undefined) {
-        throw new AppError("MARKET_DATA_UNAVAILABLE", 503);
+        console.warn(`[MTM_FALLBACK] Missing live price for ${symbol}, using cost basis.`);
       }
-      const marketValue = new Decimal(data.quantity).mul(livePrice);
+
+      const marketValue = new Decimal(data.quantity).mul(effectivePrice);
       const costBasis = new Decimal(data.quantity).mul(data.avgCost);
       const gain = marketValue.sub(costBasis);
       
@@ -126,9 +130,12 @@ const getPositions = async (req, res, next) => {
 
     const positions = Array.from(user.holdings.entries()).map(([safeSymbol, data]) => {
       const symbol = fromSafeKey(safeSymbol);
-      const currentPrice = livePrices[symbol];
-      if (currentPrice === undefined) {
-        throw new AppError("MARKET_DATA_UNAVAILABLE", 503);
+      const livePrice = livePrices[symbol];
+      
+      // Fallback: Use avgCost as currentPrice if live fetch failed
+      const currentPrice = livePrice !== undefined ? livePrice : data.avgCost;
+      if (livePrice === undefined) {
+        console.warn(`[POS_FALLBACK] Missing live price for ${symbol}`);
       }
 
       const investedValue = new Decimal(data.quantity).mul(data.avgCost).toNumber();
@@ -144,7 +151,7 @@ const getPositions = async (req, res, next) => {
         investedValue,
         currentValue,
         unrealizedPnL,
-        pnlPercentage: Number(((unrealizedPnL / investedValue) * 100).toFixed(2))
+        pnlPercentage: investedValue > 0 ? Number(((unrealizedPnL / investedValue) * 100).toFixed(2)) : 0
       };
     });
 

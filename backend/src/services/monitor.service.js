@@ -1,6 +1,6 @@
 const User = require("../models/user.model");
 const Trade = require("../models/trade.model");
-const marketService = require("./marketData/marketData.service");
+const marketService = require("./marketData.service");
 const tradeService = require("./trade.service");
 const logger = require("../utils/logger");
 

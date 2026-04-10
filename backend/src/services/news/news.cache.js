@@ -28,4 +28,7 @@ const clearOldCache = () => {
     }
 };
 
+// Activate automatic eviction every 15 minutes
+setInterval(clearOldCache, TTL);
+
 module.exports = { getItems, setItems, clearOldCache };

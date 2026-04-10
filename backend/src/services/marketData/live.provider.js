@@ -11,10 +11,23 @@ const CACHE_TTL = 30000; // 30 seconds
  * Primary: Yahoo Finance (supports Indian stocks natively with .NS)
  * Fallback: Finnhub
  */
+/**
+ * SYMBOL NORMALIZER
+ * Logic: 
+ * - If index (^), future (=F), or currency (=X), use as-is (uppercase).
+ * - If already has dot (.), assume it has exchange suffix (uppercase).
+ * - Otherwise, default to National Stock Exchange (.NS).
+ */
+const toYahooSymbol = (symbol) => {
+  const s = symbol.toUpperCase().trim();
+  if (s.startsWith('^') || s.includes('.') || s.endsWith('=F') || s.endsWith('=X')) {
+    return s;
+  }
+  return `${s}.NS`;
+};
+
 const getLivePrice = async (symbol) => {
-  const normalizedSymbol = (symbol.startsWith('^') || symbol.includes('.')) 
-    ? symbol.toUpperCase() 
-    : `${symbol.toUpperCase()}.NS`;
+  const normalizedSymbol = toYahooSymbol(symbol);
   
   // 1. Check Cache
   const cached = cache.get(normalizedSymbol);
@@ -31,7 +44,7 @@ const getLivePrice = async (symbol) => {
 
     const data = {
       symbol: quote.symbol,
-      price: validPrice,
+      price: Math.round(validPrice * 100), // Store as Paise
       changePercent: Number((quote.regularMarketChangePercent || 0).toFixed(2)),
       source: 'PRIMARY_YAHOO'
     };
@@ -43,14 +56,14 @@ const getLivePrice = async (symbol) => {
     // 3. Try Fallback (Finnhub)
     try {
       const finnhubKey = process.env.VITE_FINNHUB_API_KEY;
-      const cleanSymbol = symbol.split('.')[0]; // Finnhub often uses naked tickers
+      const cleanSymbol = symbol.split('.')[0]; 
       const res = await axios.get(`https://finnhub.io/api/v1/quote?symbol=${cleanSymbol}&token=${finnhubKey}`);
       
       if (!res.data.c) throw new Error('NO_DATA_FROM_FALLBACK');
 
       const data = {
         symbol: normalizedSymbol,
-        price: res.data.c,
+        price: Math.round(res.data.c * 100), // Store as Paise
         changePercent: Number((res.data.dp || 0).toFixed(2)),
         source: 'FALLBACK_FINNHUB'
       };
@@ -64,4 +77,62 @@ const getLivePrice = async (symbol) => {
   }
 };
 
-module.exports = { getLivePrice };
+/**
+ * BATCH LIVE PROVIDER
+ * Uses yahooFinance.quote(Array) to fetch multiple prices in a single request.
+ */
+const getLivePricesBatch = async (symbols) => {
+  if (!symbols || !symbols.length) return {};
+  
+  const normalizedSymbols = symbols.map(toYahooSymbol);
+
+  // 1. Separate cached from needed
+  const results = {};
+  const needed = [];
+
+  normalizedSymbols.forEach(s => {
+    const cached = cache.get(s);
+    if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
+      results[s] = cached.data;
+    } else {
+      needed.push(s);
+    }
+  });
+
+  if (needed.length === 0) return results;
+
+  // 2. Fetch missing in one call
+  try {
+    const quotes = await yahooFinance.quote(needed);
+    const quotesArray = Array.isArray(quotes) ? quotes : [quotes];
+
+    quotesArray.forEach(quote => {
+      const sym = (quote.symbol || "").toUpperCase();
+      const validPrice = quote.regularMarketPrice || quote.ask || quote.bid || quote.previousClose || 0;
+      const pricePaise = Math.round(validPrice * 100);
+      
+      const data = {
+        symbol: sym,
+        price: pricePaise,
+        changePercent: Number((quote.regularMarketChangePercent || 0).toFixed(2)),
+        source: 'BATCH_YAHOO'
+      };
+      
+      cache.set(sym, { data, timestamp: Date.now() });
+      results[sym] = data;
+    });
+  } catch (err) {
+    console.error(`[LiveProvider] Batch fetch failed:`, err.message);
+    // Fallback one by one if batch fails (safest)
+    for (const s of needed) {
+      try {
+        const data = await getLivePrice(s);
+        results[s] = data;
+      } catch (e) {}
+    }
+  }
+
+  return results;
+};
+
+module.exports = { getLivePrice, getLivePricesBatch };

@@ -27,7 +27,10 @@ api.interceptors.response.use(
     const originalRequest = error.config;
 
     // If error is 401 and we haven't already retried this request
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    // IMPORTANT: Exclude login/register routes from automatic retry to prevent loops on bad credentials
+    const isAuthPath = originalRequest.url.includes('/auth/login') || originalRequest.url.includes('/auth/register');
+    
+    if (error.response?.status === 401 && !originalRequest._retry && !isAuthPath) {
       originalRequest._retry = true;
 
       const refreshToken = localStorage.getItem("refreshToken");
