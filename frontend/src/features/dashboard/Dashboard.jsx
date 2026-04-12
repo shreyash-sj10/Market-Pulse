@@ -13,17 +13,20 @@ import {
   TrendingDown as SellIcon
 } from "lucide-react";
 import { getPortfolioSummary, getPositions } from "../../services/portfolio.api";
-import { getTradeHistory, sellTrade } from "../../services/trade.api";
+import { getTradeHistory } from "../../services/trade.api";
 import { formatINR } from "../../utils/currency.utils";
 import toast from "react-hot-toast";
 import { useNavigate } from "react-router-dom";
 import PortfolioNews from "../../components/market/PortfolioNews";
+import { getPreTradeGuard } from "../../services/intelligence.api";
+import { executeTrade } from "../../services/trade.api";
+import { AlertTriangle, CheckCircle2, X } from "lucide-react";
 
 const Dashboard = () => {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [sellTarget, setSellTarget] = useState(null);
   const [isSelling, setIsSelling] = useState(false);
+
 
   // Core Data Queries
   const { data: summaryResponse, isLoading: summaryLoading } = useQuery({
@@ -43,35 +46,64 @@ const Dashboard = () => {
     queryFn: () => getTradeHistory(1, 8),
   });
 
-  const summary = summaryResponse?.summary;
+  const summary = summaryResponse?.data;
+
   const positions = posResponse?.positions || [];
   const trades = tradesResponse?.trades || [];
 
-  const handleSellExecute = async () => {
-    if (!sellTarget || isSelling) return;
-    setIsSelling(true);
-    const loadingToast = toast.loading(`Liquidation Protocol: ${sellTarget.symbol}...`);
+  const [selectedSellPos, setSelectedSellPos] = useState(null);
+  const [sellQuantity, setSellQuantity] = useState(0);
+  const [isProcessingSell, setIsProcessingSell] = useState(false);
 
+  const handleSellNavigate = (pos) => {
+    setSelectedSellPos(pos);
+    setSellQuantity(pos.quantity);
+  };
+
+  const handleQuickSell = async () => {
+    if (!selectedSellPos || sellQuantity <= 0) return;
+    
+    setIsProcessingSell(true);
+    const toastId = toast.loading(`Liquidation protocol initiated for ${selectedSellPos.symbol}...`);
+    
     try {
-      await sellTrade({
-        symbol: sellTarget.fullSymbol,
-        quantity: sellTarget.quantity,
-        price: sellTarget.currentPrice,
-        reason: "Manual Liquidiation via Dashboard",
-        userThinking: "Securing gains/cutting exposure from master terminal."
+      // 1. Silent Background Audit (Req'd for Token)
+      const audit = await getPreTradeGuard({
+        symbol: selectedSellPos.symbol,
+        quantity: sellQuantity,
+        price: selectedSellPos.currentPricePaise,
+        side: "SELL",
+        userThinking: "Direct portfolio liquidation via dashboard."
       });
 
-      toast.success("Position liquidated successfully.", { id: loadingToast });
-      setSellTarget(null);
-      queryClient.invalidateQueries({ queryKey: ["portfolio"] });
-      queryClient.invalidateQueries({ queryKey: ["positions"] });
-      queryClient.invalidateQueries({ queryKey: ["trades"] });
+      // 2. Direct Execution
+      await executeTrade({
+        symbol: selectedSellPos.symbol,
+        type: "SELL",
+        quantity: parseInt(sellQuantity),
+        pricePaise: selectedSellPos.currentPricePaise,
+        preTradeToken: audit.token,
+        decisionContext: audit.snapshot,
+        userThinking: "Direct portfolio liquidation via dashboard.",
+        idempotencyKey: `quick-exit-${selectedSellPos.symbol}-${Date.now()}`
+      });
+
+      toast.success("Position successfully liquidated.", { id: toastId });
+      setSelectedSellPos(null);
+      
+      // MASTER CACHE SYNC: Cascade refresh across all institutional layers
+      queryClient.invalidateQueries(["portfolio"]);
+      queryClient.invalidateQueries(["positions"]);
+      queryClient.invalidateQueries(["trades"]);
+      queryClient.invalidateQueries(["tradeHistory"]); // Journal entry
+      queryClient.invalidateQueries(["adaptive-profile"]); // DNA
     } catch (err) {
-      toast.error(err.response?.data?.message || "Execution engine timeout.", { id: loadingToast });
+      toast.error(err.response?.data?.message || "Liquidation failed.", { id: toastId });
     } finally {
-      setIsSelling(false);
+      setIsProcessingSell(false);
     }
   };
+
 
   if (summaryLoading) {
     return (
@@ -210,16 +242,17 @@ const Dashboard = () => {
                       <tr key={pos.symbol} className="group hover:bg-slate-50/50 transition-colors">
                         <td className="py-8 font-black text-slate-900 uppercase tracking-tight">{pos.symbol}</td>
                         <td className="py-8 text-right font-bold text-slate-700">{pos.quantity}</td>
-                        <td className="py-8 text-right font-bold text-indigo-600">{formatINR(pos.currentPrice)}</td>
+                        <td className="py-8 text-right font-bold text-indigo-600">{formatINR(pos.currentPricePaise)}</td>
                         <td className="py-8 text-right">
                           <span className={`font-black tracking-tighter ${pos.unrealizedPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                             {pos.unrealizedPnL >= 0 ? "+" : ""}{formatINR(pos.unrealizedPnL)}
-                            <span className="block text-[8px] opacity-70">({pos.pnlPercentage}%)</span>
+                            <span className="block text-[8px] opacity-70">({pos.pnlPct}%)</span>
                           </span>
                         </td>
+
                         <td className="py-8 text-center">
                           <button
-                            onClick={() => setSellTarget(pos)}
+                            onClick={() => handleSellNavigate(pos)}
                             className="p-3 bg-rose-50 text-rose-600 rounded-xl hover:bg-rose-600 hover:text-white transition-all shadow-sm"
                           >
                             <SellIcon size={16} />
@@ -232,6 +265,87 @@ const Dashboard = () => {
               </div>
             )}
           </div>
+
+          {/* ⚡ QUICK SELL MODAL ⚡ */}
+          <AnimatePresence>
+            {selectedSellPos && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-6 sm:p-0">
+                <motion.div 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={() => !isProcessingSell && setSelectedSellPos(null)}
+                  className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+                />
+                
+                <motion.div 
+                  initial={{ scale: 0.95, opacity: 0, y: 20 }}
+                  animate={{ scale: 1, opacity: 1, y: 0 }}
+                  exit={{ scale: 0.95, opacity: 0, y: 20 }}
+                  className="relative w-full max-w-md bg-white rounded-[2.5rem] shadow-2xl overflow-hidden"
+                >
+                  <div className="p-10 space-y-8">
+                    <div className="flex items-center justify-between">
+                       <div className="flex items-center gap-3">
+                          <div className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Liquidation Node</span>
+                       </div>
+                       <button onClick={() => setSelectedSellPos(null)} className="text-slate-400 hover:text-slate-900">
+                          <X size={20} />
+                       </button>
+                    </div>
+
+                    <div className="space-y-2">
+                       <h2 className="text-3xl font-black text-slate-900 tracking-tight">Exit {selectedSellPos.symbol.replace('.NS','')}</h2>
+                       <p className="text-slate-500 text-sm font-medium">Verify liquidation volume before authorizing execution.</p>
+                    </div>
+
+                    <div className="p-8 bg-slate-50 rounded-3xl space-y-4">
+                       <div className="flex justify-between items-center text-[10px] font-black uppercase text-slate-400 tracking-widest">
+                          <span>Quantity to Sell</span>
+                          <span className="text-slate-900">Max: {selectedSellPos.quantity}</span>
+                       </div>
+                       <input 
+                          type="number"
+                          value={sellQuantity}
+                          onChange={(e) => setSellQuantity(Math.min(selectedSellPos.quantity, Math.max(0, parseInt(e.target.value) || 0)))}
+                          className="w-full bg-transparent text-4xl font-black text-slate-900 outline-none border-b-2 border-slate-200 focus:border-rose-500 py-2 transition-all"
+                       />
+                       <div className="flex justify-between items-center">
+                          <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Est. Proceeds</span>
+                          <span className="text-lg font-black text-emerald-600">{formatINR(sellQuantity * selectedSellPos.currentPricePaise)}</span>
+                       </div>
+                    </div>
+
+                    <div className="flex items-start gap-3 p-4 bg-amber-50 rounded-2xl border border-amber-100">
+                       <AlertTriangle size={18} className="text-amber-600 shrink-0 mt-0.5" />
+                       <p className="text-[11px] font-bold text-amber-800 leading-relaxed">
+                          Authorizing this will execute an immediate market-sell. The institutional audit will be bypassed manually via direct terminal override.
+                       </p>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                       <button 
+                         onClick={() => setSelectedSellPos(null)}
+                         disabled={isProcessingSell}
+                         className="py-4 bg-slate-100 text-slate-900 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all disabled:opacity-50"
+                       >
+                         Abort
+                       </button>
+                       <button 
+                         onClick={handleQuickSell}
+                         disabled={isProcessingSell || sellQuantity <= 0}
+                         className="py-4 bg-rose-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-rose-700 shadow-xl shadow-rose-200 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                       >
+                         {isProcessingSell ? <Activity size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+                         {isProcessingSell ? "Syncing..." : "Confirm Exit"}
+                       </button>
+                    </div>
+                  </div>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
 
           {/* PORTFOLIO IMPACT NEWS */}
           <div className="mt-10">
@@ -333,7 +447,7 @@ const Dashboard = () => {
                       {/* Patterns Evidence */}
                       <div className="space-y-3">
                         <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest px-1 block">Pattern Evidence</span>
-                        {summary.behaviorInsights.patterns.map((p, index) => (
+                        {summary.behaviorInsights.patterns?.map((p, index) => (
                           <div key={`${p.name}-${index}`} className="bg-white p-5 rounded-3xl border border-slate-100 space-y-3 shadow-sm">
                             <div className="flex justify-between items-center">
                               <div className="flex flex-col">
@@ -352,8 +466,8 @@ const Dashboard = () => {
                               />
                             </div>
                             <div className="flex justify-between items-center text-[8px] font-bold text-slate-400 uppercase">
-                              <span>Matches: {p.evidence.matches}</span>
-                              <span>Total Ops: {p.evidence.opportunities}</span>
+                              <span>Matches: {p.evidence?.matches || 0}</span>
+                              <span>Total Ops: {p.evidence?.opportunities || 0}</span>
                             </div>
                           </div>
                         ))}
@@ -371,7 +485,8 @@ const Dashboard = () => {
                               </span>
                             </div>
                             <div className="space-y-3">
-                              {summary.behaviorInsights.progression.changes.map((c, index) => (
+                              {summary.behaviorInsights.progression.changes?.map((c, index) => (
+
                                 <div key={`${c.metric}-${index}`} className="flex items-center justify-between">
                                   <span className="text-[8px] font-bold text-slate-400 uppercase">{c.metric}</span>
                                   <span className={`text-[10px] font-black ${c.status === 'IMPROVED' ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -403,57 +518,7 @@ const Dashboard = () => {
 
       </div>
 
-      {/* ── SELL CONFIRM MODAL ── */}
-      <AnimatePresence>
-        {sellTarget && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
-              onClick={() => setSellTarget(null)}
-            />
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white rounded-[2.5rem] w-full max-w-sm overflow-hidden shadow-2xl relative z-10"
-            >
-              <div className="p-10 text-center">
-                <div className="w-16 h-16 bg-rose-50 text-rose-600 rounded-3xl flex items-center justify-center mx-auto mb-6">
-                  <SellIcon size={32} />
-                </div>
-                <h3 className="text-2xl font-black text-slate-900 tracking-tight mb-2">Authorize Liquidation</h3>
-                <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-10">Confirming exit for {sellTarget.symbol}</p>
 
-                <div className="space-y-4 mb-10">
-                  <div className="flex justify-between py-3 border-b border-slate-100">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase">Exit Price</span>
-                    <span className="text-sm font-black text-slate-900">{formatINR(sellTarget.currentPrice)}</span>
-                  </div>
-                  <div className="flex justify-between py-3">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase">Est. Value</span>
-                    <span className="text-sm font-black text-slate-900">{formatINR(sellTarget.currentValuePaise)}</span>
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-3">
-                  <button
-                    onClick={handleSellExecute}
-                    disabled={isSelling}
-                    className="w-full py-4 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-[10px] uppercase tracking-widest transition-all shadow-lg shadow-rose-600/20"
-                  >
-                    {isSelling ? 'Initializing...' : 'Confirm Liquidation'}
-                  </button>
-                  <button
-                    onClick={() => setSellTarget(null)}
-                    className="w-full py-4 text-slate-400 hover:text-slate-900 font-bold text-[10px] uppercase tracking-widest transition-all"
-                  >
-                    Abort Flow
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </motion.div>
   );
 };

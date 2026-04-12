@@ -3,13 +3,15 @@ const Trade = require("../../models/trade.model");
 const adaptiveEngine = require("./adaptiveEngine.service");
 const { parseTradeIntent, generateExplanation, generateFinalTradeCall } = require("../aiExplanation.service");
 const { validateStrategy } = require("../strategy.engine");
+const { issueDecisionToken } = require("./preTradeAuthority.store");
+const { toHoldingsObject } = require("../../utils/holdingsNormalizer");
+const logger = require("../../lib/logger");
 
 /**
  * PRE-TRADE DECISION SNAPSHOT ENGINE
- * Enforces institutional decision layers before capital deployment.
  */
-
 const getBehavioralFlags = async (user) => {
+
   const lastTrades = await Trade.find({ user: user._id }).sort({ createdAt: -1 }).limit(5);
   const flags = [];
   
@@ -23,21 +25,32 @@ const getBehavioralFlags = async (user) => {
 };
 
 const checkTradeRisk = async (tradeRequest, user) => {
-  const { symbol, side, price, quantity, stopLoss, targetPrice, userThinking } = tradeRequest;
+  const { 
+    symbol, side, quantity, userThinking,
+    pricePaise: rawPricePaise, price,
+    stopLossPaise: rawSLPaise, stopLoss,
+    targetPricePaise: rawTPPaise, targetPrice
+  } = tradeRequest;
   
+  const finalPrice = Math.round(rawPricePaise ?? price ?? 0);
+  const finalSL = Math.round(rawSLPaise ?? stopLoss ?? 0);
+  const finalTP = Math.round(rawTPPaise ?? targetPrice ?? 0);
+
   // 0. Plan Geometry Calculations
-  const riskPerUnit = Math.abs(price - stopLoss);
-  const rewardPerUnit = Math.abs(targetPrice - price);
+  const riskPerUnit = Math.abs(finalPrice - finalSL);
+  const rewardPerUnit = Math.abs(finalTP - finalPrice);
   const rrRatio = riskPerUnit > 0 ? Number((rewardPerUnit / riskPerUnit).toFixed(2)) : 0;
 
+
   // LAYER 1: MARKET INTELLIGENCE
-  const newsResponse = await newsEngine.getProcessedNews(symbol);
+  const holdings = toHoldingsObject(user?.holdings);
+  const newsResponse = await newsEngine.getProcessedNews(symbol, holdings);
   const consensus = newsResponse.signals?.[0] || { verdict: "WAIT", confidence: 50, mechanism: "No clear consensus data." };
 
   // LAYER 2: TRADE SETUP (AI Intent + Strategy Rule)
   const parsedIntent = await parseTradeIntent(userThinking);
   const strategyAudit = validateStrategy(parsedIntent.strategy, {
-     price,
+     price: finalPrice,
      side,
      marketTrend: consensus.verdict === "BUY" ? "UP" : "DOWN",
      context: consensus.mechanism
@@ -78,9 +91,31 @@ const checkTradeRisk = async (tradeRequest, user) => {
      finalScore
   }, { verdict });
 
+  const authority = issueDecisionToken({
+    symbol,
+    pricePaise: finalPrice,
+    quantity,
+    stopLossPaise: finalSL,
+    targetPricePaise: finalTP,
+    verdict,
+  });
+
+  logger.info({
+    action: "PRE_TRADE_AUDIT",
+    userId: user._id,
+    symbol,
+    verdict,
+    score: finalScore,
+    status: "SUCCESS"
+  });
+
+
+
   // CONSTRUCT THE SNAPSHOT
   return {
     success: true,
+    token: authority.token,
+    expiresAt: authority.expiresAt,
     snapshot: {
        market: {
           direction: consensus.verdict,
@@ -135,7 +170,12 @@ const checkTradeRisk = async (tradeRequest, user) => {
           level: verdict === "BUY" ? "OPTIMAL" : verdict === "WAIT" ? "CAUTION" : "EXTREME"
        },
        verdict: aiDecision
-    }
+    },
+    authority: {
+      token: authority.token,
+      expiresAt: authority.expiresAt,
+      verdict,
+    },
   };
 };
 

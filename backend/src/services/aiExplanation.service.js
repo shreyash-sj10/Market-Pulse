@@ -44,24 +44,16 @@ Rules:
       generationConfig: { responseMimeType: "application/json" }
     });
 
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error("AI timeout")), 10000);
-    });
-
     const result = await Promise.race([
       model.generateContent(prompt),
-      timeoutPromise,
+      timeoutPromise
     ]);
 
-    const response = await result.response;
-    const data = JSON.parse(response.text());
-
-    return {
-      explanation: data.explanation,
-      behaviorAnalysis: data.behaviorAnalysis
-    };
+    const responseText = result.response.text();
+    return JSON.parse(responseText);
   } catch (error) {
-    console.error("[AI Service Error]", error);
+    const logger = require("../lib/logger");
+    logger.error({ action: "AI_GENERATION_FAILED", error: error.message, model: "gemini-1.5-flash" });
     return generateDeterministicExplanation(riskScore, mistakeTags);
   }
 };
@@ -306,11 +298,40 @@ const generateFinalTradeCall = async (inputs, context = {}) => {
   }
 };
 
+const summarizeMarketDrivers = async (headlines) => {
+  if (!headlines || headlines.length === 0 || !process.env.GEMINI_API_KEY) {
+    return ["General market movement observed."];
+  }
+
+  const prompt = `You are a financial news summarizer. 
+  Headlines: ${headlines.join(" | ")}
+  
+  Extract the 3 most significant market themes/drivers from these headlines.
+  Return ONE JSON array of strings, each string maximum 10 words.
+  Response MUST be valid JSON array of strings.`;
+
+  try {
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash",
+      generationConfig: { responseMimeType: "application/json" }
+    });
+
+    const result = await model.generateContent(prompt);
+    return JSON.parse(result.response.text());
+  } catch (error) {
+    console.error("[AI Summary Error]", error);
+    return headlines.slice(0, 3);
+  }
+};
+
 module.exports = {
   generateExplanation,
   generateMarketInsight,
   parseTradeIntent,
   generateTradeReviewSummary,
   interpretMarketSignal,
-  generateFinalTradeCall
+  generateFinalTradeCall,
+  summarizeMarketDrivers
 };
+

@@ -1,20 +1,31 @@
-const logger = require("../utils/logger");
+const logger = require("../lib/logger");
 
 const errorHandler = (err, req, res, next) => {
-  const statusCode = err.statusCode || 500; // Default to 500 Internal Server Error
+  const statusCode = err.statusCode || 500;
   const message = err.message || "Internal Server Error";
 
-  if (statusCode >= 400 && statusCode < 500) {
-    logger.warn(`[${statusCode}] ${message} - ${req.originalUrl}`);
+  const logData = {
+    requestId: req.requestId,
+    userId: req.user?._id,
+    route: req.originalUrl,
+    statusCode,
+    message,
+  };
+
+  if (statusCode >= 500) {
+    logger.error({
+      ...logData,
+      stack: process.env.NODE_ENV !== "production" ? err.stack : undefined
+    });
   } else {
-    logger.error(`[${statusCode}] ${message} - ${req.originalUrl}\n${err.stack}`);
+    logger.warn(logData);
   }
 
-  // Send JSON response with error details
   res.status(statusCode).json({
     success: false,
+    requestId: req.requestId,
     message: statusCode === 500 && process.env.NODE_ENV === "production"
-      ? "An internal server error occurred"
+      ? "An internal server error occurred. Please contact institutional support."
       : message,
   });
 };

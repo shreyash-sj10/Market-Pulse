@@ -94,7 +94,7 @@ const SystemDashboard = () => {
                     </div>
                     <div className="flex justify-between items-center">
                        <span className="text-xs font-bold text-slate-400">Dominant Mistake</span>
-                       <span className="text-xl font-black text-indigo-400">{summary?.summary?.behaviorInsights?.dominantMistake || "NONE"}</span>
+                       <span className="text-xl font-black text-indigo-400">{summary?.data?.behaviorInsights?.dominantMistake || "NONE"}</span>
                     </div>
                  </div>
               </div>

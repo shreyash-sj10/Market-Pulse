@@ -1,90 +1,87 @@
 const { analyzeBehavior } = require("./behavior.engine");
 
 /**
- * PROGRESSION ENGINE
- * Compares snapshots of trading behavior across time to track strategic growth.
- * Built on deterministic delta-analysis (No AI).
+ * PROGRESSION ENGINE (REBUILT)
+ * Segment-based temporal analysis comparing recent performance to historical baselines.
  */
-const analyzeProgression = (trades) => {
-  // Lower threshold for early visibility
-  if (!trades || trades.length < 2) {
-    return { success: false, error: "INITIAL_COLLECTION_PHASE", message: "Accumulate more session data to unlock progression analytics." };
+const analyzeProgression = (closedTrades) => {
+  if (!closedTrades || closedTrades.length < 5) {
+    return {
+      success: false,
+      trend: "STABLE",
+      changes: [],
+      narrative: "Initial performance window established. Accumulate more trades to unlock progression tracking."
+    };
   }
 
-  // Snapshot Windows
-  const tradeCount = trades.length;
-  const recentWindowSize = Math.max(1, Math.floor(tradeCount / 2));
-  const recentWindow = trades.slice(-recentWindowSize);
-  const pastWindow = trades.slice(0, tradeCount - recentWindowSize);
+  // Ensure chronological order
+  const sorted = [...closedTrades].sort((a, b) => a.exitTime - b.exitTime);
 
-  if (pastWindow.length === 0) {
-     return { success: false, error: "PENDING_DELTA", message: "Initial session established. Delta analysis pending next execution." };
+  // Segment: RECENT (Last 20) vs PAST (Previous 20)
+  const recent = sorted.slice(-20);
+  const remainder = sorted.slice(0, -20);
+  const past = remainder.slice(-20);
+
+  if (past.length === 0) {
+    return {
+      success: false,
+      trend: "STABLE",
+      changes: [],
+      narrative: "Baseline data established. Comparison window will open after 20 trades."
+    };
   }
 
-  // 2. Compute Metrics for Each Window
-  const recentAnalysis = analyzeBehavior(recentWindow);
-  const pastAnalysis = analyzeBehavior(pastWindow);
+  // 1. Analyze Behavioral Discipline per window
+  const recentBeh = analyzeBehavior(recent);
+  const pastBeh = analyzeBehavior(past);
 
-  // Fallback if behavior engine fails on subsets (e.g. fewer than 10 trades in past)
-  if (!recentAnalysis.success || !pastAnalysis.success) {
-     // If subsets are too small for behavior engine's 10-trade limit, we handle it
-     // But since we checked for 20 trades total, and 40 for full windows, we are likely okay.
-     return { success: false, error: "INSUFFICIENT_WINDOW_DENSITY" };
-  }
+  // 2. Compute Segment Metrics
+  const calculateWinRate = (arr) => arr.filter(t => t.pnl > 0).length / (arr.length || 1);
+  const calculateAvgRR = (arr) => arr.reduce((acc, t) => acc + (t.rr || 0), 0) / (arr.length || 1);
+  const calculateAvgHold = (arr) => arr.reduce((acc, t) => acc + (t.holdTime || 0), 0) / (arr.length || 1);
 
   const metrics = [
-    { key: "winRate", value: (t) => t.filter(x => x.pnl > 0).length / t.length, higherIsBetter: true },
-    { key: "avgRiskScore", value: () => recentAnalysis.riskProfile.avgRiskScore, pastValue: pastAnalysis.riskProfile.avgRiskScore, higherIsBetter: false },
-    { key: "disciplineScore", value: () => recentAnalysis.riskProfile.disciplineScore, pastValue: pastAnalysis.riskProfile.disciplineScore, higherIsBetter: true },
-    { key: "consistencyScore", value: () => recentAnalysis.riskProfile.consistencyScore, pastValue: pastAnalysis.riskProfile.consistencyScore, higherIsBetter: true }
+    { name: "Win Rate", current: calculateWinRate(recent) * 100, previous: calculateWinRate(past) * 100, higherIsBetter: true },
+    { name: "Discipline", current: recentBeh.disciplineScore, previous: pastBeh.disciplineScore, higherIsBetter: true },
+    { name: "Plan RR", current: calculateAvgRR(recent), previous: calculateAvgRR(past), higherIsBetter: true },
+    { name: "Avg Hold Time", current: calculateAvgHold(recent), previous: calculateAvgHold(past), higherIsBetter: false }
   ];
 
-  // 3. Compute Deltas
-  const THRESHOLD = 2; // Ignore changes smaller than 2 units/percent
-  const changes = [];
-  let improvingCount = 0;
-  let decliningCount = 0;
+  // 3. Detect Changes
+  const changes = metrics.map(m => {
+    const delta = m.current - m.previous;
+    const threshold = m.name === "Avg Hold Time" ? 60000 : 0.5; // 1 min or 0.5 units
+    
+    if (Math.abs(delta) < threshold) return { metric: m.name, status: "STABLE", delta: 0 };
+    
+    const isImprovement = m.higherIsBetter ? delta > 0 : delta < 0;
+    return {
+      metric: m.name,
+      status: isImprovement ? "IMPROVED" : "DECLINED",
+      delta: Number(delta.toFixed(2))
+    };
+  }).filter(c => c.status !== "STABLE");
 
-  metrics.forEach(m => {
-    const recentVal = m.key === "winRate" ? m.value(recentWindow) * 100 : m.value();
-    const pastVal = m.key === "winRate" ? m.value(pastWindow) * 100 : m.pastValue;
+  // 4. Final Verdict
+  const improvements = changes.filter(c => c.status === "IMPROVED").length;
+  const declines = changes.filter(c => c.status === "DECLINED").length;
 
-    const delta = recentVal - pastVal;
-
-    if (Math.abs(delta) >= THRESHOLD) {
-      const isImprovement = m.higherIsBetter ? delta > 0 : delta < 0;
-      if (isImprovement) improvingCount++;
-      else decliningCount++;
-
-      changes.push({
-        metric: m.key,
-        direction: delta > 0 ? "UP" : "DOWN",
-        magnitude: Number(Math.abs(delta).toFixed(2)),
-        status: isImprovement ? "IMPROVED" : "DECLINED"
-      });
-    }
-  });
-
-  // 4. Determine Trend
   let trend = "STABLE";
-  let narrative = "Your trading behavior remains stable. No significant progression or regression detected in recent sessions.";
+  let narrative = "Your trading behavior is consistent with your historical norms.";
 
-  if (improvingCount > decliningCount) {
+  if (improvements > declines) {
     trend = "IMPROVING";
-    narrative = "Your trading discipline is improving. You are adhering more strictly to strategy protocols than in previous sessions.";
-  } else if (decliningCount > improvingCount) {
+    narrative = "Strategic growth detected. You are executing with higher precision and better risk management than in previous sessions.";
+  } else if (declines > improvements) {
     trend = "DECLINING";
-    narrative = "Your recent trades show increased risk or declining discipline. Strategy adherence is deviating from historical norms.";
+    narrative = "Process erosion detected. Recent execution patterns indicate a decline in discipline or strategy adherence.";
   }
 
   return {
     success: true,
-    progression: {
-      trend,
-      changes,
-      narrative,
-      metricDeltas: changes.reduce((acc, c) => ({ ...acc, [c.metric]: (c.direction === "UP" ? "+" : "-") + c.magnitude }), {})
-    }
+    trend,
+    changes,
+    narrative
   };
 };
 

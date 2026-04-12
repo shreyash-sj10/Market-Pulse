@@ -1,168 +1,117 @@
-const Decimal = require("decimal.js");
-
 /**
- * BEHAVIORAL PATTERN ENGINE (Deterministic Rule-Based)
- * Analyzes round-trip trades to detect psychological and strategic failure patterns.
+ * BEHAVIOR ENGINE (FIXED)
+ * Strictly consumes ClosedTrade objects to detect psychological failure patterns.
  */
-const analyzeBehavior = (trades) => {
-  // Lower threshold for "Institutional" but "Dynamic" start
-  if (!trades || trades.length === 0) {
-    return { success: false, error: "NO_TRADES" };
-  }
-
-  // Filter out any incomplete trades
-  const closedTrades = trades.filter(t => t.type === 'SELL');
-  if (closedTrades.length === 0 && trades.length > 0) {
-    // If only BUY trades exist, we can still provide a basic risk profile
-    const avgRisk = trades.reduce((acc, t) => acc + (t.analysis?.riskScore || 50), 0) / trades.length;
-    return {
-      success: true,
+const analyzeBehavior = (closedTrades) => {
+  if (!closedTrades || !Array.isArray(closedTrades) || closedTrades.length === 0) {
+    return { 
+      success: false, 
       patterns: [],
-      dominantMistake: "None Detected",
-      mistakeFrequency: {},
-      riskProfile: {
-        riskTolerance: avgRisk > 70 ? "Aggressive" : avgRisk > 40 ? "Moderate" : "Conservative",
-        consistencyScore: 100,
-        disciplineScore: 100,
-        avgRiskScore: Number(avgRisk.toFixed(2))
-      }
+      dominantMistake: "NONE",
+      disciplineScore: 100
     };
   }
 
-  // Sort by closedAt to maintain chronological sequence
-  const sorted = [...closedTrades].sort((a, b) => new Date(a.closedAt) - new Date(b.closedAt));
+  // Ensure chronological order by exit time for consistent pattern detection
+  const validClosedTrades = closedTrades.filter(t => t && t.exitTime && t.entryTime);
+  const sorted = [...validClosedTrades].sort((a, b) => a.exitTime - b.exitTime);
+  
+  if (sorted.length === 0) {
+     return { success: false, patterns: [], dominantMistake: "NONE", disciplineScore: 100 };
+  }
 
-  const stats = {
-    total: sorted.length,
-    wins: sorted.filter(t => t.pnl > 0).length,
-    losses: sorted.filter(t => t.pnl <= 0).length,
-  };
-
-  const winRate = stats.wins / stats.total;
-
-  // Pattern Detection logic
   const patterns = [];
 
   // 1. REVENGE TRADING
-  let revengeMatches = 0;
-  let revengeOpportunities = 0;
+  // Rule: New trade entry within 60 minutes after a realized loss.
+  let revengeCount = 0;
   for (let i = 1; i < sorted.length; i++) {
     const prev = sorted[i - 1];
     const curr = sorted[i];
-    if (prev.pnl <= 0) {
-      revengeOpportunities++;
-      const timeGap = (new Date(curr.createdAt) - new Date(prev.closedAt)) / (1000 * 60);
-      if (timeGap < 60 && curr.riskScore > prev.riskScore) {
-        revengeMatches++;
+    if (prev.pnl < 0) {
+      const timeGapMin = (curr.entryTime - prev.exitTime) / (1000 * 60);
+      if (timeGapMin > 0 && timeGapMin < 60) {
+        revengeCount++;
       }
     }
   }
-  const revengeConfidence = revengeOpportunities > 0 ? revengeMatches / revengeOpportunities : 0;
-  if (revengeConfidence >= 0.3) {
+  if (revengeCount > 0) {
     patterns.push({ 
-      name: "Revenge Trading", 
-      confidence: Number((revengeConfidence * 100).toFixed(0)), 
-      severity: revengeConfidence > 0.6 ? "CRITICAL" : "MODERATE",
-      evidence: { matches: revengeMatches, opportunities: revengeOpportunities },
-      description: "Capital exposure increased immediately following a realized loss." 
+      type: "REVENGE_TRADING", 
+      confidence: Math.min(100, (revengeCount / sorted.length) * 200), 
+      count: revengeCount 
     });
   }
 
   // 2. OVERTRADING
-  const days = Math.max(1, (new Date(sorted[sorted.length - 1].closedAt) - new Date(sorted[0].createdAt)) / (1000 * 60 * 60 * 24));
-  const tradesPerDay = sorted.length / days;
-  const overtradingConfidence = tradesPerDay > 5 ? Math.min(1, tradesPerDay / 10) : 0;
-  if (overtradingConfidence >= 0.3) {
+  // Rule: Execution frequency > 5 trades per day.
+  const firstTime = sorted[0].entryTime;
+  const lastTime = sorted[sorted.length - 1].exitTime;
+  const totalDays = Math.max(1, (lastTime - firstTime) / (1000 * 60 * 60 * 24));
+  const tradesPerDay = sorted.length / totalDays;
+  if (tradesPerDay > 5) {
     patterns.push({ 
-      name: "Overtrading", 
-      confidence: Number((overtradingConfidence * 100).toFixed(0)), 
-      severity: tradesPerDay > 8 ? "CRITICAL" : "MODERATE",
-      evidence: { frequency: Number(tradesPerDay.toFixed(1)), benchmark: 5 },
-      description: "Excessive execution frequency detected relative to market opportunity." 
+      type: "OVERTRADING", 
+      confidence: Math.min(100, (tradesPerDay / 5) * 50), 
+      count: Math.round(tradesPerDay) 
     });
   }
 
-  // 3. EARLY EXIT
-  const winTrades = sorted.filter(t => t.pnl > 0);
-  const avgProfitPct = winTrades.reduce((acc, t) => acc + (t.profitPct || 0), 0) / (winTrades.length || 1);
-  if (avgProfitPct < 0.02 && winRate > 0.4) {
+  // 3. EARLY EXIT PATTERN
+  // Rule: Repeated deviation from target in profitable trades.
+  const earlyExits = sorted.filter(t => 
+    t.behaviorTags?.includes("EARLY_EXIT") || 
+    t.decisionSnapshot?.exit?.executionPattern === "EARLY_EXIT"
+  ).length;
+  if (earlyExits > 0) {
     patterns.push({ 
-      name: "Early Exit", 
-      confidence: 80, 
-      severity: "MODERATE",
-      evidence: { avgReturn: Number((avgProfitPct * 100).toFixed(2)), winRate: Number((winRate * 100).toFixed(0)) },
-      description: "Positions liquidated prematurely before reaching full alpha potential." 
+      type: "EARLY_EXIT_PATTERN", 
+      confidence: Math.min(100, (earlyExits / sorted.length) * 150), 
+      count: earlyExits 
     });
   }
 
   // 4. HOLDING LOSERS
-  const lossTrades = sorted.filter(t => t.pnl <= 0);
-  const avgWinDuration = winTrades.reduce((acc, t) => acc + (new Date(t.closedAt) - new Date(t.createdAt)), 0) / (winTrades.length || 1);
-  const avgLossDuration = lossTrades.reduce((acc, t) => acc + (new Date(t.closedAt) - new Date(t.createdAt)), 0) / (lossTrades.length || 1);
-  if (avgLossDuration > avgWinDuration) {
+  // Rule: Average hold time for losses > 1.5x average hold time for wins.
+  const losses = sorted.filter(t => t.pnl < 0);
+  const wins = sorted.filter(t => t.pnl > 0);
+  const avgLossHold = losses.reduce((acc, t) => acc + t.holdTime, 0) / (losses.length || 1);
+  const avgWinHold = wins.reduce((acc, t) => acc + t.holdTime, 0) / (wins.length || 1);
+  if (avgLossHold > avgWinHold * 1.5 && losses.length > 0) {
     patterns.push({ 
-      name: "Holding Losers", 
-      confidence: 70, 
-      severity: avgLossDuration > avgWinDuration * 2 ? "CRITICAL" : "MODERATE",
-      evidence: { lossDurationMin: Math.round(avgLossDuration/60000), winDurationMin: Math.round(avgWinDuration/60000) },
-      description: "Exposure to drawdown maintained significantly longer than winning sessions." 
+      type: "HOLDING_LOSERS", 
+      confidence: 85, 
+      count: losses.length 
     });
   }
 
   // 5. AVERAGING DOWN
-  let avgDownMatches = 0;
-  let avgDownOpportunities = 0;
-  for (let i = 1; i < sorted.length; i++) {
-    const prev = sorted[i - 1];
-    const curr = sorted[i];
-    if (prev.pnl <= 0) {
-      avgDownOpportunities++;
-      const timeGap = (new Date(curr.createdAt) - new Date(prev.closedAt)) / (1000 * 60);
-      if (timeGap < 120 && curr.symbol === prev.symbol) {
-        avgDownMatches++;
-      }
-    }
-  }
-  const avgDownConfidence = avgDownOpportunities > 0 ? avgDownMatches / avgDownOpportunities : 0;
-  if (avgDownConfidence >= 0.3) {
-    patterns.push({ 
-      name: "Averaging Down", 
-      confidence: Number((avgDownConfidence * 100).toFixed(0)), 
-      severity: avgDownConfidence > 0.5 ? "CRITICAL" : "MODERATE",
-      evidence: { matches: avgDownMatches, opportunities: avgDownOpportunities },
-      description: "Capital injected into depreciating assets to lower cost basis." 
-    });
-  }
-
-  // Dominant Mistake
-  const sortedByConfidence = [...patterns].sort((a, b) => b.confidence - a.confidence);
-  const dominantMistake = sortedByConfidence[0]?.name || "None Detected";
-
-  // Risk Profile
-  const avgRiskScore = sorted.reduce((acc, t) => acc + (t.riskScore || 0), 0) / sorted.length;
-  // Variance
-  const variance = sorted.reduce((acc, t) => acc + Math.pow((t.riskScore || 0) - avgRiskScore, 2), 0) / sorted.length;
-  const consistencyScore = Math.max(0, 100 - Math.sqrt(variance) * 2);
-  const disciplineScore = Math.max(0, 100 - patterns.length * 15);
-
-  const mistakeFrequency = {};
+  // Multiple entries for the same asset while previous entry is in drawdown.
+  let avgDownCount = 0;
+  const activeEntries = new Map(); // symbol -> lastEntryTime
   sorted.forEach(t => {
-    (t.analysis?.mistakeTags || []).forEach(tag => {
-      mistakeFrequency[tag] = (mistakeFrequency[tag] || 0) + 1;
-    });
+    if (activeEntries.has(t.symbol)) {
+       const prevTime = activeEntries.get(t.symbol);
+       if (t.entryTime < prevTime + (1000 * 60 * 60 * 4)) { // Within 4 hours of same symbol
+          avgDownCount++;
+       }
+    }
+    activeEntries.set(t.symbol, t.entryTime);
   });
+  if (avgDownCount > 0) {
+    patterns.push({ type: "AVERAGING_DOWN", confidence: 70, count: avgDownCount });
+  }
+
+  // Calculate Discipline Score
+  // Weighted penalty for each detected pattern
+  const totalPenalty = patterns.reduce((acc, p) => acc + (p.confidence / 2), 0);
+  const disciplineScore = Math.max(0, 100 - totalPenalty);
 
   return {
     success: true,
     patterns,
-    dominantMistake,
-    mistakeFrequency,
-    riskProfile: {
-      riskTolerance: avgRiskScore > 70 ? "Aggressive" : avgRiskScore > 40 ? "Moderate" : "Conservative",
-      consistencyScore: Number(consistencyScore.toFixed(2)),
-      disciplineScore: Number(disciplineScore.toFixed(2)),
-      avgRiskScore: Number(avgRiskScore.toFixed(2))
-    }
+    dominantMistake: patterns.sort((a, b) => b.confidence - a.confidence)[0]?.type || "NONE",
+    disciplineScore: Number(disciplineScore.toFixed(2))
   };
 };
 

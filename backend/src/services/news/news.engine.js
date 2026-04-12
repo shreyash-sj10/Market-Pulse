@@ -3,12 +3,14 @@ const yahooProvider = require('./news.provider.yahoo');
 const cache = require('./news.cache');
 const classificationEngine = require('./classification.engine');
 const hybridService = require('./hybridIntelligence.service');
+const { toHoldingsArray, toHoldingsLookup } = require('../../utils/holdingsNormalizer');
 
 /**
  * HYBRID TRADE EXECUTION ENGINE (NEWS/SIGNAL LAYER)
  * Pipeline: Interpretation (AI) -> Classification (Rule) -> Consensus (AI) -> Verdict (Rule)
  */
 const getProcessedNews = async (symbol, userHoldings = {}) => {
+  const holdingsLookup = toHoldingsLookup(userHoldings);
   const previousData = cache.getItems(symbol);
   
   // 1. Fetch via Waterfall
@@ -33,7 +35,7 @@ const getProcessedNews = async (symbol, userHoldings = {}) => {
     // Rule Step 2: Classification Mapping
     const text = `${rawHeadline} ${item.summary || ""}`;
     const country = classificationEngine.detectCountry(text);
-    const relevance = classificationEngine.getRelevance(symbol, text, userHoldings);
+    const relevance = classificationEngine.getRelevance(symbol, text, holdingsLookup);
     const sector = classificationEngine.mapSector(text);
 
     return {
@@ -108,7 +110,9 @@ const getProcessedNews = async (symbol, userHoldings = {}) => {
  * PORTFOLIO INTELLIGENCE (Strict Decision Mode)
  */
 const getPortfolioNews = async (userHoldings = {}) => {
-  const symbols = Object.keys(userHoldings).slice(0, 15);
+  const holdingsArray = toHoldingsArray(userHoldings);
+  const holdingsLookup = toHoldingsLookup(userHoldings);
+  const symbols = holdingsArray.map((h) => h.symbol).slice(0, 15);
   
   if (!symbols.length) {
     return { 
@@ -128,7 +132,7 @@ const getPortfolioNews = async (userHoldings = {}) => {
     };
   }
 
-  const results = await Promise.allSettled(symbols.map(s => getProcessedNews(s, userHoldings)));
+  const results = await Promise.allSettled(symbols.map(s => getProcessedNews(s, holdingsLookup)));
   const allSignals = results.filter(r => r.status === 'fulfilled').map(r => r.value.signals).flat();
   
   // Clean signals for Portfolio (Unique by symbol)

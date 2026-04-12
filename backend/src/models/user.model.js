@@ -54,6 +54,14 @@ const userSchema = new mongoose.Schema(
       balance: { type: Number, required: true },
       totalInvested: { type: Number, required: true },
     }],
+    analyticsSnapshot: {
+      skillScore: { type: Number, default: 50 },
+      disciplineScore: { type: Number, default: 50 },
+      trend: { type: String, default: "STABLE" },
+      tags: { type: [String], default: [] },
+      lastUpdated: { type: Date, default: Date.now }
+    },
+
   },
   {
     timestamps: true,

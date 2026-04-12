@@ -5,8 +5,13 @@ const Decimal = require("decimal.js");
 const { analyzeBehavior } = require("../services/behavior.engine");
 const { analyzeProgression } = require("../services/progression.engine");
 const { calculateSkillScore } = require("../services/skill.engine");
-const AppError = require("../utils/AppError");
-const { toSafeKey, fromSafeKey } = require("../utils/safeUtils");
+const { normalizeTrade } = require("../domain/trade.contract");
+const { fromSafeKey } = require("../utils/safeUtils");
+const { toHoldingsArray, toHoldingsObject } = require("../utils/holdingsNormalizer");
+const { mapToClosedTrades } = require("../domain/closedTrade.mapper");
+const { analyzeReflection } = require("../engines/reflection.engine");
+
+// buildClosedTrades has been replaced by src/domain/closedTrade.mapper.js
 
 const getPortfolioSummary = async (req, res, next) => {
   try {
@@ -16,16 +21,17 @@ const getPortfolioSummary = async (req, res, next) => {
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
+    const holdingsObject = toHoldingsObject(user.holdings);
 
     // 1. Get Live Prices
-    const holdingSymbols = Array.from(user.holdings.keys()).map(fromSafeKey);
+    const holdingSymbols = Object.keys(holdingsObject).map(fromSafeKey);
     const livePrices = await getLivePrices(holdingSymbols);
 
     // 2. Compute MTM
     let unrealizedPnL = new Decimal(0);
     let currentEquityValue = new Decimal(0);
 
-    user.holdings.forEach((data, safeSymbol) => {
+    Object.entries(holdingsObject).forEach(([safeSymbol, data]) => {
       const symbol = fromSafeKey(safeSymbol);
       const livePrice = livePrices[symbol];
       const effectivePrice = livePrice !== undefined ? livePrice : data.avgCost;
@@ -36,50 +42,98 @@ const getPortfolioSummary = async (req, res, next) => {
       currentEquityValue = currentEquityValue.add(marketValue);
     });
 
-    // 3. Aggregate Behavioral Insights
-    const analysisTrades = await Trade.find({ user: userId })
-      .sort({ createdAt: -1 })
-      .limit(100);
+    // 3. Aggregate Behavioral Insights (PHASE 3: Snapshot First)
+    let behavior, progression, skillAudit;
+    const SNAPSHOT_VALID_WINDOW = 24 * 60 * 60 * 1000;
+    const hasValidSnapshot = user.analyticsSnapshot && (Date.now() - new Date(user.analyticsSnapshot.lastUpdated).getTime() < SNAPSHOT_VALID_WINDOW);
+    
+    let recentBehaviors = [];
+    let journalInsights = { topMistake: "NONE", frequency: 0, last10Summary: { winRate: 0, avgPnL: 0 }, timePatterns: "INSUFFICIENT_DATA", disciplineTrend: "STABLE" };
 
-    const sortedTrades = [...analysisTrades].sort((a, b) => a.createdAt - b.createdAt);
-    const behavior = analyzeBehavior(sortedTrades);
-    const progression = analyzeProgression(sortedTrades);
-    const skillAudit = calculateSkillScore(sortedTrades, behavior, progression);
+    if (hasValidSnapshot) {
+       const logger = require("../lib/logger");
+       logger.info("Portfolio snapshot analysis fulfilled from cache", { 
+         action: "PORTFOLIO_SNAPSHOT_HIT", 
+         userId: user._id, 
+         source: "SNAPSHOT" 
+       });
 
-    const recentBehaviors = analysisTrades.slice(0, 5);
 
-    // 4. Construct Response
+       skillAudit = {
+         score: user.analyticsSnapshot.skillScore,
+         trend: user.analyticsSnapshot.trend,
+         breakdown: { discipline: user.analyticsSnapshot.disciplineScore }
+       };
+       behavior = { success: true, patterns: user.analyticsSnapshot.tags.map(t => ({ type: t, confidence: 100 })), disciplineScore: user.analyticsSnapshot.disciplineScore };
+       progression = { success: true, trend: user.analyticsSnapshot.trend, changes: [], narrative: "Performance snapshot active." };
+
+       journalInsights = user.analyticsSnapshot.journalInsights || journalInsights;
+       
+       const top5 = await Trade.find({ user: userId }).sort({ createdAt: -1 }).limit(5);
+       recentBehaviors = top5.map(t => normalizeTrade(t));
+    } else {
+       const analysisTrades = await Trade.find({ user: userId }).sort({ createdAt: -1 }).limit(100);
+       const normalizedTrades = analysisTrades.map((trade) => normalizeTrade(trade));
+       const closedTrades = mapToClosedTrades(normalizedTrades);
+       const reflectionResults = closedTrades.map(ct => analyzeReflection(ct));
+       behavior = analyzeBehavior(closedTrades);
+       progression = analyzeProgression(closedTrades);
+       skillAudit = calculateSkillScore(closedTrades, reflectionResults, behavior, progression);
+       
+       const { calculateJournalInsights } = require("../engines/journalInsights.engine");
+       journalInsights = calculateJournalInsights(closedTrades);
+       recentBehaviors = normalizedTrades.slice(0, 5);
+       
+       const logger = require("../lib/logger");
+       logger.info("Live portfolio analytics recalibration complete", {
+          action: "PORTFOLIO_COMPUTE",
+          userId: user._id,
+          tradeCount: analysisTrades.length
+       });
+    }
+
+
+
+
+    // 4. Construct Response (STRICT CONTRACT)
     const response = {
       success: true,
-      summary: {
+      data: {
         balance: user.balance,
         totalInvested: user.totalInvested || 0,
         realizedPnL: user.realizedPnL || 0,
         unrealizedPnL: Number(unrealizedPnL.toFixed(2)),
         netEquity: Number(new Decimal(user.balance).add(currentEquityValue).toFixed(2)),
         winRate: await computeWinRate(userId),
-        holdings: Object.fromEntries(
-          Array.from(user.holdings.entries()).map(([k, v]) => [fromSafeKey(k), v])
-        ),
+        holdings: toHoldingsArray(holdingsObject),
         skillAudit,
         behaviorInsights: {
           success: behavior.success,
           patterns: behavior.patterns || [],
           dominantMistake: behavior.dominantMistake || "None",
           mistakeFrequency: behavior.mistakeFrequency || {},
+          journalInsights: { ...journalInsights, ...user.analyticsSnapshot?.journalInsights },
+
           riskProfile: behavior.riskProfile,
-          progression: progression.success ? progression.progression : null,
+          progression: progression.success ? progression : null,
+
+
           recentBehaviors: recentBehaviors.map(t => ({
             symbol: t.symbol,
-            type: t.type,
-            behavior: t.analysis?.humanBehavior || "Analyzing...",
+            side: t.side,
+            behavior: t.reasoning || "Analyzing...",
             timestamp: t.createdAt
           }))
         }
+      },
+      meta: {
+        timestamp: new Date().toISOString(),
+        version: "3.1.1-fixed-contract"
       }
     };
 
     res.status(200).json(response);
+
   } catch (error) {
     next(error);
   }
@@ -91,8 +145,9 @@ const getPortfolioSummary = async (req, res, next) => {
 const computeWinRate = async (userId) => {
   const [sellTrades, winTrades] = await Promise.all([
     Trade.countDocuments({ user: userId, type: "SELL" }),
-    Trade.countDocuments({ user: userId, type: "SELL", pnl: { $gt: 0 } })
+    Trade.countDocuments({ user: userId, type: "SELL", pnlPaise: { $gt: 0 } })
   ]);
+
 
   if (sellTrades === 0) return 0;
   return Number(((winTrades / sellTrades) * 100).toFixed(2));
@@ -110,8 +165,9 @@ const getPositions = async (req, res, next) => {
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
+    const holdingsObject = toHoldingsObject(user.holdings);
 
-    const holdingSymbols = Array.from(user.holdings.keys()).map(fromSafeKey);
+    const holdingSymbols = Object.keys(holdingsObject).map(fromSafeKey);
     if (holdingSymbols.length === 0) {
       return res.status(200).json({ success: true, positions: [] });
     }
@@ -119,7 +175,7 @@ const getPositions = async (req, res, next) => {
     // Fetch live prices
     const livePrices = await getLivePrices(holdingSymbols);
 
-    const positions = Array.from(user.holdings.entries()).map(([safeSymbol, data]) => {
+    const positions = Object.entries(holdingsObject).map(([safeSymbol, data]) => {
       const symbol = fromSafeKey(safeSymbol);
       const livePrice = livePrices[symbol];
 
@@ -137,12 +193,12 @@ const getPositions = async (req, res, next) => {
         symbol: symbol.split(".")[0],
         fullSymbol: symbol,
         quantity: data.quantity,
-        avgPrice: Math.round(data.avgCost),
-        currentPrice: Math.round(currentPrice),
+        avgPricePaise: Math.round(data.avgCost),
+        currentPricePaise: Math.round(currentPrice),
         investedValuePaise: Math.round(investedValue),
         currentValuePaise: Math.round(currentValue),
         unrealizedPnL: Math.round(unrealizedPnL),
-        pnlPercentage: investedValue > 0 ? Number(((unrealizedPnL / investedValue) * 100).toFixed(2)) : 0
+        pnlPct: investedValue > 0 ? Number(((unrealizedPnL / investedValue) * 100).toFixed(2)) : 0
       };
     });
 
@@ -153,4 +209,3 @@ const getPositions = async (req, res, next) => {
 };
 
 module.exports = { getPortfolioSummary, getPositions };
-

@@ -11,14 +11,18 @@ const createTradeSchema = z.object({
       .number({ required_error: "Quantity is required" })
       .positive("Quantity must be a positive number greater than 0")
       .int("Quantity must be a whole number (no decimals)"),
-    price: z
-      .number({ required_error: "Execution price is required" })
+    pricePaise: z
+      .number({ required_error: "Execution price (Paise) is required" })
       .positive("Execution price must be greater than 0")
       .finite("Execution price must be a valid number"),
-    stopLoss: z.number().positive("Stop loss must be a positive price").nullable().optional(),
-    targetPrice: z.number().positive("Target price must be a positive price").nullable().optional(),
+    price: z.number().optional().nullable(), // Legacy fallback
+    stopLossPaise: z.number().positive().nullable().optional(),
+    targetPricePaise: z.number().positive().nullable().optional(),
+    stopLoss: z.number().optional().nullable(), // Legacy fallback
+    targetPrice: z.number().optional().nullable(), // Legacy fallback
   }),
 });
+
 
 const validateData = (schema) => (req, res, next) => {
   try {

@@ -6,7 +6,6 @@ import toast from "react-hot-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   validateSymbol,
-  getStockPrice,
   getLivePrice,
 } from "../../services/market.api";
 import { executeTrade } from "../../services/trade.api";
@@ -19,15 +18,13 @@ import TradeInsight from "./components/TradeInsight";
 import PriceChart from "./components/PriceChart";
 import {
   Search,
-  Zap,
-  ShieldAlert,
   Activity,
-  ArrowRight,
-  Brain,
-  Sparkles,
   CheckCircle2,
-  TrendingUp,
+  TrendingDown,
   Target,
+  Brain,
+  ArrowRight,
+  Zap,
   Terminal,
 } from "lucide-react";
 
@@ -36,9 +33,8 @@ export default function TradeForm() {
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const querySymbol = (searchParams.get("symbol") || "").toUpperCase();
-  const querySide = (searchParams.get("side") || "").toUpperCase();
   const initialSymbol = (location.state?.symbol || querySymbol || "").toUpperCase();
-  const initialType = location.state?.type || (querySide === "SELL" ? "SELL" : "BUY");
+  const tradeType = "BUY";
 
   // ── STATE: Core Logic ────────────────────────────────────────────────────
   const [symbol, setSymbol] = useState(initialSymbol);
@@ -46,13 +42,11 @@ export default function TradeForm() {
   const [priceRupees, setPriceRupees] = useState(""); 
   const [stopLoss, setStopLoss] = useState("");
   const [targetPrice, setTargetPrice] = useState("");
-  const [tradeType, setTradeType] = useState(initialType);
   const [userThinking, setUserThinking] = useState("");
   const [tradeIntent, setTradeIntent] = useState("TREND_FOLLOWING");
-  const [manualTags, setManualTags] = useState("");
 
   // ── STATE: Intelligence & Flow ───────────────────────────────────────────
-  const [step, setStep] = useState(1); // 1: Select, 2: Execute success?
+  const [step, setStep] = useState(1); 
   const [isExecuting, setIsExecuting] = useState(false);
   const [showDecisionPanel, setShowDecisionPanel] = useState(false);
   const [decisionSnapshot, setDecisionSnapshot] = useState(null);
@@ -81,8 +75,7 @@ export default function TradeForm() {
     queryFn: getAdaptiveProfile,
   });
 
-  const balance = summaryResponse?.summary?.balance || 0;
-
+  const summary = summaryResponse?.data;
   const positions = posResponse?.positions || [];
 
   // Auto-fill price on symbol validation
@@ -100,8 +93,8 @@ export default function TradeForm() {
 
     if (!entry || !sl || !target) return null;
 
-    const risk = tradeType === "BUY" ? entry - sl : sl - entry;
-    const reward = tradeType === "BUY" ? target - entry : entry - target;
+    const risk = entry - sl;
+    const reward = target - entry;
 
     if (risk <= 0 || reward <= 0) return { isValid: false, ratio: 0, reason: "Math violation" };
 
@@ -117,11 +110,13 @@ export default function TradeForm() {
       color,
       status: ratio >= 3 ? "Institutional" : ratio >= 2 ? "Optimal" : ratio >= 1.5 ? "Acceptable" : "Sub-optimal"
     };
-  }, [priceRupees, stopLoss, targetPrice, tradeType]);
+  }, [priceRupees, stopLoss, targetPrice]);
 
   const canProceed = symbol && quantity > 0 && priceRupees > 0 && stopLoss > 0 && targetPrice > 0 && rrCalculation?.isValid;
 
   // ── HANDLERS ──────────────────────────────────────────────────────────────
+  const [executionMetadata, setExecutionMetadata] = useState({ token: null, idempotencyKey: null });
+
   const handleReview = async () => {
     if (!canProceed) return toast.error("Deployment plan incomplete. Enforce Risk/Reward integrity.");
 
@@ -136,7 +131,10 @@ export default function TradeForm() {
         side: tradeType,
         userThinking
       });
+      
       setDecisionSnapshot(response.snapshot);
+      setExecutionMetadata(prev => ({ ...prev, token: response.token }));
+      setStep(2); // Progress to Phase 2: Intelligence Review
       setShowDecisionPanel(true);
       toast.dismiss(toastId);
     } catch (err) {
@@ -149,25 +147,26 @@ export default function TradeForm() {
     setIsExecuting(true);
     setShowDecisionPanel(false);
     const toastId = toast.loading("Executing Atomic Protocol...");
+    const idempotencyKey = crypto.randomUUID();
 
     try {
       const res = await executeTrade({
         symbol,
         type: tradeType,
         quantity: parseInt(quantity),
-        price: Math.round(parseFloat(priceRupees) * 100),
-        stopLoss: Math.round(parseFloat(stopLoss) * 100),
-        targetPrice: Math.round(parseFloat(targetPrice) * 100),
+        pricePaise: Math.round(parseFloat(priceRupees) * 100),
+        stopLossPaise: Math.round(parseFloat(stopLoss) * 100),
+        targetPricePaise: Math.round(parseFloat(targetPrice) * 100),
         userThinking,
         intent: tradeIntent,
-        manualTags: manualTags.split(",").map(t => t.trim()).filter(t => t),
-        rrRatio: rrCalculation?.ratio,
-        intelligenceTimeline: decisionSnapshot,
-        decisionAuthorized: decisionSnapshot.verdict
+        reason: userThinking,
+        decisionContext: decisionSnapshot,
+        idempotencyKey,
+        preTradeToken: executionMetadata.token
       });
 
       setResult(res.trade);
-      setStep(3); // Show Success State
+      setStep(3); // Progress to Phase 3: Success
       toast.success("Trade Plan Authorized and Executed.", { id: toastId });
       queryClient.invalidateQueries(["portfolio"]);
       queryClient.invalidateQueries(["positions"]);
@@ -177,6 +176,7 @@ export default function TradeForm() {
       setIsExecuting(false);
     }
   };
+
 
   if (step === 3 && result) {
     return (
@@ -193,10 +193,10 @@ export default function TradeForm() {
             
             <div className="mt-12 grid grid-cols-2 md:grid-cols-4 gap-4 max-w-2xl mx-auto">
                {[
-                 { label: "Fill Price", value: formatINR(result.price) },
-                 { label: "Stop Loss", value: formatINR(result.stopLoss) },
-                 { label: "Target", value: formatINR(result.targetPrice) },
-                 { label: "Commitment", value: formatINR(result.totalValue) }
+                 { label: "Fill Price", value: formatINR(result.pricePaise) },
+                 { label: "Stop Loss", value: formatINR(result.stopLossPaise) },
+                 { label: "Target", value: formatINR(result.targetPricePaise) },
+                 { label: "Commitment", value: formatINR(result.totalValuePaise) }
                ].map(item => (
                  <div key={item.label} className="p-4 bg-white rounded-2xl border border-slate-100">
                     <span className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">{item.label}</span>
@@ -219,7 +219,6 @@ export default function TradeForm() {
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-12 pb-40">
-      {/* 🟢 HEADER */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-8 mb-12">
         <div className="space-y-4">
           <div className="flex items-center gap-2">
@@ -231,25 +230,23 @@ export default function TradeForm() {
           </h1>
         </div>
         
-        <div className="flex p-1.5 bg-slate-100 rounded-2xl">
-          {["BUY", "SELL"].map(type => (
-            <button
-              key={type}
-              onClick={() => setTradeType(type)}
-              className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${tradeType === type ? "bg-white text-slate-900 shadow-sm" : "text-slate-400 hover:text-slate-600"}`}
-            >
-              {type}
-            </button>
-          ))}
+        <div className="p-1 px-4 bg-slate-100 rounded-2xl flex items-center gap-6">
+           <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+              <span className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Entry Flow Active</span>
+           </div>
+           <div className="w-px h-6 bg-slate-200" />
+           <div className="flex items-center gap-2 grayscale opacity-40 cursor-not-allowed">
+              <TrendingDown size={14} className="text-rose-500" />
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Direct Exit Only (Dashboard)</span>
+           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
-        {/* ── LEFT: INPUT HUB ── */}
         <div className="lg:col-span-8 space-y-12">
           <div className="bg-white rounded-[3.5rem] border border-slate-100 shadow-sm p-12 space-y-12 relative overflow-hidden">
              
-             {/* 1. SYMBOL SELECTION */}
              <div className="space-y-6">
                 <div className="flex items-center justify-between">
                    <div className="flex items-center gap-2">
@@ -269,224 +266,147 @@ export default function TradeForm() {
                 </div>
              </div>
 
-             {/* 2. PARAMETER MATRIX */}
              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <div className="space-y-6">
                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Engagement Controls</label>
                    <div className="space-y-4">
-                      <div className="relative">
-                         <input
-                           type="number"
-                           placeholder="Quantity"
+                      <div className="flex bg-slate-50 p-6 rounded-[2rem] border border-slate-100 items-center justify-between">
+                         <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Quantity</span>
+                         <input 
+                           type="number" 
                            value={quantity}
                            onChange={(e) => setQuantity(e.target.value)}
-                           className="w-full px-8 py-5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-black text-slate-900 focus:bg-white focus:border-indigo-600 outline-none transition-all"
+                           className="bg-transparent text-right text-xl font-black text-slate-900 max-w-[120px] outline-none"
                          />
                       </div>
-                      <div className="relative">
-                         <input
-                           type="number"
-                           placeholder="Price (INR)"
+                      <div className="flex bg-slate-50 p-6 rounded-[2rem] border border-slate-100 items-center justify-between">
+                         <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Target Entry (₹)</span>
+                         <input 
+                           type="text"
+                           inputMode="decimal"
                            value={priceRupees}
                            onChange={(e) => setPriceRupees(e.target.value)}
-                           className="w-full px-8 py-5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-black text-slate-900 focus:bg-white focus:border-indigo-600 outline-none transition-all"
+                           className="flex-1 bg-transparent text-right text-xl font-black text-slate-900 outline-none"
                          />
                       </div>
                    </div>
                 </div>
 
                 <div className="space-y-6">
-                   <div className="flex items-center justify-between px-1">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Risk Management</label>
-                      <div className="flex gap-2">
-                         {[1, 2, 5].map(pct => (
-                            <button
-                               key={pct}
-                               onClick={() => {
-                                  const riskAmt = balance * (pct / 100);
-                                  const qty = parseInt(quantity) || 1;
-                                  const entry = parseFloat(priceRupees) || 0;
-                                  if (entry > 0) {
-                                     const sl = tradeType === 'BUY' ? entry - (riskAmt / qty) : entry + (riskAmt / qty);
-                                     setStopLoss(Math.max(0, Number(sl.toFixed(2))).toString());
-                                  }
-                               }}
-                               className="px-2 py-1 bg-slate-100 hover:bg-indigo-600 hover:text-white rounded-md text-[8px] font-black transition-all"
-                            >
-                               {pct}% RISK
-                            </button>
-                         ))}
-                      </div>
-                   </div>
+                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Risk Management</label>
                    <div className="space-y-4">
-                      <div className="relative group">
-                         <input
-                           type="number"
-                           placeholder="Stop Loss (INR)"
+                      <div className="flex bg-rose-50/30 p-6 rounded-[2rem] border border-rose-100 items-center justify-between transition-all hover:bg-rose-50/50">
+                         <span className="text-[9px] font-black text-rose-400 uppercase tracking-widest">Stop Loss</span>
+                         <input 
+                           type="text"
+                           inputMode="decimal"
                            value={stopLoss}
                            onChange={(e) => setStopLoss(e.target.value)}
-                           className="w-full px-8 py-5 bg-rose-50/50 border border-rose-100 rounded-2xl text-sm font-black text-slate-900 focus:bg-white focus:border-rose-600 outline-none transition-all"
+                           className="flex-1 bg-transparent text-right text-xl font-black text-rose-600 outline-none"
                          />
-                         <ShieldAlert size={14} className="absolute right-6 top-1/2 -translate-y-1/2 text-rose-300 group-focus-within:text-rose-600 transition-colors" />
                       </div>
-                      <div className="relative group">
-                         <input
-                           type="number"
-                           placeholder="Target Price (INR)"
+                      <div className="flex bg-emerald-50/30 p-6 rounded-[2rem] border border-emerald-100 items-center justify-between transition-all hover:bg-emerald-50/50">
+                         <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest">Target Price</span>
+                         <input 
+                           type="text"
+                           inputMode="decimal"
                            value={targetPrice}
                            onChange={(e) => setTargetPrice(e.target.value)}
-                           className="w-full px-8 py-5 bg-emerald-50/50 border border-emerald-100 rounded-2xl text-sm font-black text-slate-900 focus:bg-white focus:border-emerald-600 outline-none transition-all"
+                           className="flex-1 bg-transparent text-right text-xl font-black text-emerald-600 outline-none"
                          />
-                         <TrendingUp size={14} className="absolute right-6 top-1/2 -translate-y-1/2 text-emerald-300 group-focus-within:text-emerald-600 transition-colors" />
                       </div>
                    </div>
                 </div>
              </div>
 
-             {/* 3. VALUE & RR PREVIEW */}
-             <div className="p-8 bg-slate-900 rounded-[2.5rem] flex flex-col md:flex-row items-center justify-between text-white relative overflow-hidden group">
-                <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:scale-110 transition-transform duration-700">
-                   <Target size={120} />
+             <div className="p-8 bg-slate-900 rounded-[2.5rem] flex flex-col md:flex-row md:items-center justify-between gap-6 shadow-xl shadow-slate-200 overflow-hidden relative">
+                <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
+                   <Target size={120} className="text-white" />
                 </div>
-                <div className="relative z-10 flex-1 w-full md:border-r md:border-white/10 md:pr-10 mb-6 md:mb-0">
-                   <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest block mb-1">Capital Commitment</span>
-                   <h3 className="text-3xl font-black tracking-tighter">
-                      {formatINR(Math.round(parseFloat(quantity || 0) * parseFloat(priceRupees || 0) * 100))}
-                   </h3>
+                <div>
+                   <span className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em] mb-1 block">Capital Commitment</span>
+                   <h3 className="text-3xl font-black text-white tracking-tighter">{formatINR((parseFloat(quantity) || 0) * (parseFloat(priceRupees) || 0) * 100)}</h3>
                 </div>
-                <div className="relative z-10 flex-1 w-full md:pl-10 space-y-4">
-                   <div className="flex justify-between items-end">
-                      <div>
-                         <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest block mb-1">Risk/Reward Profile</span>
-                         <span className="text-2xl font-black tracking-tighter">{rrCalculation?.ratio || '0.00'}</span>
+                <div className="flex items-center gap-6">
+                   <div className="text-right">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Risk/Reward Profile</span>
+                      <div className="flex items-center gap-3">
+                         <span className="text-xl font-black text-white">{rrCalculation?.ratio || "-"}</span>
+                         {rrCalculation?.isValid && (
+                           <div className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase tracking-widest text-white ${rrCalculation.color}`}>
+                              {rrCalculation.status}
+                           </div>
+                         )}
                       </div>
-                      {rrCalculation && (
-                         <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest ${rrCalculation.color.replace('bg-', 'text-').replace(' shadow-', '')}`}>
-                            {rrCalculation.status}
-                         </span>
-                      )}
                    </div>
-                   {/* Dynamic RR Meter */}
-                   <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden flex">
-                      <motion.div 
-                        initial={{ width: 0 }}
-                        animate={{ width: `${Math.min(100, (rrCalculation?.ratio || 0) * 20)}%` }}
-                        className={`h-full transition-all duration-500 ${rrCalculation?.color || 'bg-slate-700'}`}
-                      />
+                   <div className="w-10 h-10 rounded-full border border-slate-700 flex items-center justify-center">
+                      <div className={`w-2 h-2 rounded-full ${rrCalculation?.ratio >= 2 ? 'bg-emerald-500 animate-ping' : 'bg-slate-700'}`} />
                    </div>
                 </div>
              </div>
 
-             {/* 4. STRATEGIC INTENT & TAGS */}
-             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div className="space-y-4">
-                   <div className="flex items-center gap-2">
-                      <Target size={14} className="text-indigo-400" />
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Protocol Intent</label>
-                   </div>
-                   <select 
-                     value={tradeIntent}
-                     onChange={(e) => setTradeIntent(e.target.value)}
-                     className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-black text-slate-900 focus:bg-white focus:border-indigo-600 outline-none transition-all uppercase appearance-none cursor-pointer"
-                   >
-                      <option value="TREND_FOLLOWING">Trend Following</option>
-                      <option value="MEAN_REVERSION">Mean Reversion</option>
-                      <option value="BREAKOUT">Institutional Breakout</option>
-                      <option value="SCALPING">High-Latency Scalp</option>
-                      <option value="HEDGE">Non-Directional Hedge</option>
-                   </select>
-                </div>
-                <div className="space-y-4">
-                   <div className="flex items-center gap-2">
-                       <Activity size={14} className="text-indigo-400" />
-                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Manual Meta Tags</label>
-                   </div>
-                   <input
-                     type="text"
-                     placeholder="e.g. FOMO, VOLUME_GAP, MORNING_RUSH"
-                     value={manualTags}
-                     onChange={(e) => setManualTags(e.target.value)}
-                     className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-900 focus:bg-white focus:border-indigo-600 outline-none transition-all"
-                   />
-                </div>
-             </div>
-
-             {/* 5. INTENT CAPTURE */}
-             <div className="space-y-4">
+             <div className="space-y-6">
                 <div className="flex items-center gap-2">
                    <Brain size={14} className="text-indigo-400" />
+                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Protocol Intent</label>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                   {["TREND_FOLLOWING", "BREAKOUT", "MEAN_REVERSION", "SCALPING"].map(intent => (
+                     <button
+                        key={intent}
+                        onClick={() => setTradeIntent(intent)}
+                        className={`py-4 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all ${tradeIntent === intent ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'}`}
+                     >
+                        {intent.replace('_', ' ')}
+                     </button>
+                   ))}
+                </div>
+             </div>
+
+             <div className="space-y-6">
+                <div className="flex items-center gap-2">
+                   <Activity size={14} className="text-indigo-400" />
                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Decision Rationale</label>
                 </div>
                 <textarea
+                  placeholder="Internal reasoning for institutional audit..."
                   value={userThinking}
                   onChange={(e) => setUserThinking(e.target.value)}
-                  placeholder="Describe your reasoning. Our AI cross-references this with sector consensus."
-                  className="w-full px-8 py-6 bg-slate-50 border border-slate-100 rounded-[2rem] text-sm font-bold text-slate-900 focus:bg-white focus:border-indigo-600 outline-none transition-all min-h-[120px] resize-none leading-relaxed"
+                  className="w-full px-8 py-6 bg-slate-50 border border-slate-100 rounded-[2rem] text-sm font-medium text-slate-900 focus:bg-white focus:border-indigo-600 outline-none transition-all placeholder:text-slate-300 min-h-[140px]"
                 />
              </div>
 
              <button
-               disabled={!canProceed}
                onClick={handleReview}
-               className={`w-full py-6 rounded-2xl font-black text-[11px] uppercase tracking-[0.25em] flex items-center justify-center gap-3 transition-all ${canProceed ? "bg-slate-900 text-white hover:bg-black shadow-xl shadow-slate-900/40" : "bg-slate-100 text-slate-400 cursor-not-allowed"}`}
+               disabled={!canProceed || isExecuting}
+               className={`w-full py-8 rounded-[2rem] text-[11px] font-black uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-3 ${
+                 canProceed 
+                 ? 'bg-slate-900 text-white hover:bg-indigo-600 shadow-2xl shadow-slate-300' 
+                 : 'bg-slate-100 text-slate-300 cursor-not-allowed'
+               }`}
              >
-               Initialize CI / Logic Review <ArrowRight size={18} />
+               {isValidating ? 'Validating Network...' : 'Initialize CI / Logic Review'}
+               <ArrowRight size={16} />
              </button>
           </div>
-
-          {symbol && validation?.isValid && (
-            <div className="bg-white rounded-[3.5rem] border border-slate-100 shadow-sm overflow-hidden h-[600px]">
-              <PriceChart symbol={symbol} />
-            </div>
-          )}
         </div>
 
-        {/* ── RIGHT: INTELLIGENCE ── */}
         <div className="lg:col-span-4 space-y-8">
            <ExecutionPersona persona={persona} />
-           
-           <div className="bg-slate-900 rounded-[3rem] p-10 text-white relative overflow-hidden group">
-              <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-105 transition-transform duration-700">
-                 <Terminal size={140} />
-              </div>
-              <div className="relative z-10 space-y-8">
-                 <div>
-                    <span className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.3em] mb-4 block">Adaptive IQ Pipeline</span>
-                    <h3 className="text-3xl font-black tracking-tighter">Terminal <br/><span className="text-slate-500">Telemetry</span></h3>
-                 </div>
-                 <p className="text-sm font-medium text-slate-400 leading-relaxed italic">
-                    "Every execution node is archived. Our decision engine observes plan-adherence to adapt your future risk guardrails."
-                 </p>
-                 <div className="space-y-4 pt-6 border-t border-white/5">
-                    <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest">
-                       <span className="text-slate-500">Latency Core</span>
-                       <span className="text-emerald-400">Stable (12ms)</span>
-                    </div>
-                    <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest">
-                       <span className="text-slate-500">Protocol Sync</span>
-                       <span className="text-indigo-400">100% Active</span>
-                    </div>
-                 </div>
-              </div>
-           </div>
+           <SelectionPulse step={step} />
         </div>
       </div>
 
-      <DecisionPanel
-        isOpen={showDecisionPanel}
-        onClose={() => setShowDecisionPanel(false)}
-        onConfirm={finalizeTrade}
-        snapshot={decisionSnapshot}
-        tradeRequest={{
-          symbol,
-          side: tradeType,
-          quantity,
-          price: priceRupees,
-          stopLoss,
-          targetPrice,
-          userThinking
-        }}
-      />
+      <AnimatePresence>
+        {showDecisionPanel && (
+          <DecisionPanel 
+            snapshot={decisionSnapshot} 
+            onConfirm={finalizeTrade}
+            onClose={() => setShowDecisionPanel(false)}
+            isExecuting={isExecuting}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

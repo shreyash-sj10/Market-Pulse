@@ -1,7 +1,10 @@
 const express = require("express");
 const app = express();
+const requestTrace = require("./middlewares/requestTrace");
 
+app.use(requestTrace);
 app.use(express.json());
+
 const cors = require("cors");
 app.set("etag", false);
 
@@ -33,11 +36,14 @@ app.use("/api", healthRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/users", require("./routes/user.route"));
 app.use("/api/trades", require("./routes/trade.route"));
+app.use("/api/journal", require("./routes/journal.route"));
 app.use("/api/portfolio", require("./routes/portfolio.route"));
 app.use("/api/market", require("./routes/market.route"));
 app.use("/api/analysis", require("./routes/analysis.route"));
 app.use("/api/trace", require("./routes/trace.route"));
 app.use("/api/intelligence", require("./routes/intelligence.route"));
+app.use("/api/metrics", require("./routes/metrics.route"));
+
 
 // Error middleware (ALWAYS LAST)
 const errorHandler = require("./middlewares/error.middleware");

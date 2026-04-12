@@ -32,11 +32,11 @@ const tradeSchema = new mongoose.Schema(
       type: Number,
       required: true,
     },
-    stopLoss: {
+    stopLossPaise: {
       type: Number,
       default: null,
     },
-    targetPrice: {
+    targetPricePaise: {
       type: Number,
       default: null,
     },
@@ -67,13 +67,19 @@ const tradeSchema = new mongoose.Schema(
         type: String,
       }
     },
-    pnl: {
+    pnlPaise: {
       type: Number,
       default: null, // Only for SELL trades
     },
-    pnlPercentage: {
+    pnlPct: {
       type: Number,
       default: null, // Only for SELL trades
+    },
+
+    entryTradeId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Trade",
+      default: null,
     },
     rawIntent: {
       type: String,
@@ -95,7 +101,8 @@ const tradeSchema = new mongoose.Schema(
       peakPrice: { type: Number, default: 0 }
     },
     learningOutcome: {
-      verdict: { type: String, enum: ["GOOD", "LUCK", "POOR", "NEUTRAL", "DISCIPLINED PROFIT", "LUCKY PROFIT", "DISCIPLINED LOSS", "POOR PROCESS"] },
+      verdict: { type: String, enum: ["GOOD", "LUCK", "POOR", "NEUTRAL", "DISCIPLINED_PROFIT", "LUCKY_PROFIT", "DISCIPLINED_LOSS", "POOR_PROCESS"] },
+
       type: String, // Mistake Type
       context: String,
       insight: String,
@@ -130,7 +137,61 @@ const tradeSchema = new mongoose.Schema(
     manualTags: {
       type: [String],
       default: [],
+    },
+    // --- PART 3: SNAPSHOT INTEGRITY (NEW) ---
+    entryPlan: {
+      entryPricePaise: { type: Number },
+      stopLossPaise: { type: Number },
+      targetPricePaise: { type: Number },
+      rr: { type: Number },
+      intent: { type: String },
+      reasoning: { type: String }
+    },
+    decisionSnapshot: {
+      verdict: { type: String },
+      score: { type: Number },
+      pillars: {
+        market: { type: mongoose.Schema.Types.Mixed },
+        behavior: { type: mongoose.Schema.Types.Mixed },
+        risk: { type: mongoose.Schema.Types.Mixed },
+        rr: { type: mongoose.Schema.Types.Mixed }
+      }
+    },
+    trace: {
+      timeline: [
+        {
+          stage: { 
+            type: String, 
+            enum: ["PRE_TRADE_VALIDATED", "DECISION_GENERATED", "EXECUTION_STARTED", "EXECUTION_COMMITTED", "REFLECTION_COMPLETED"],
+            required: true 
+          },
+          timestamp: { type: Date, default: Date.now },
+          metadata: { type: mongoose.Schema.Types.Mixed }
+        }
+      ]
+    },
+    idempotencyKey: {
+
+      type: String,
+      unique: true,
+      sparse: true,
+      trim: true,
+    },
+    learningOutcome: {
+      verdict: String,
+      insight: String,
+      improvementSuggestion: String
+    },
+    pnlPaise: {
+      type: Number,
+      default: 0
+    },
+    pnlPct: {
+      type: Number,
+      default: 0
     }
+
+
   },
   {
     timestamps: true,

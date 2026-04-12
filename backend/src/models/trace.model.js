@@ -21,7 +21,17 @@ const traceSchema = new mongoose.Schema({
     behavior: { summary: String, reasoning: [String], contribution: Number },
     risk: { summary: String, reasoning: [String], contribution: Number }
   },
+  // PHASE 3 HUMANIZATION
+  humanSummary: {
+    decisionSummary: String,
+    behaviorFlags: [String],
+    reflectionSummary: String,
+    riskLevel: String,
+    verdict: String,
+    simpleExplanation: String
+  },
   // TECHNICAL SYSTEM STAGES (Trace_v1)
+
   stages: {
     interpretation_layer: {
       ml_used: { type: Boolean, default: false },

@@ -1,33 +1,45 @@
 const Trade = require("../models/trade.model");
 const tradeService = require("../services/trade.service");
-const { formatTrade, formatTradeList } = require("../utils/responseFormatter");
-const logger = require("../utils/logger");
+const { normalizeTrade } = require("../domain/trade.contract");
+const logger = require("../lib/logger");
 
 // ================= BUY TRADE =================
 /**
  * POST /trades/buy
- * Executes a BUY order for the authenticated user.
- * Validates balance atomically, persists trade, attaches AI explanation.
- * @param {import('express').Request} req
- * @param {import('express').Response} res
- * @param {import('express').NextFunction} next
  */
 const buyTrade = async (req, res, next) => {
+  const startTime = Date.now();
   try {
-    const { trade, updatedBalance } = await tradeService.executeBuyTrade(req.user, req.body);
-    
-    const formattedTrade = formatTrade(trade);
-    if (formattedTrade.analysis && trade.explanation) {
-      formattedTrade.analysis.explanation = trade.explanation;
-    }
+    const { trade, updatedBalance } = await tradeService.executeBuyTrade(req.user, {
+      ...req.body,
+      idempotencyKey: req.headers["idempotency-key"],
+      token: req.headers["pre-trade-token"] || req.body.preTradeToken,
+      requestId: req.requestId
+    });
+
+    logger.info({
+      action: "BUY",
+      userId: req.user._id,
+      requestId: req.requestId,
+      symbol: trade.symbol,
+      status: "SUCCESS",
+      latency: Date.now() - startTime
+    });
 
     res.status(201).json({
       success: true,
-      trade: formattedTrade,
+      trade,
       balance: updatedBalance,
     });
   } catch (error) {
-    logger.error(`BUY trade failed for user ${req.user?._id}: ${error.message}`);
+    logger.error({
+      action: "BUY",
+      userId: req.user?._id,
+      requestId: req.requestId,
+      status: "FAIL",
+      message: error.message,
+      latency: Date.now() - startTime
+    });
     next(error);
   }
 };
@@ -35,40 +47,45 @@ const buyTrade = async (req, res, next) => {
 // ================= SELL TRADE =================
 /**
  * POST /trades/sell
- * Executes a SELL order validating existing holdings.
- * @param {import('express').Request} req
- * @param {import('express').Response} res
- * @param {import('express').NextFunction} next
  */
 const sellTrade = async (req, res, next) => {
+  const startTime = Date.now();
   try {
-    const { trade, updatedBalance } = await tradeService.executeSellTrade(req.user, req.body);
-    
-    const formattedTrade = formatTrade(trade);
-    if (formattedTrade.analysis && trade.explanation) {
-      formattedTrade.analysis.explanation = trade.explanation;
-    }
+    const { trade, updatedBalance } = await tradeService.executeSellTrade(req.user, {
+      ...req.body,
+      idempotencyKey: req.headers["idempotency-key"],
+      token: req.headers["pre-trade-token"] || req.body.preTradeToken,
+      requestId: req.requestId
+    });
+
+    logger.info({
+      action: "SELL",
+      userId: req.user._id,
+      requestId: req.requestId,
+      symbol: trade.symbol,
+      status: "SUCCESS",
+      latency: Date.now() - startTime
+    });
 
     res.status(201).json({
       success: true,
-      trade: formattedTrade,
+      trade,
       balance: updatedBalance,
     });
   } catch (error) {
-    logger.error(`SELL trade failed for user ${req.user?._id}: ${error.message}`);
+    logger.error({
+      action: "SELL",
+      userId: req.user?._id,
+      requestId: req.requestId,
+      status: "FAIL",
+      message: error.message,
+      latency: Date.now() - startTime
+    });
     next(error);
   }
 };
 
 // ================= TRADE HISTORY =================
-/**
- * GET /trades
- * Returns paginated trade history for the authenticated user.
- * Supports ?page=N&limit=N query params (default: page=1, limit=20).
- * @param {import('express').Request} req
- * @param {import('express').Response} res
- * @param {import('express').NextFunction} next
- */
 const getTradeHistory = async (req, res, next) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -89,7 +106,7 @@ const getTradeHistory = async (req, res, next) => {
       page,
       totalPages: Math.ceil(totalTrades / limit),
       nextCursor: page < Math.ceil(totalTrades / limit) ? page + 1 : null,
-      trades: formatTradeList(trades),
+      trades: trades.map((trade) => normalizeTrade(trade)),
     });
   } catch (error) {
     next(error);

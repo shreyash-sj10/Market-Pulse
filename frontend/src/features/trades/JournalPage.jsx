@@ -26,7 +26,8 @@ export default function JournalPage() {
   });
 
   const trades = tradesResponse?.trades?.filter(t => t.type === 'SELL') || [];
-  const behavior = summaryResponse?.summary?.behaviorInsights;
+  const behavior = summaryResponse?.data?.behaviorInsights;
+
 
   return (
     <div className="app-page px-2 pt-4">
@@ -40,28 +41,55 @@ export default function JournalPage() {
       {/* ── LEARNING DASHBOARD ── */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 mb-16">
         
-        {/* Behavior Overview */}
-        <div className="lg:col-span-8 bg-white p-10 rounded-[3rem] border border-slate-100 shadow-sm">
-           <div className="flex items-center gap-3 mb-8">
-              <BarChart2 size={18} className="text-indigo-600" />
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Mistake Frequency Matrix</span>
+        {/* Behavioral Insight Cards */}
+        <div className="lg:col-span-8 space-y-8">
+           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                 <span className="block text-[8px] font-black text-indigo-500 uppercase tracking-widest mb-4">Dominant Mistake</span>
+                 <h3 className="text-xl font-black text-slate-900 truncate">{behavior?.journalInsights?.topMistake?.replace(/_/g, ' ') || 'NONE'}</h3>
+                 <span className="text-[10px] font-bold text-slate-400 mt-2 block">{behavior?.journalInsights?.frequency || 0} occurrences in history</span>
+              </div>
+              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                 <span className="block text-[8px] font-black text-emerald-500 uppercase tracking-widest mb-4">Discipline Trend</span>
+                 <h3 className="text-xl font-black text-slate-900">{behavior?.journalInsights?.disciplineTrend || 'STABLE'}</h3>
+                 <span className="text-[10px] font-bold text-slate-400 mt-2 block">Behavioral trajectory</span>
+              </div>
+              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                 <span className="block text-[8px] font-black text-amber-500 uppercase tracking-widest mb-4">Win Rate (Last 10)</span>
+                 <h3 className="text-xl font-black text-slate-900">{behavior?.journalInsights?.last10Summary?.winRate || 0}%</h3>
+                 <span className="text-[10px] font-bold text-slate-400 mt-2 block">Protocol efficiency</span>
+              </div>
+              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                 <span className="block text-[8px] font-black text-rose-500 uppercase tracking-widest mb-4">Time Pattern</span>
+                 <p className="text-[10px] font-black leading-tight text-slate-600 truncate">{behavior?.journalInsights?.timePatterns || 'Analyzing patterns...'}</p>
+                 <span className="text-[10px] font-bold text-slate-400 mt-2 block italic">Institutional insight</span>
+              </div>
            </div>
 
-           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-              {Object.entries(behavior?.mistakeFrequency || { 'NONE': 0 }).map(([tag, count]) => (
-                <div key={tag} className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100 italic transition-all hover:border-indigo-200 group">
-                   <span className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 group-hover:text-indigo-600">{tag.replace(/_/g, ' ')}</span>
-                   <span className="text-2xl font-black text-slate-900">{count}</span>
-                   <span className="block text-[8px] font-bold text-slate-300 mt-1 uppercase tracking-tighter">Occurrences</span>
-                </div>
-              ))}
-              {Object.keys(behavior?.mistakeFrequency || {}).length === 0 && (
-                <div className="col-span-full p-10 text-center border border-dashed border-slate-200 rounded-3xl">
-                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">No systemic mistakes recorded. Protocol integrity high.</p>
-                </div>
-              )}
+           {/* Behavior Overview (Existing) */}
+           <div className="bg-white p-10 rounded-[3rem] border border-slate-100 shadow-sm">
+              <div className="flex items-center gap-3 mb-8">
+                 <BarChart2 size={18} className="text-indigo-600" />
+                 <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Mistake Frequency Matrix</span>
+              </div>
+
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
+                 {Object.entries(behavior?.mistakeFrequency || { 'NONE': 0 }).map(([tag, count]) => (
+                   <div key={tag} className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100 italic transition-all hover:border-indigo-200 group">
+                      <span className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 group-hover:text-indigo-600">{tag.replace(/_/g, ' ')}</span>
+                      <span className="text-2xl font-black text-slate-900">{count}</span>
+                      <span className="block text-[8px] font-bold text-slate-300 mt-1 uppercase tracking-tighter">Occurrences</span>
+                   </div>
+                 ))}
+                 {Object.keys(behavior?.mistakeFrequency || {}).length === 0 && (
+                   <div className="col-span-full p-10 text-center border border-dashed border-slate-200 rounded-3xl">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">No systemic mistakes recorded. Protocol integrity high.</p>
+                   </div>
+                 )}
+              </div>
            </div>
         </div>
+
 
         {/* System Alignment */}
         <div className="lg:col-span-4 bg-slate-900 p-10 rounded-[3rem] text-white shadow-xl flex flex-col justify-between">
