@@ -13,8 +13,18 @@ export const useAuth = () => {
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(() => {
-    const savedUser = localStorage.getItem("user");
-    return savedUser ? JSON.parse(savedUser) : null;
+    try {
+      const savedUser = localStorage.getItem("user");
+      const token = localStorage.getItem("token");
+      if (savedUser === "undefined" || !savedUser || !token) return null;
+      return JSON.parse(savedUser);
+    } catch (e) {
+      console.warn("[AuthContext] Corrupted state detected. Resetting.");
+      localStorage.removeItem("user");
+      localStorage.removeItem("token");
+      localStorage.removeItem("refreshToken");
+      return null;
+    }
   });
   const [isLoading, setIsLoading] = useState(!!localStorage.getItem("token") && !localStorage.getItem("user"));
 

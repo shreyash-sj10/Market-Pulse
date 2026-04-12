@@ -3,6 +3,7 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import { getStockPrice, searchSymbols } from "../../services/market.api";
 import { Plus, X, Star, Activity, Search, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { formatINR } from "../../utils/currency.utils";
 import toast from "react-hot-toast";
 
 export default function Watchlist() {
@@ -56,12 +57,12 @@ export default function Watchlist() {
   const addSymbol = (sym) => {
     const cleanSym = sym.trim().toUpperCase();
     if (!cleanSym) return;
-    
+
     if (symbols.includes(cleanSym)) {
       toast.error("Symbol already in watchlist");
       return;
     }
-    
+
     if (symbols.length >= 5) {
       toast.error("Watchlist limit reached (max 5)");
       return;
@@ -85,7 +86,7 @@ export default function Watchlist() {
         const price = await getStockPrice(symbol);
         return { symbol, price };
       },
-      refetchInterval: 60000, 
+      refetchInterval: 60000,
     })),
   });
 
@@ -106,11 +107,11 @@ export default function Watchlist() {
           const isLoading = query?.isLoading;
 
           return (
-            <motion.div 
+            <motion.div
               layout
               initial={{ opacity: 0, x: -10 }}
               animate={{ opacity: 1, x: 0 }}
-              key={symbol} 
+              key={symbol}
               className="group flex items-center justify-between p-3 bg-slate-800/40 border border-slate-800/60 rounded-xl hover:bg-slate-800 transition-all duration-300"
             >
               <div className="flex flex-col">
@@ -123,13 +124,13 @@ export default function Watchlist() {
 
               <div className="flex items-center gap-3">
                 <div className="text-right">
-                  <p className="text-xs font-black text-white">
+                  <div className="text-xs font-black text-white">
                     {isLoading ? (
                       <div className="h-3 w-8 bg-slate-700 animate-pulse rounded" />
-                    ) : price ? `$${price.toFixed(2)}` : "—"}
-                  </p>
+                    ) : price ? formatINR(price) : "—"}
+                  </div>
                 </div>
-                <button 
+                <button
                   onClick={() => removeSymbol(symbol)}
                   className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-rose-500 transition-all hover:scale-110"
                 >

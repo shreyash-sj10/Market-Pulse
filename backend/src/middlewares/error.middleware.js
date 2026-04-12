@@ -13,8 +13,8 @@ const errorHandler = (err, req, res, next) => {
   // Send JSON response with error details
   res.status(statusCode).json({
     success: false,
-    message: statusCode === 500 && process.env.NODE_ENV === "production" 
-      ? "An internal server error occurred" 
+    message: statusCode === 500 && process.env.NODE_ENV === "production"
+      ? "An internal server error occurred"
       : message,
   });
 };

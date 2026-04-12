@@ -174,9 +174,143 @@ const generateTradeReviewSummary = async (reviewData, tradeContext) => {
   }
 };
 
+/**
+ * HYBRID ENGINE: AI INTERPRETATION LAYER
+ * Extracts sentiment with nuance, summarizes multiple signals, and provides reasoning.
+ * AI MUST NOT output BUY/SELL.
+ */
+const interpretMarketSignal = async (headlines, context = {}) => {
+  if (!process.env.GEMINI_API_KEY) {
+    return {
+      nuance: "Standard signal processing active.",
+      sentimentScore: 0,
+      reasoning: "AI Interpretation node on standby. Relying on deterministic baselines.",
+      confidence: 50
+    };
+  }
+
+  const prompt = `You are a Senior Macro Intelligence AI.
+    Headlines: ${headlines.join(" | ")}
+    Sector: ${context.sector || "General"}
+    
+    Task:
+    1. Extract directional sentiment nuance (Why is this happening?).
+    2. Quantify sentiment score (-10 to +10).
+    3. Generate human-readable reasoning (2 sentences).
+    4. Resolve any contradictions between headlines.
+    
+    Rules:
+    - DO NOT output BUY or SELL.
+    - Be objective and institutional.
+    - Response MUST be valid JSON with fields: "nuance", "sentimentScore", "reasoning", "confidence".
+    
+    Format: JSON`;
+
+  try {
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-1.5-flash",
+      generationConfig: { responseMimeType: "application/json" }
+    });
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    return JSON.parse(response.text());
+  } catch (error) {
+    console.error("[AI Interpretation Error]", error);
+    return {
+      nuance: "Nuance extraction failed.",
+      sentimentScore: 0,
+      reasoning: "Consensus engines maintaining rule-based baselines.",
+      confidence: 40
+    };
+  }
+};
+
+/**
+ * AI FINAL TRADE CALL
+ * Synthesizes market context, setup, behavior, and risk into a definitive call.
+ * RULES: Do NOT change final verdict.
+ */
+const generateFinalTradeCall = async (inputs, context = {}) => {
+  if (!process.env.GEMINI_API_KEY) {
+    return {
+      finalCall: context.verdict || "WAIT",
+      confidence: context.score || 50,
+      reasoning: "Rule-based synthesis active. Awaiting AI node synchronization.",
+      suggestedAction: context.verdict === "BUY" ? "Enter Position" : "Wait for Clarity"
+    };
+  }
+
+  const { market, setup, behavior, risk, finalScore } = inputs;
+  const verdict = context.verdict || "WAIT";
+
+  const prompt = `You are a Chief Investment Officer.
+    
+    Market Context:
+    - Direction: ${market.direction}, Confidence: ${market.confidence}%, Reason: ${market.reason}
+    
+    Trade Setup:
+    - Type: ${setup.type}, Quality: ${setup.score}, Reason: ${setup.reason}
+    
+    Behavioral State:
+    - Risk: ${behavior.risk}, Score: ${behavior.score}, Reason: ${behavior.reason}
+    
+    Risk Exposure:
+    - Level: ${risk.level}, Score: ${risk.score}, Reason: ${risk.reason}
+    
+    Final Score: ${finalScore}
+    Final Verdict: ${verdict}
+    
+    TASK:
+    Generate a final trade decision explanation.
+    
+    RULES:
+    - Do NOT change the final verdict (${verdict}).
+    - Explain WHY the decision was reached.
+    - Highlight conflicts (if any).
+    - Keep explanation concise (3-5 lines).
+    - Tone: Professional, analytical, decisive.
+    
+    OUTPUT FORMAT (JSON):
+    {
+      "reasoning": "A summary of key drivers across market, setup, behavior, and risk",
+      "suggestedAction": "Enter / Wait / Reduce Size / Avoid",
+      "confidence": ${finalScore}
+    }`;
+
+  try {
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-1.5-flash",
+      generationConfig: { responseMimeType: "application/json" }
+    });
+
+    const result = await model.generateContent(prompt);
+    const data = JSON.parse(result.response.text());
+    
+    return {
+      finalCall: verdict,
+      confidence: data.confidence,
+      reasoning: data.reasoning,
+      suggestedAction: data.suggestedAction
+    };
+  } catch (error) {
+    console.error("[AI Final Call Error]", error);
+    return {
+      finalCall: verdict,
+      confidence: finalScore,
+      reasoning: "Deterministic fallback active. Logic aligned with rule-based risk audit.",
+      suggestedAction: "Follow Rule-based Protocol"
+    };
+  }
+};
+
 module.exports = {
   generateExplanation,
   generateMarketInsight,
   parseTradeIntent,
-  generateTradeReviewSummary
+  generateTradeReviewSummary,
+  interpretMarketSignal,
+  generateFinalTradeCall
 };

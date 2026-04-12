@@ -148,6 +148,7 @@ export const getStockPriceINR = async (symbol) => {
 
 // ─── Legacy/Compatibility wrapper ──────────────────────────────────────────
 export const getStockPrice = getStockPriceINR;
+export const getLivePrice = getStockPriceINR;
 
 // ─── Professional Historical Data (Backend Source) ──────────────────────────
 export const getHistoricalPrices = async (symbol, timeframe = "1mo") => {
@@ -162,7 +163,7 @@ export const getHistoricalPrices = async (symbol, timeframe = "1mo") => {
       "3M": "3mo",
       "1Y": "1y"
     };
-    
+
     const period = periodMap[timeframe] || "1mo";
     const res = await api.get(`/market/history?symbol=${symbol}&period=${period}`);
 
@@ -172,7 +173,8 @@ export const getHistoricalPrices = async (symbol, timeframe = "1mo") => {
 
     // Response structure from backend is { success, data: { prices: [...] } }
     const prices = res.data.data.prices.map(p => ({
-      time: p.date, // Backend uses date string
+      date: p.date,
+      time: p.date, 
       open: p.open,
       high: p.high,
       low: p.low,
@@ -180,8 +182,8 @@ export const getHistoricalPrices = async (symbol, timeframe = "1mo") => {
       volume: p.volume
     }));
 
-    return { 
-      data: prices, 
+    return {
+      data: prices,
       isSimulated: false,
       source: res.data.data.source
     };
@@ -232,53 +234,21 @@ export const getExplorerData = async (limit = 16, offset = 0, query = "") => {
   }
 };
 
-export const getMarketNews = async () => {
+export const getMarketNews = async (symbol = null) => {
   try {
-    const res = await api.get("/market/news");
-
-    if (!res.data || res.data.length === 0) throw new Error("Empty news response");
-
-    // We map backend fields (thumbnail, link) to frontend components (image, url)
-    return res.data.map(item => ({
-      id: item.id || item.uuid,
-      title: item.title,
-      summary: item.summary,
-      source: item.source,
-      image: item.thumbnail || item.image,
-      url: item.url || item.link,
-      time: item.time,
-    })).slice(0, 50);
+    const res = await api.get(`/market/news${symbol ? `?symbol=${symbol}` : ''}`);
+    return res.data;
   } catch (error) {
-    console.warn("[MarketAPI] Backend news failed, using fallback.", error.message);
-    // Robust fallback news system
-    return [
-      {
-        id: "fallback-1",
-        title: "Global Equity Markets Show Resilience Amid Volatility",
-        summary: "Investors continue to monitor inflation data as global indices remain robust despite macroeconomic headwinds. Central banks maintain a watchful stance on interest rate trajectories.",
-        source: "Market Intelligence",
-        image: "https://images.unsplash.com/photo-1611974714158-f88c146996bd?auto=format&fit=crop&q=80&w=1000",
-        url: "#",
-        time: new Date().toISOString()
-      },
-      {
-        id: "fallback-2",
-        title: "Tech Sector Leads Sectoral Recovery in Domestic Markets",
-        summary: "Blue-chip technology stocks have anchored the market's recovery as institutional investors increase their exposure to cloud and AI-driven service providers.",
-        source: "Financial Gazette",
-        image: "https://images.unsplash.com/photo-1590283603385-17ffb3a7f29f?auto=format&fit=crop&q=80&w=1000",
-        url: "#",
-        time: new Date().toISOString()
-      },
-      {
-        id: "fallback-3",
-        title: "Commodity Prices Stabilize as Supply Chains Normalize",
-        summary: "Energy and base metal prices have retreated from recent highs, offering potential relief for manufacturing sectors and inflation-sensitive assets.",
-        source: "Reuters Market",
-        image: "https://images.unsplash.com/photo-1526304640581-d334cdbbf45e?auto=format&fit=crop&q=80&w=1000",
-        url: "#",
-        time: new Date().toISOString()
-      }
-    ];
+    console.warn("[MarketAPI] Backend news failed.", error.message);
+    return { market: [], global: [] };
+  }
+};
+
+export const getPortfolioNews = async () => {
+  try {
+    const res = await api.get("/market/news/portfolio");
+    return res.data;
+  } catch (error) {
+    return { news: [] };
   }
 };

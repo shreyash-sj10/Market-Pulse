@@ -10,6 +10,18 @@ const traceSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   },
+  // HUMAN-READABLE DECISION TRACE (Hybrid Mode)
+  decision: String,
+  final_score: Number,
+  explanation: String,
+  action: String,
+  layers: {
+    market: { summary: String, reasoning: [String], contribution: Number },
+    setup: { summary: String, reasoning: [String], contribution: Number },
+    behavior: { summary: String, reasoning: [String], contribution: Number },
+    risk: { summary: String, reasoning: [String], contribution: Number }
+  },
+  // TECHNICAL SYSTEM STAGES (Trace_v1)
   stages: {
     interpretation_layer: {
       ml_used: { type: Boolean, default: false },
@@ -38,7 +50,7 @@ const traceSchema = new mongoose.Schema({
   },
   metadata: {
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    related_id: { type: mongoose.Schema.Types.ObjectId } // Trade ID or similar
+    related_id: { type: mongoose.Schema.Types.ObjectId }
   }
 });
 

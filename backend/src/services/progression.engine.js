@@ -6,18 +6,19 @@ const { analyzeBehavior } = require("./behavior.engine");
  * Built on deterministic delta-analysis (No AI).
  */
 const analyzeProgression = (trades) => {
-  // Guard: Requirement for minimum 20 trades to compare windows
-  if (!trades || trades.length < 20) {
-    return { success: false, error: "INSUFFICIENT_DATA" };
+  // Lower threshold for early visibility
+  if (!trades || trades.length < 2) {
+    return { success: false, error: "INITIAL_COLLECTION_PHASE", message: "Accumulate more session data to unlock progression analytics." };
   }
 
-  // 1. Snapshot Windows (FIFO/Chronological)
-  // Assumes trades are sorted by closedAt ascending
-  const recentWindow = trades.slice(-20);
-  const pastWindow = trades.slice(-40, -20); // May be 1-20 trades depending on history length
+  // Snapshot Windows
+  const tradeCount = trades.length;
+  const recentWindowSize = Math.max(1, Math.floor(tradeCount / 2));
+  const recentWindow = trades.slice(-recentWindowSize);
+  const pastWindow = trades.slice(0, tradeCount - recentWindowSize);
 
-  if (pastWindow.length < 5) {
-     return { success: false, error: "INSUFFICIENT_DATA_FOR_COMPARISON", message: "Need at least 25 closed trades for progression context." };
+  if (pastWindow.length === 0) {
+     return { success: false, error: "PENDING_DELTA", message: "Initial session established. Delta analysis pending next execution." };
   }
 
   // 2. Compute Metrics for Each Window

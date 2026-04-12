@@ -5,8 +5,20 @@ const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
  * YAHOO NEWS PROVIDER (FALLBACK)
  */
 const getNews = async (symbol) => {
-  const normalizedSymbol = symbol.toUpperCase().endsWith('.NS') ? symbol.toUpperCase() : `${symbol.toUpperCase()}.NS`;
+  const sym = symbol.toUpperCase();
+  // Smart Normalization: 
+  // 1. Already has a suffix? Leave it.
+  // 2. Contains '=' (Commodities/Indices)? Leave it.
+  // 3. Known Indian formats? (e.g. RELIANCE, NIFTY) -> Append .NS
+  // Rule: Institutional Symbol Normalization
+  let normalizedSymbol = sym;
+  const isGlobal = ["AAPL", "MSFT", "TSLA", "GOOGL", "AMZN", "META", "NVDA"].includes(sym);
+  const isCommodity = sym.includes("=");
+  const isIndex = sym.startsWith("^");
 
+  if (!isGlobal && !isCommodity && !isIndex && !sym.includes(".")) {
+    normalizedSymbol = `${sym}.NS`;
+  }
   try {
     const results = await yahooFinance.search(normalizedSymbol, { newsCount: 10 });
     

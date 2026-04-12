@@ -32,16 +32,11 @@ const getNews = async (req, res, next) => {
     if (symbol) {
       const userHoldings = req.user?.holdings || {};
       data = await newsEngine.getProcessedNews(symbol, userHoldings);
+      res.json({ success: true, ...data });
     } else {
-      data = await newsEngine.getTopNews();
+      const newsData = await newsEngine.getTopNews();
+      res.json({ success: true, ...newsData });
     }
-
-    // For general news page compatibility (it expects an array)
-    if (!symbol) {
-      return res.json(data.news);
-    }
-
-    res.json({ success: true, ...data });
   } catch (error) {
     next(error);
   }

@@ -1,44 +1,69 @@
 /**
- * DETERMINISTIC TRADE REVIEW ENGINE
- * Classifies trade quality based on Strategy Discipline vs. Pnl Outcome.
+ * INSTITUTIONAL REFLECTION ENGINE
  */
 
-const getTradeVerdict = (trade) => {
-  const isProfitable = (trade.pnl || 0) > 0;
-  const strategyMatch = trade.analysis?.strategyMatch;
-  const isStrategyValid = strategyMatch ? strategyMatch.isValid : true;
+const analyzeReview = (trade, entryTrade = null) => {
+  const mistakeTags = trade.analysis?.mistakeTags || [];
+  const hasBadProcess = mistakeTags.length > 0;
+  const isLoss = (trade.pnl || 0) <= 0;
+  const intent = entryTrade?.parsedIntent?.strategy || 'GENERAL';
 
-  if (isStrategyValid && isProfitable) return "GOOD";
-  if (isStrategyValid && !isProfitable) return "GOOD"; // Discipline in a losing trade is still "Good"
-  if (!isStrategyValid && isProfitable) return "LUCK";
-  if (!isStrategyValid && !isProfitable) return "POOR";
+  // Plan vs Reality Audit
+  let executionPattern = 'PLAN_ALIGNED';
+  if (!isLoss && trade.pricePaise < (entryTrade?.targetPrice || 0) * 0.95) {
+     executionPattern = 'EARLY_EXIT';
+  } else if (!isLoss && trade.pricePaise >= (entryTrade?.targetPrice || 0)) {
+     executionPattern = 'TARGET_HIT';
+  } else if (isLoss && trade.pricePaise <= (entryTrade?.stopLoss || 0)) {
+     executionPattern = 'STOPPED_OUT';
+  } else if (isLoss && trade.pricePaise > (entryTrade?.stopLoss || 0)) {
+     executionPattern = 'MANUAL_STOP_ADJUST';
+  }
 
-  return "NEUTRAL";
-};
-
-const getImprovementRule = (mistakeTags = []) => {
-  const ruleMap = {
-    'REVENGE_TRADING': "Wait at least 2 hours after a realized loss before opening a new position.",
-    'OVERTRADING': "Limit your daily executions to 5 high-confidence setups.",
-    'EARLY_EXIT': "Trust your stop-loss and target prices; avoid manual liquidation within 1% of target.",
-    'HOLDING_LOSERS': "Liquidate any position that breaches its initial stop-loss level immediately.",
-    'AVERAGING_DOWN': "Never add capital to a losing position to lower your average cost.",
-    'POOR_RR': "Focus on setups with at least a 1:2 risk-to-reward ratio to ensure long-term profitability."
-  };
-
-  const primaryMistake = mistakeTags[0];
-  return ruleMap[primaryMistake] || "Focus on maintaining your pre-defined risk-to-reward ratio.";
-};
-
-const analyzeReview = (trade) => {
-  const verdict = getTradeVerdict(trade);
-  const rule = getImprovementRule(trade.analysis?.mistakeTags);
+  let verdict, reflectionType, insight, improvement;
   
+  if (!isLoss && !hasBadProcess) {
+    verdict = 'DISCIPLINED PROFIT';
+    reflectionType = 'SUCCESS_VALIDATION';
+    insight = executionPattern === 'EARLY_EXIT' 
+       ? `Profit realized, but you exited significantly before your target. Trust the ${intent} logic.`
+       : `Execution fully aligned with ${intent} strategy. Target achieved with discipline.`;
+    improvement = 'Review hold-discipline parameters.';
+  } else if (!isLoss && hasBadProcess) {
+    verdict = 'LUCKY PROFIT';
+    reflectionType = 'HIDDEN_RISK_WARNING';
+    insight = `Asset reached profit targets despite Process Violations. Luck is shielding you from critical flaws.`;
+    improvement = 'Lock the terminal until process-reset is confirmed.';
+  } else if (isLoss && !hasBadProcess) {
+    verdict = 'DISCIPLINED LOSS';
+    reflectionType = 'STATISTICAL_NORMALITY';
+    insight = executionPattern === 'STOPPED_OUT'
+       ? `Professional exit at Stop Loss. Capital preserved despite adverse volatility.`
+       : `Manual exit before Stop Loss. Potentially saved alpha? Check if exit was logic-based.`;
+    improvement = 'Continue protecting the downside.';
+  } else if (isLoss && hasBadProcess) {
+    verdict = 'POOR PROCESS';
+    reflectionType = 'CRITICAL_FAILURE';
+    insight = `Loss compounded by process failures and pattern: ${executionPattern}. Avoidable drawdown.`;
+    improvement = 'Mental reset and risk-reduction required.';
+  } else {
+    verdict = 'NEUTRAL';
+    reflectionType = 'GENERAL_INSIGHT';
+    insight = 'Standard execution protocol observed.';
+    improvement = 'Maintain routine discipline.';
+  }
+
   return {
     verdict,
-    improvementRule: rule,
-    strategyDescription: trade.parsedIntent?.strategy || "General Execution",
-    isDisciplined: trade.analysis?.strategyMatch?.isValid ?? true
+    executionPattern,
+    strategyDescription: intent,
+    reflection: {
+      type: reflectionType,
+      context: `Pattern: ${executionPattern} | Strategy: ${intent}`,
+      insight,
+      improvementSuggestion: improvement
+    },
+    isDisciplined: !hasBadProcess
   };
 };
 

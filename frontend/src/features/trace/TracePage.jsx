@@ -5,9 +5,11 @@ import {
   Database, Activity, ShieldCheck, 
   Brain, Zap, ChevronRight, 
   Clock, Server, Terminal,
-  Workflow, CheckCircle, AlertCircle
+  Workflow, CheckCircle, AlertCircle,
+  Layers, Target, ShieldAlert
 } from "lucide-react";
 import api from "../../services/api";
+import DecisionTracePanel from "./components/DecisionTracePanel";
 
 const TracePage = () => {
   const [selectedTraceId, setSelectedTraceId] = useState(null);
@@ -33,11 +35,11 @@ const TracePage = () => {
   const selectedTrace = detailResponse;
 
   return (
-    <div className="max-w-[1600px] mx-auto pb-20 px-6 mt-10">
+    <div className="app-page px-2 pt-4">
       <div className="mb-12 border-l-4 border-slate-900 pl-8">
-        <h1 className="text-4xl font-black text-slate-900 tracking-tighter mb-2">System Decision Pipeline</h1>
+        <h1 className="text-4xl font-black text-slate-900 tracking-tighter mb-2">Audit & Trace Hub</h1>
         <p className="text-slate-500 font-medium text-lg leading-relaxed max-w-2xl">
-          Trace_v1: Verifying the deterministic integrity of order execution, plan generation, and behavioral audit trails.
+          Trace_v2: Dual-Mode intelligence verification. Toggling between Technical Pipeline Logs and Human-Readable Decision Layers.
         </p>
       </div>
 
@@ -47,7 +49,7 @@ const TracePage = () => {
         <div className="lg:col-span-4 space-y-4">
           <div className="flex items-center gap-2 mb-6 px-2">
              <Clock size={18} className="text-slate-400" />
-             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Recent Logs</span>
+             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Decision Registry</span>
           </div>
           
           {listLoading ? (
@@ -67,14 +69,17 @@ const TracePage = () => {
                 <div className="flex items-center justify-between mb-3">
                    <div className="flex items-center gap-2">
                        <Workflow size={14} className={selectedTraceId === t._id ? "text-indigo-400" : "text-indigo-600"} />
-                       <span className="text-[10px] font-black uppercase tracking-widest">{t.type}</span>
+                       <span className="text-[10px] font-black uppercase tracking-widest">{t.type === 'ANALYSIS' ? 'DECISION' : t.type}</span>
                    </div>
                    <span className={`text-[8px] font-bold uppercase opacity-50 ${selectedTraceId === t._id ? 'text-white' : 'text-slate-400'}`}>
                       {new Date(t.timestamp).toLocaleTimeString()}
                    </span>
                 </div>
                 <div className="flex items-center justify-between">
-                   <span className="text-xs font-bold tracking-tight opacity-80">ID: {t._id.slice(-8).toUpperCase()}</span>
+                   <div>
+                      <span className="text-xs font-bold tracking-tight opacity-80 block">Audit ID: {t._id.slice(-8).toUpperCase()}</span>
+                      {t.decision && <span className={`text-[8px] font-black uppercase tracking-widest mt-1 block ${t.decision === 'BUY' ? 'text-emerald-500' : 'text-rose-500'}`}>{t.decision} VERDICT</span>}
+                   </div>
                    <ChevronRight size={16} className="opacity-30" />
                 </div>
               </motion.div>
@@ -101,6 +106,10 @@ const TracePage = () => {
                       {[1, 2, 3, 4].map(i => <div key={i} className="h-40 bg-slate-50 animate-pulse rounded-3xl" />)}
                    </div>
                 </div>
+             ) : selectedTrace.layers ? (
+                <motion.div key={selectedTrace._id} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                   <DecisionTracePanel trace={selectedTrace} />
+                </motion.div>
              ) : (
                 <motion.div 
                    key={selectedTrace._id}

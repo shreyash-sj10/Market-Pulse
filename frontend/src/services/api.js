@@ -4,6 +4,10 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_BACKE
 
 const api = axios.create({
   baseURL: BASE_URL,
+  headers: {
+    "Cache-Control": "no-cache",
+    Pragma: "no-cache",
+  },
 });
 
 // Request interceptor to add token
@@ -13,6 +17,8 @@ api.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    config.headers["Cache-Control"] = "no-cache";
+    config.headers.Pragma = "no-cache";
     return config;
   },
   (error) => {
@@ -38,6 +44,8 @@ api.interceptors.response.use(
       // If no refresh token, force logout
       if (!refreshToken) {
         localStorage.removeItem("token");
+        localStorage.removeItem("refreshToken");
+        localStorage.removeItem("user");
         window.location.href = "/login";
         return Promise.reject(error);
       }
@@ -62,6 +70,7 @@ api.interceptors.response.use(
         // Refresh token failed or expired -> kill session
         localStorage.removeItem("token");
         localStorage.removeItem("refreshToken");
+        localStorage.removeItem("user");
         window.location.href = "/login";
         return Promise.reject(err);
       }

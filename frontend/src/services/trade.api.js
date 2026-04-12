@@ -16,6 +16,7 @@ export const buyTrade = async ({
   targetPrice,
   reason,
   userThinking,
+  intelligenceTimeline,
 }) => {
   const response = await api.post("/trades/buy", {
     symbol,
@@ -25,6 +26,7 @@ export const buyTrade = async ({
     targetPrice,
     reason,
     userThinking,
+    intelligenceTimeline,
   });
   return response.data;
 };
@@ -35,6 +37,7 @@ export const sellTrade = async ({
   price,
   reason,
   userThinking,
+  intelligenceTimeline,
 }) => {
   const response = await api.post("/trades/sell", {
     symbol,
@@ -42,6 +45,12 @@ export const sellTrade = async ({
     price,
     reason,
     userThinking,
+    intelligenceTimeline,
   });
   return response.data;
+};
+
+export const executeTrade = async (params) => {
+  if (params.type === "BUY") return buyTrade(params);
+  return sellTrade(params);
 };

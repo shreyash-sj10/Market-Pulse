@@ -21,7 +21,7 @@ const SystemDashboard = () => {
   ];
 
   return (
-    <div className="max-w-[1600px] mx-auto pb-20 px-6 mt-10">
+    <div className="app-page px-2 pt-4">
       <header className="mb-12">
         <h1 className="text-4xl font-black text-slate-900 tracking-tighter">System Health & Metadata</h1>
         <p className="text-slate-400 font-bold text-[10px] uppercase tracking-[0.3em] mt-2">SYS.NODE: DETERMINISTIC_TERMINAL_v1.0</p>

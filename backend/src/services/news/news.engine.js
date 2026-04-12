@@ -1,128 +1,162 @@
 const finnhubProvider = require('./news.provider.finnhub');
 const yahooProvider = require('./news.provider.yahoo');
 const cache = require('./news.cache');
+const classificationEngine = require('./classification.engine');
+const hybridService = require('./hybridIntelligence.service');
 
 /**
- * DETERMINISTIC SENTIMENT ANALYSIS
- */
-const classifySentiment = (headline) => {
-  const text = headline.toLowerCase();
-  
-  const positive = ["profit", "growth", "upgrade", "buy", "outperform", "bullish", "jump", "success", "gain"];
-  const negative = ["loss", "decline", "downgrade", "sell", "underperform", "bearish", "drop", "failure", "slump"];
-
-  if (positive.some(word => text.includes(word))) return "BULLISH";
-  if (negative.some(word => text.includes(word))) return "BEARISH";
-  
-  return "NEUTRAL";
-};
-
-/**
- * PORTFOLIO-AWARE RELEVANCE
- */
-const calculateRelevance = (symbol, userHoldings = {}, stockSector = "") => {
-  const norm = symbol.toUpperCase().split('.')[0];
-  if (userHoldings.hasOwnProperty(norm) || userHoldings.hasOwnProperty(`${norm}.NS`)) return "HIGH";
-  
-  return "LOW";
-};
-
-/**
- * CORE NEWS ENGINE
- * Orchestrates Providers, Cache, and Engineering logic
+ * HYBRID TRADE EXECUTION ENGINE (NEWS/SIGNAL LAYER)
+ * Pipeline: Interpretation (AI) -> Classification (Rule) -> Consensus (AI) -> Verdict (Rule)
  */
 const getProcessedNews = async (symbol, userHoldings = {}) => {
-  // 1. Check Cache
-  const cachedData = cache.getItems(symbol);
-  if (cachedData) return cachedData;
-
-  // 2. Fetch via Waterfall
+  const previousData = cache.getItems(symbol);
+  
+  // 1. Fetch via Waterfall
   let rawNews = [];
   try {
-    rawNews = await finnhubProvider.getNews(symbol);
+    const fetchPromise = yahooProvider.getNews(symbol);
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 2500));
+    rawNews = await Promise.race([fetchPromise, timeoutPromise]) || [];
+    if (!rawNews.length) rawNews = await finnhubProvider.getNews(symbol);
   } catch (err) {
-    try {
-      rawNews = await yahooProvider.getNews(symbol);
-    } catch (fallbackErr) {
-      throw new Error("NEWS_SERVICE_UNAVAILABLE");
-    }
+    try { rawNews = await finnhubProvider.getNews(symbol); } catch (fErr) { rawNews = []; }
   }
 
-  if (!rawNews.length) return { sentimentSummary: "NEUTRAL", news: [] };
+  // 2. Step 1 & 2: Raw News -> AI Interpretation & Rule Classification
+  const initialSignals = await Promise.all(rawNews.slice(0, 10).map(async (item, idx) => {
+    const rawHeadline = (item.headline || item.title || "").trim();
+    if (!rawHeadline) return null;
 
-  // 3. Process & Normalize
-  const processedNews = rawNews.map((item, idx) => {
-    const sentiment = classifySentiment(item.headline);
-    
-    // Aesthetic fallback images based on sentiment
-    const fallbackImages = {
-      BULLISH: "https://images.unsplash.com/photo-1611974714158-f88c146996bd?auto=format&fit=crop&q=80&w=1000",
-      BEARISH: "https://images.unsplash.com/photo-1590283603385-17ffb3a7f29f?auto=format&fit=crop&q=80&w=1000",
-      NEUTRAL: "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&q=80&w=1000"
-    };
+    // AI Step 1: Interpret Nuance
+    const aiNuance = await hybridService.interpretMarketNuance(rawHeadline, item.summary);
+
+    // Rule Step 2: Classification Mapping
+    const text = `${rawHeadline} ${item.summary || ""}`;
+    const country = classificationEngine.detectCountry(text);
+    const relevance = classificationEngine.getRelevance(symbol, text, userHoldings);
+    const sector = classificationEngine.mapSector(text);
 
     return {
-      id: item.id || `news-${symbol}-${Date.now()}-${idx}`,
-      title: item.headline,
-      summary: item.summary,
-      source: item.source,
-      time: new Date(item.timestamp).toISOString(),
-      url: item.url,
-      image: item.image || fallbackImages[sentiment],
-      sentiment,
-      relevance: calculateRelevance(symbol, userHoldings)
+      id: `hyp-sig-${idx}`,
+      event: rawHeadline,
+      nuance: aiNuance?.nuance || "Nuance extraction on standby.",
+      impact: (aiNuance?.sentimentScore > 2) ? "BULLISH" : (aiNuance?.sentimentScore < -2) ? "BEARISH" : "NEUTRAL",
+      confidence: aiNuance?.confidence || 60,
+      sector,
+      relevance,
+      time: new Date(item.timestamp || Date.now()).toISOString(),
+      symbols: [symbol.toUpperCase()]
     };
+  }));
+
+  const validSignals = initialSignals.filter(s => !!s);
+  const signals = validSignals.length ? validSignals : [generateFallbackSignal(symbol)];
+
+  // 3. Step 3: Multiple signals -> AI Consensus Layer
+  const sectorGroups = {};
+  signals.forEach(s => {
+    const key = s.sector || "GENERAL";
+    if (!sectorGroups[key]) sectorGroups[key] = [];
+    sectorGroups[key].push(s);
   });
 
-  // 4. Calculate Summary Sentiment
-  const bullishCount = processedNews.filter(n => n.sentiment === "BULLISH").length;
-  const bearishCount = processedNews.filter(n => n.sentiment === "BEARISH").length;
-  
-  let sentimentSummary = "MIXED";
-  if (bullishCount > bearishCount * 2) sentimentSummary = "POSSIBLY_POSITIVE";
-  if (bearishCount > bullishCount * 2) sentimentSummary = "POSSIBLY_NEGATIVE";
-  if (bullishCount === 0 && bearishCount === 0) sentimentSummary = "NEUTRAL";
+  const finalDecisionNodes = await Promise.all(Object.entries(sectorGroups).map(async ([sector, sectorSignals]) => {
+     // AI Step 3: AI Consensus Layer
+     const headlines = sectorSignals.map(s => s.event);
+     const aiConsensus = await hybridService.interpretConsensusNuance(headlines, sector);
 
-  const result = {
-    sentimentSummary,
-    news: processedNews.slice(0, 10) // Limit to top 10 as per requirements
+     // Rule Step 4 & 5: Deterministic Scoring & Verdict
+     const finalDecision = hybridService.applyDeterministicRules(sectorSignals, aiConsensus);
+
+     // Temporal delta
+     const prev = previousData?.signals?.find(p => p.sector === sector);
+     let temporal = "STABLE";
+     if (prev) {
+        if (finalDecision.verdict === "BUY" && prev.verdict !== "BUY") temporal = "IMPROVING";
+        if (finalDecision.verdict === "AVOID" && prev.verdict !== "AVOID") temporal = "WEAKENING";
+     }
+
+     return {
+        id: `consensus-${sector}`,
+        event: `${sector} HYBRID INTELLIGENCE`,
+        mechanism: aiConsensus?.explanation || "Standard directional transmission.",
+        judgment: finalDecision.reasoning,
+        keyDriver: finalDecision.keyDriver,
+        verdict: finalDecision.verdict,
+        impact: finalDecision.verdict === "BUY" ? "BULLISH" : finalDecision.verdict === "AVOID" ? "BEARISH" : "NEUTRAL",
+        confidence: finalDecision.confidenceScore,
+        riskWarnings: finalDecision.riskWarnings,
+        temporal,
+        sector,
+        symbols: [symbol.toUpperCase()],
+        signalCount: sectorSignals.length,
+        isConsensus: true
+     };
+  }));
+
+  const response = {
+    symbol,
+    signals: finalDecisionNodes,
+    stats: { total: finalDecisionNodes.length, lastUpdated: new Date().toISOString() }
   };
 
-  // 5. Store in Cache
-  cache.setItems(symbol, result);
-
-  return result;
+  cache.setItems(symbol, response);
+  return response;
 };
 
 /**
- * PORTFOLIO NEWS AGGREGATOR
+ * PORTFOLIO INTELLIGENCE (Strict Decision Mode)
  */
 const getPortfolioNews = async (userHoldings = {}) => {
-  // Limit to top 5 holdings to prevent API saturation
-  const symbols = Object.keys(userHoldings).slice(0, 5);
-  if (!symbols.length) return { news: [] };
+  const symbols = Object.keys(userHoldings).slice(0, 15);
+  
+  if (!symbols.length) {
+    return { 
+      signals: [{
+        id: 'portfolio-empty',
+        event: 'PORTFOLIO VESTIBULE EMPTY',
+        mechanism: 'No active asset nodes detected in terminal vault.',
+        judgment: 'Deploy liquidity to activate portfolio monitoring.',
+        verdict: 'WAIT',
+        impact: 'NEUTRAL',
+        confidence: 100,
+        scope: 'MARKET',
+        sector: 'GENERAL',
+        temporal: 'STABLE',
+        relevance: 'DIRECT'
+      }] 
+    };
+  }
 
-  const results = await Promise.allSettled(
-    symbols.map(s => getProcessedNews(s, userHoldings))
-  );
+  const results = await Promise.allSettled(symbols.map(s => getProcessedNews(s, userHoldings)));
+  const allSignals = results.filter(r => r.status === 'fulfilled').map(r => r.value.signals).flat();
+  
+  // Clean signals for Portfolio (Unique by symbol)
+  const uniqueBySymbol = [];
+  const seen = new Set();
+  allSignals.forEach(s => {
+     const sym = s.symbols[0];
+     if (!seen.has(sym)) {
+        seen.add(sym);
+        uniqueBySymbol.push(s);
+     }
+  });
 
-  const allNews = results
-    .filter(r => r.status === 'fulfilled')
-    .flatMap(r => r.value.news)
-    .filter(n => n.relevance === "HIGH")
-    .sort((a, b) => b.timestamp - a.timestamp);
-
-  return {
-    news: allNews.slice(0, 5)
-  };
+  return { signals: uniqueBySymbol.slice(0, 30) };
 };
 
-/**
- * MACRO MARKET NEWS AGGREGATOR
- */
-const getTopNews = async () => {
-  // Use NIFTY 50 as the macro pulse
-  return await getProcessedNews('NIFTY');
-};
+const generateFallbackSignal = (symbol) => ({
+  id: `fallback-${symbol}`,
+  event: `${symbol} STRUCTURAL PULSE BASELINE`,
+  mechanism: "Market in consolidation phase. No high-impact triggers detected.",
+  judgment: "Maintain risk-neutral posture until directional vector clears.",
+  verdict: "WAIT",
+  impact: "NEUTRAL",
+  confidence: 60,
+  scope: "MARKET",
+  sector: classificationEngine.mapSector(symbol),
+  temporal: "STABLE",
+  relevance: "MACRO"
+});
 
-module.exports = { getProcessedNews, getPortfolioNews, getTopNews };
+module.exports = { getProcessedNews, getPortfolioNews };

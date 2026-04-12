@@ -8,7 +8,7 @@ export default function MarketTickerTape() {
   const { data: indices, isLoading } = useQuery({
     queryKey: ["market-indices-ticker"],
     queryFn: getMarketIndices,
-    refetchInterval: 30000, 
+    refetchInterval: 30000,
   });
 
   if (isLoading || !indices || indices.length === 0) {
@@ -20,7 +20,7 @@ export default function MarketTickerTape() {
 
   return (
     <div className="h-full w-full bg-white overflow-hidden flex items-center">
-      <motion.div 
+      <motion.div
         animate={{ x: "-33.333%" }}
         transition={{ duration: 35, repeat: Infinity, ease: "linear" }}
         className="flex whitespace-nowrap items-center px-4"
@@ -34,11 +34,11 @@ export default function MarketTickerTape() {
               </span>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-black text-slate-900">
-                   {item.price !== null ? formatINR(item.price) : '---'}
+                  {item.price !== null ? formatINR(item.price) : '---'}
                 </span>
                 <div className={`flex items-center gap-1 text-[10px] font-black ${isUp ? 'text-emerald-500' : 'text-rose-500'}`}>
-                   {isUp ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
-                   <span>{item.changePercent.toFixed(2)}%</span>
+                  {isUp ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
+                  <span>{item.changePercent.toFixed(2)}%</span>
                 </div>
               </div>
             </div>

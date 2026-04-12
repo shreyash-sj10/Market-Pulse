@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "./AuthContext.jsx";
@@ -12,8 +12,15 @@ export default function AuthPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const { login } = useAuth();
+  const { user, login } = useAuth();
   const navigate = useNavigate();
+
+  // ── AUTO-REDIRECT IF ALREADY AUTHENTICATED ──
+  useEffect(() => {
+    if (user) {
+      navigate("/");
+    }
+  }, [user, navigate]);
 
   const handleToggle = () => {
     setIsLogin(!isLogin);
@@ -39,14 +46,14 @@ export default function AuthPage() {
     setError("");
 
     try {
-      const payload = isLogin 
+      const payload = isLogin
         ? { email: formData.email, password: formData.password }
         : { name: formData.name, email: formData.email, password: formData.password };
-      
-      const data = isLogin 
-        ? await loginUser(payload) 
+
+      const data = isLogin
+        ? await loginUser(payload)
         : await registerUser(payload);
-        
+
       login(data.token, data.refreshToken, data.user);
       navigate("/");
     } catch (err) {
@@ -75,9 +82,9 @@ export default function AuthPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex p-4 sm:p-8 font-sans selection:bg-blue-200 selection:text-blue-900">
-      
+
       <div className="w-full max-w-6xl mx-auto bg-white rounded-3xl shadow-xl shadow-slate-200/50 overflow-hidden flex flex-col md:flex-row relative border border-slate-100">
-        
+
         {/* LEFT PANEL - FINTECH THEME */}
         <div className="w-full md:w-5/12 bg-slate-900 p-12 text-white flex flex-col justify-between relative overflow-hidden hidden md:flex border-r border-slate-800">
           <div className="z-10 mt-8">
@@ -91,7 +98,7 @@ export default function AuthPage() {
               Execute live trades, monitor algorithmic risk analysis, and build a deterministic portfolio edge.
             </p>
           </div>
-          
+
           <div className="z-10 flex items-center gap-3">
             <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-600/20">
               <TrendingUp size={20} className="text-white" />
@@ -116,18 +123,18 @@ export default function AuthPage() {
               className="max-w-md w-full mx-auto"
             >
               <div className="mb-10 text-center md:text-left">
-                <h2 className="text-3xl font-extrabold text-slate-800 tracking-tight">
+                <h2 className="text-3xl font-black text-slate-900 tracking-tight">
                   {isLogin ? "Welcome Back" : "Create Account"}
                 </h2>
-                <p className="text-slate-500 mt-2 font-medium">
-                  {isLogin 
-                    ? "Enter your credentials to access your trading desk." 
+                <p className="text-slate-600 mt-2 font-bold uppercase text-[10px] tracking-widest">
+                  {isLogin
+                    ? "Establish secure connection to trading desk."
                     : "Create an account to begin algorithmic simulation."}
                 </p>
               </div>
 
               <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-                
+
                 {!isLogin && (
                   <motion.div variants={itemVariants}>
                     <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 pl-1">
@@ -211,11 +218,10 @@ export default function AuthPage() {
                   whileTap={{ scale: 0.98 }}
                   type="submit"
                   disabled={loading}
-                  className={`w-full py-4 mt-2 rounded-xl flex items-center justify-center gap-2 text-white font-bold text-lg shadow-lg transition-all ${
-                    loading 
+                  className={`w-full py-4 mt-2 rounded-xl flex items-center justify-center gap-2 text-white font-bold text-lg shadow-lg transition-all ${loading
                       ? "bg-slate-400 cursor-not-allowed shadow-none"
                       : "bg-blue-600 hover:bg-blue-500 shadow-blue-600/30 hover:shadow-blue-600/40"
-                  }`}
+                    }`}
                 >
                   {loading ? (
                     <span className="flex items-center gap-2">

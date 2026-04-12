@@ -21,6 +21,35 @@ const FALLBACK_STOCKS = {
 
 const toPaise = (val) => Math.round((val || 0) * 100);
 
+const symbolHash = (symbol = "") => {
+  let h = 0;
+  for (let i = 0; i < symbol.length; i += 1) {
+    h = ((h << 5) - h) + symbol.charCodeAt(i);
+    h |= 0;
+  }
+  return Math.abs(h);
+};
+
+const buildSyntheticQuote = (symbol, index = 0) => {
+  const baseSymbol = (symbol || "").replace(".NS", "").replace(".BO", "");
+  const h = symbolHash(baseSymbol);
+  const rupeePrice = 150 + (h % 4200);
+  const changePercent = Number((((h % 1200) - 600) / 100).toFixed(2));
+
+  return {
+    symbol: baseSymbol,
+    fullSymbol: symbol,
+    price: toPaise(rupeePrice),
+    changePercent,
+    volume: 500000 + ((h + index * 97) % 25000000),
+    marketCap: 30000000000 + ((h % 200000) * 1000000),
+    peRatio: Number((8 + (h % 3200) / 100).toFixed(1)),
+    trend: changePercent > 1 ? "BULLISH" : changePercent < -1 ? "BEARISH" : "SIDEWAYS",
+    lastUpdate: new Date(),
+    source: "OFFLINE_SYNTHETIC"
+  };
+};
+
 const normalizeSymbol = (symbol) => {
   if (!symbol) return null;
   const s = symbol.toUpperCase().trim();
@@ -33,7 +62,7 @@ const normalizeSymbol = (symbol) => {
  */
 const normalizeQuote = (raw) => {
   if (!raw) return null;
-  
+
   // 1. CURRENCY VALIDATION (Hard Layer)
   // Only allow INR assets to prevent price distortion (USD vs INR)
   if (raw.currency && raw.currency !== 'INR') {
@@ -67,7 +96,7 @@ const validateQuote = (quote) => {
 
 const getStockSnapshot = async (symbol) => {
   const apiSymbol = normalizeSymbol(symbol);
-  
+
   // 1. Check Cache
   const cached = cache.get(apiSymbol);
   if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
@@ -79,12 +108,12 @@ const getStockSnapshot = async (symbol) => {
     const quote = normalizeQuote(raw);
 
     if (!validateQuote(quote)) {
-       throw new Error(`CRITICAL_DATA_INTEGRITY_VIOLATION: ${apiSymbol}`);
+      throw new Error(`CRITICAL_DATA_INTEGRITY_VIOLATION: ${apiSymbol}`);
     }
 
     // Deterministic Trend Logic
     quote.trend = quote.changePercent > 1 ? "BULLISH" : quote.changePercent < -1 ? "BEARISH" : "SIDEWAYS";
-    
+
     // Store in cache
     cache.set(apiSymbol, { data: quote, timestamp: Date.now() });
 
@@ -100,70 +129,61 @@ const getStockSnapshot = async (symbol) => {
  */
 const getBulkSnapshots = async (symbols = []) => {
   if (!symbols.length) return [];
-  
-  const apiSymbols = symbols.map(s => normalizeSymbol(s));
-  
-  try {
-    const rawQuotes = await yahooFinance.quote(apiSymbols);
-    // Yahoo returns an array of quotes. Normalize each.
-    return rawQuotes
-      .map(q => {
-         const normalized = normalizeQuote(q);
-         if (!validateQuote(normalized)) return null;
-         normalized.trend = normalized.changePercent > 1 ? "BULLISH" : normalized.changePercent < -1 ? "BEARISH" : "SIDEWAYS";
-         return normalized;
-      })
-      .filter(r => r !== null);
-  } catch (error) {
-    console.error("[DataPipeline] Bulk fetch failed:", error.message);
-    // Individual fallback loop as safety net
-    const settlement = await Promise.allSettled(symbols.map(s => getStockSnapshot(s)));
-    return settlement
-      .map(p => p.status === 'fulfilled' ? p.value : null)
-      .filter(r => r !== null);
+
+  // Chunking to prevent URI too long or rate limits (25 per batch)
+  const CHUNK_SIZE = 25;
+  const chunks = [];
+  for (let i = 0; i < symbols.length; i += CHUNK_SIZE) {
+    chunks.push(symbols.slice(i, i + CHUNK_SIZE));
   }
+
+  // Fetch all chunks in parallel for maximum speed
+  const chunkPromises = chunks.map(async (chunk) => {
+    const apiSymbols = chunk.map(s => normalizeSymbol(s));
+    try {
+      const rawQuotes = await yahooFinance.quote(apiSymbols);
+      const quotesArray = Array.isArray(rawQuotes) ? rawQuotes : [rawQuotes];
+      
+      return quotesArray
+        .filter(q => q)
+        .map(q => {
+          const normalized = normalizeQuote(q);
+          if (validateQuote(normalized)) {
+            normalized.trend = normalized.changePercent > 1 ? "BULLISH" : normalized.changePercent < -1 ? "BEARISH" : "SIDEWAYS";
+            return normalized;
+          }
+          return null;
+        })
+        .filter(q => q);
+    } catch (error) {
+      console.error(`[DataPipeline] Chunk fetch failed for ${apiSymbols.join(',')}:`, error.message);
+      // Fallback for individual symbols in this chunk
+      const individualResults = await Promise.all(chunk.map(async (s) => {
+        try {
+          const single = await getStockSnapshot(s);
+          return single;
+        } catch (e) {
+          return null;
+        }
+      }));
+      return individualResults.filter(r => r);
+    }
+  });
+
+  const allResults = await Promise.all(chunkPromises);
+  return allResults.flat();
 };
 
 /**
  * FETCH EXPLORE DATA (NIFTY 500 SCALING)
  */
 const getExploreData = async (limit = 20, offset = 0, search = "") => {
-  const MASTER_POOL = [
-    'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK', 
-    'ADANIENT', 'SBIN', 'BHARTIARTL', 'LICI', 'ITC',
-    'HINDUNILVR', 'LT', 'BAJFINANCE', 'ADANIGREEN', 'TATAMOTORS',
-    'KOTAKBANK', 'AXISBANK', 'ADANIPORTS', 'ASIANPAINT', 'MARUTI',
-    'SUNPHARMA', 'TITAN', 'HCLTECH', 'NESTLEIND', 'ULTRACEMCO',
-    'TATASTEEL', 'POWERGRID', 'M&M', 'NTPC', 'BAJAJFINSV',
-    'ONGC', 'JSWSTEEL', 'GRASIM', 'COALINDIA', 'HINDALCO',
-    'ADANIPOWER', 'TATACONSUM', 'BRITANNIA', 'CIPLA', 'APOLLOHOSP',
-    'SBILIFE', 'EICHERMOT', 'DIVISLAB', 'BPCL', 'DRREDDY',
-    'TECHM', 'WIPRO', 'INDUSINDBK', 'HDFCLIFE', 'HEROMOTOCO',
-    'ADANIENSOL', 'ABB', 'ADANIGAS', 'AWL', 'AMBUJACEM',
-    'APOLLOTYRE', 'ASHOKLEY', 'AUBANK', 'AVANTIFEED',
-    'BALKRISIND', 'BANDHANBNK', 'BANKBARODA', 'BANKINDIA', 'BEL',
-    'BHEL', 'BIOCON', 'BOSCHLTD', 'CANBK', 'CHOLAFIN',
-    'COLPAL', 'CONCOR', 'CUMMINSIND', 'DABUR', 'DALBHARAT',
-    'DEEPAKNTR', 'DELHIVERY', 'DLF', 'DMART', 'ESCORTS',
-    'EXIDEIND', 'FEDERALBNK', 'FORTIS', 'GAIL', 'GLENMARK',
-    'GODREJCP', 'GODREJPROP', 'GUJGASLTD', 'HAL', 'HAVELLS',
-    'HDFCAMC', 'HINDCOPPER', 'HINDPETRO', 'HINDZINC', 'IDFCFIRSTB',
-    'INDIAMART', 'INDIACEM', 'IRCTC', 'IRFC', 'IEX',
-    'IGL', 'INDIGO', 'INDUSTOWER', 'IPCALAB', 'JSL',
-    'JUBLFOOD', 'KALYANKJIL', 'KEI', 'LAURUSLABS', 'LICHSGFIN',
-    'LUPIN', 'MANAPPURAM', 'MAXHEALTH', 'MAZDOCK', 'METROBRAND',
-    'MPHASIS', 'MRF', 'MUTHOOTFIN', 'NATIONALUM', 'NAVINFLUOR',
-    'OBEROIRLTY', 'OFSS', 'PAGEIND', 'PAYTM', 'PEL',
-    'PERSISTENT', 'PETRONET', 'PIDILITIND', 'PIIND', 'PNB',
-    'POLYCAB', 'POONAWALLA', 'RECLTD', 'RVNL', 'SAIL',
-    'SHREECEM', 'SHRIRAMFIN', 'SIEMENS', 'SRF', 'SUPREMEIND',
-    'SYNGENE', 'TATACOMM', 'TATAELXSI', 'TATAPOWER', 'TATASTEEL',
-    'TRENT', 'TRIDENT', 'TVSMOTOR', 'UBL', 'UNIONBANK',
-    'UNITDSPR', 'VGUARD', 'VOLTAS', 'YESBANK', 'ZEEL', 'ZOMATO'
-  ];
+const { NIFTY_500 } = require('../constants/nifty500');
+
+const MASTER_POOL = NIFTY_500;
 
   let symbols = MASTER_POOL;
-  
+
   if (search) {
     const q = search.toUpperCase();
     symbols = MASTER_POOL.filter(s => s.includes(q));
@@ -171,13 +191,15 @@ const getExploreData = async (limit = 20, offset = 0, search = "") => {
 
   const paginated = symbols.slice(offset, offset + limit);
   console.log(`[MarketExplorer] Bulk Loading ${paginated.length} symbols at offset ${offset}`);
-  
+
   const final = await getBulkSnapshots(paginated);
 
-  // GUARANTEE NON-EMPTY State
-  if (final.length === 0 && !search && offset === 0) {
-     console.warn("[MarketExplorer] API returned nothing, serving hardware fallback seeds.");
-     return Object.values(FALLBACK_STOCKS).slice(0, limit);
+  // GUARANTEE NON-EMPTY STATE EVEN IN OFFLINE/PROVIDER FAILURES
+  if (final.length === 0) {
+    if (!search && offset === 0) {
+      console.warn("[MarketExplorer] Live provider unavailable, serving deterministic synthetic universe.");
+    }
+    return paginated.map((s, idx) => buildSyntheticQuote(normalizeSymbol(s), idx));
   }
 
   return final;
@@ -204,22 +226,22 @@ const getHistorical = async (symbol, period = "1mo") => {
       '6mo': 180,
       '1y': 365
     };
-    
+
     const days = periodMap[period] || 30;
     const period1 = new Date();
     period1.setDate(period1.getDate() - days);
 
     // Using .chart() as .historical() is deprecated and restricted
-    const result = await yahooFinance.chart(apiSymbol, { 
-      period1: period1, 
+    const result = await yahooFinance.chart(apiSymbol, {
+      period1: period1,
       period2: new Date(),
-      interval: '1d' 
+      interval: '1d'
     });
 
     if (!result || !result.quotes) {
-       return { success: true, data: { prices: [], source: "Yahoo (Empty)" } };
+      return { success: true, data: { prices: [], source: "Yahoo (Empty)" } };
     }
-    
+
     // Filter, Normalize, and Sort OHLC
     const prices = result.quotes
       .filter(q => q.open && q.high && q.low && q.close && q.date)
@@ -242,8 +264,8 @@ const getHistorical = async (symbol, period = "1mo") => {
     console.error(`[DataPipeline] History fail for ${apiSymbol}:`, error.message);
     // Graceful Degradation: Return empty state instead of crashing
     return {
-       prices: [],
-       source: "Fallback Cache"
+      prices: [],
+      source: "Fallback Cache"
     };
   }
 };
@@ -269,8 +291,8 @@ const validateSymbol = async (symbol) => {
   try {
     const quote = await getStockSnapshot(symbol);
     const isValid = validateQuote(quote);
-    return { 
-      isValid, 
+    return {
+      isValid,
       symbol: quote?.symbol,
       data: isValid ? quote : null,
       source: quote?.isOfflineProxy ? "LOCAL_SEED" : "LIVE_NSE"

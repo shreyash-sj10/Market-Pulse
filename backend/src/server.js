@@ -5,13 +5,19 @@ const stopLossMonitor = require("./services/stopLossMonitor.service");
 
 const PORT = process.env.PORT || 8080; // Define the port
 
-// Connect DB
-connectDB().then(() => {
-  // Start the background SL monitor after DB connection
-  stopLossMonitor.start(30000); // 30s cycle
-});
+/**
+ * Start the server
+ */
+const startServer = async () => {
+  try {
+    await connectDB(); // Connect to MongoDB
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error("Failed to start server:", error);
+    process.exit(1); // Exit with failure
+  }
+};
 
-// Start the server
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+startServer();

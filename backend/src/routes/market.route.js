@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const marketController = require('../controllers/market.controller');
 const marketDataService = require('../services/marketData.service');
+const protect = require("../middlewares/auth.middleware");
 
 // ─── NEW MARKET INTELLIGENCE LAYER ───
 router.get('/indices', marketController.getIndices);
@@ -10,7 +11,7 @@ router.get('/price', marketController.getPrice);
 router.get('/history', marketController.getHistory);
 router.get('/fundamentals', marketController.getFundamentals);
 router.get('/news', marketController.getNews);
-router.get('/news/portfolio', marketController.getPortfolioNews);
+router.get('/news/portfolio', protect, marketController.getPortfolioNews);
 
 // ─── LEGACY / SYSTEM ROUTES ───
 router.get('/explore', async (req, res, next) => {

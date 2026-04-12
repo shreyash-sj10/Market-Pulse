@@ -23,12 +23,12 @@ const tradeSchema = new mongoose.Schema(
       required: true,
       min: 1,
     },
-    price: {
+    pricePaise: {
       type: Number,
       required: true,
       min: 0,
     },
-    totalValue: {
+    totalValuePaise: {
       type: Number,
       required: true,
     },
@@ -93,6 +93,43 @@ const tradeSchema = new mongoose.Schema(
       maxPotentialProfit: { type: Number, default: 0 },
       maxProfitPct: { type: Number, default: 0 },
       peakPrice: { type: Number, default: 0 }
+    },
+    learningOutcome: {
+      verdict: { type: String, enum: ["GOOD", "LUCK", "POOR", "NEUTRAL", "DISCIPLINED PROFIT", "LUCKY PROFIT", "DISCIPLINED LOSS", "POOR PROCESS"] },
+      type: String, // Mistake Type
+      context: String,
+      insight: String,
+      improvementSuggestion: String
+    },
+    finalTradeCall: {
+      finalCall: String,
+      confidence: Number,
+      reasoning: String,
+      suggestedAction: String
+    },
+    intelligenceTimeline: { 
+      preTrade: {
+        riskLevel: String,
+        flags: [String],
+        reasoning: [String]
+      },
+      postTrade: {
+        outcome: String,
+        alignment: String,
+        observations: [String],
+        behavioralFlags: [String],
+        insightSummary: String
+      },
+      learningTags: [String],
+      trace: [String]
+    },
+    rrRatio: {
+      type: Number,
+      default: null,
+    },
+    manualTags: {
+      type: [String],
+      default: [],
     }
   },
   {

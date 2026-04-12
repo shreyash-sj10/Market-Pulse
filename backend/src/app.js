@@ -3,6 +3,7 @@ const app = express();
 
 app.use(express.json());
 const cors = require("cors");
+app.set("etag", false);
 
 app.use(
   cors({
@@ -12,6 +13,14 @@ app.use(
 );
 const morgan = require("morgan");
 const logger = require("./utils/logger");
+
+app.use("/api", (req, res, next) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
+  res.set("Surrogate-Control", "no-store");
+  next();
+});
 
 // Intercept Morgan logs and push them into Winston
 app.use(morgan("combined", { stream: { write: (message) => logger.info(message.trim()) } }));
@@ -28,6 +37,7 @@ app.use("/api/portfolio", require("./routes/portfolio.route"));
 app.use("/api/market", require("./routes/market.route"));
 app.use("/api/analysis", require("./routes/analysis.route"));
 app.use("/api/trace", require("./routes/trace.route"));
+app.use("/api/intelligence", require("./routes/intelligence.route"));
 
 // Error middleware (ALWAYS LAST)
 const errorHandler = require("./middlewares/error.middleware");

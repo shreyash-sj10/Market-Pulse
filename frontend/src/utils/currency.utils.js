@@ -1,29 +1,42 @@
 import axios from 'axios';
 
-let exchangeRate = 83.5; // Fallback rate
+let currentExchangeRate = 83.5; // Fallback rate
 
-// Fetch live conversion rate once on load
+/**
+ * PRODUCTION-GRADE CURRENCY PROTOCOL
+ * Synchronizes with global exchange rates and provides integer-safe (Paise) formatting.
+ */
+
 export const initCurrency = async () => {
   try {
     const res = await axios.get('https://api.exchangerate-api.com/v4/latest/USD');
     if (res.data?.rates?.INR) {
-      exchangeRate = res.data.rates.INR;
-      console.log(`[Currency] Live rate updated: 1 USD = ${exchangeRate} INR`);
+      currentExchangeRate = res.data.rates.INR;
+      console.log(`[Currency] Global Sync Successful: 1 USD = ${currentExchangeRate} INR`);
     }
   } catch (error) {
-    console.warn('[Currency] Failed to fetch live rate, using fallback:', exchangeRate);
+    console.warn('[Currency] Sync failed. Reverting to hard-coded fallback (83.5)');
   }
 };
 
+export const fromPaise = (paise) => (paise || 0) / 100;
+export const toPaise = (rupees) => Math.round((parseFloat(rupees) || 0) * 100);
+
 /**
  * Formats a number as Indian Rupees (INR)
- * @param {number} value - The price to format
- * @param {boolean} isUSD - If true, converts from USD to INR first
+ * @param {number} paise - The price in Paise (must be an integer)
  */
-export const formatINR = (value, isUSD = false) => {
-  // Input is now in paise (integers)
-  const amount = (isUSD ? value * exchangeRate : value) / 100;
-  
+export const formatINR = (paise) => {
+  if (paise === undefined || paise === null || isNaN(paise)) {
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      maximumFractionDigits: 2
+    }).format(0);
+  }
+
+  const amount = (paise / 100);
+
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
@@ -31,7 +44,16 @@ export const formatINR = (value, isUSD = false) => {
   }).format(amount);
 };
 
-export const getExchangeRate = () => exchangeRate;
+export const getExchangeRate = () => currentExchangeRate;
 
-// Initialize on import (optional, or call in App.jsx)
+/**
+ * Financial Delta Styling
+ */
+export const getPriceColor = (change) => {
+  if (change > 0) return "text-emerald-500";
+  if (change < 0) return "text-rose-500";
+  return "text-slate-400";
+};
+
+// Auto-init on launch
 initCurrency();

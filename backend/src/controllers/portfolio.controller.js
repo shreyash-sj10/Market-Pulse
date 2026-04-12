@@ -4,13 +4,10 @@ const { getLivePrices } = require("../services/marketData.service");
 const Decimal = require("decimal.js");
 const { analyzeBehavior } = require("../services/behavior.engine");
 const { analyzeProgression } = require("../services/progression.engine");
+const { calculateSkillScore } = require("../services/skill.engine");
 const AppError = require("../utils/AppError");
 const { toSafeKey, fromSafeKey } = require("../utils/safeUtils");
 
-/**
- * GET /api/portfolio/summary
- * Strictly deterministic O(1) retrieval of portfolio state with live MTM.
- */
 const getPortfolioSummary = async (req, res, next) => {
   try {
     const userId = req.user._id;
@@ -20,46 +17,38 @@ const getPortfolioSummary = async (req, res, next) => {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
-    // 1. Get Live Prices for All Active Holdings
+    // 1. Get Live Prices
     const holdingSymbols = Array.from(user.holdings.keys()).map(fromSafeKey);
     const livePrices = await getLivePrices(holdingSymbols);
 
-    // 2. Compute Unrealized P&L (Mark-to-Market)
+    // 2. Compute MTM
     let unrealizedPnL = new Decimal(0);
     let currentEquityValue = new Decimal(0);
 
     user.holdings.forEach((data, safeSymbol) => {
       const symbol = fromSafeKey(safeSymbol);
       const livePrice = livePrices[symbol];
-      
-      // Fallback: If live price is temporarily missing, use avgCost as MTM estimate to prevent 503
       const effectivePrice = livePrice !== undefined ? livePrice : data.avgCost;
-      if (livePrice === undefined) {
-        console.warn(`[MTM_FALLBACK] Missing live price for ${symbol}, using cost basis.`);
-      }
-
       const marketValue = new Decimal(data.quantity).mul(effectivePrice);
       const costBasis = new Decimal(data.quantity).mul(data.avgCost);
       const gain = marketValue.sub(costBasis);
-      
       unrealizedPnL = unrealizedPnL.add(gain);
       currentEquityValue = currentEquityValue.add(marketValue);
     });
 
-    // 3. Aggregate Behavioral Insights (Sliding Window: Last 100 Trades to prevent O(N) scaling wall)
+    // 3. Aggregate Behavioral Insights
     const analysisTrades = await Trade.find({ user: userId })
       .sort({ createdAt: -1 })
       .limit(100);
-    
-    // Sort chronological for engines
+
     const sortedTrades = [...analysisTrades].sort((a, b) => a.createdAt - b.createdAt);
-    
     const behavior = analyzeBehavior(sortedTrades);
     const progression = analyzeProgression(sortedTrades);
+    const skillAudit = calculateSkillScore(sortedTrades, behavior, progression);
 
     const recentBehaviors = analysisTrades.slice(0, 5);
 
-    // 4. Construct Deterministic Response
+    // 4. Construct Response
     const response = {
       success: true,
       summary: {
@@ -72,10 +61,12 @@ const getPortfolioSummary = async (req, res, next) => {
         holdings: Object.fromEntries(
           Array.from(user.holdings.entries()).map(([k, v]) => [fromSafeKey(k), v])
         ),
+        skillAudit,
         behaviorInsights: {
           success: behavior.success,
           patterns: behavior.patterns || [],
           dominantMistake: behavior.dominantMistake || "None",
+          mistakeFrequency: behavior.mistakeFrequency || {},
           riskProfile: behavior.riskProfile,
           progression: progression.success ? progression.progression : null,
           recentBehaviors: recentBehaviors.map(t => ({
@@ -102,7 +93,7 @@ const computeWinRate = async (userId) => {
     Trade.countDocuments({ user: userId, type: "SELL" }),
     Trade.countDocuments({ user: userId, type: "SELL", pnl: { $gt: 0 } })
   ]);
-  
+
   if (sellTrades === 0) return 0;
   return Number(((winTrades / sellTrades) * 100).toFixed(2));
 };
@@ -131,7 +122,7 @@ const getPositions = async (req, res, next) => {
     const positions = Array.from(user.holdings.entries()).map(([safeSymbol, data]) => {
       const symbol = fromSafeKey(safeSymbol);
       const livePrice = livePrices[symbol];
-      
+
       // Fallback: Use avgCost as currentPrice if live fetch failed
       const currentPrice = livePrice !== undefined ? livePrice : data.avgCost;
       if (livePrice === undefined) {
@@ -146,11 +137,11 @@ const getPositions = async (req, res, next) => {
         symbol: symbol.split(".")[0],
         fullSymbol: symbol,
         quantity: data.quantity,
-        avgPrice: data.avgCost,
-        currentPrice,
-        investedValue,
-        currentValue,
-        unrealizedPnL,
+        avgPrice: Math.round(data.avgCost),
+        currentPrice: Math.round(currentPrice),
+        investedValuePaise: Math.round(investedValue),
+        currentValuePaise: Math.round(currentValue),
+        unrealizedPnL: Math.round(unrealizedPnL),
         pnlPercentage: investedValue > 0 ? Number(((unrealizedPnL / investedValue) * 100).toFixed(2)) : 0
       };
     });

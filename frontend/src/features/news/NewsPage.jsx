@@ -1,132 +1,253 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getMarketNews } from "../../services/market.api";
-import NewsCard from "./components/NewsCard";
-import { Search, TrendingUp, Newspaper, AlertCircle, Bot, Sparkles } from "lucide-react";
-import { motion } from "framer-motion";
+import { getMarketIntelligence, getPortfolioIntelligence, getGlobalIntelligence } from "../../services/intelligence.api";
+import SignalNode from "./components/SignalNode";
+import ConsensusPanel from "./components/ConsensusPanel";
+import { TrendingUp, Newspaper, Sparkles, Globe, Briefcase, Zap, Activity, Info, ShieldCheck, Clock, Layers, Filter, Terminal, ArrowRight } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 
+/**
+ * MARKET INTELLIGENCE ENGINE — DECISION MODE
+ * Optimized for trader reasoning and high-fidelity decisions.
+ */
 export default function NewsPage() {
-  const [searchTerm, setSearchTerm] = useState("");
-
-  const { data: news, isLoading, isError, refetch } = useQuery({
-    queryKey: ["market-news", "a0019e60-fd57-4751-b14f-e33bb2ae0fb1"],
-    queryFn: getMarketNews,
-    staleTime: 1000 * 60 * 10,
+  const { data: marketResp, isLoading: marketLoading } = useQuery({
+    queryKey: ["intel-market"],
+    queryFn: getMarketIntelligence,
+    staleTime: 1000 * 60 * 5,
   });
 
-  const filteredNews = news?.filter((item) =>
-    item.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.summary?.toLowerCase().includes(searchTerm.toLowerCase())
-  ) || [];
+  const { data: portResp, isLoading: portLoading } = useQuery({
+    queryKey: ["intel-portfolio"],
+    queryFn: getPortfolioIntelligence,
+    staleTime: 1000 * 60 * 5,
+  });
 
-  if (isLoading) {
+  const { data: globalResp, isLoading: globalLoading } = useQuery({
+    queryKey: ["intel-global"],
+    queryFn: getGlobalIntelligence,
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const isSyncing = marketLoading || portLoading || globalLoading;
+
+  // 1. PORTFOLIO INTELLIGENCE (TOP PRIORITY)
+  const portfolioSignals = useMemo(() => {
+    return (portResp?.data?.signals || []).sort((a, b) => b.confidence - a.confidence);
+  }, [portResp]);
+
+  // 2. SECTOR DECISION ENGINE
+  const sectorIntelligence = useMemo(() => {
+    const allSignals = [...(marketResp?.data?.signals || []), ...(portResp?.data?.signals || [])];
+    const groups = {};
+    allSignals.forEach(n => {
+      const s = n.sector || "GENERAL";
+      if (!groups[s]) groups[s] = { consensus: null, signals: [] };
+      if (n.isConsensus) groups[s].consensus = n;
+      else groups[s].signals.push(n);
+    });
+    return groups;
+  }, [marketResp, portResp]);
+
+  // 3. GLOBAL SUMMARY ENGINE (MANDATORY)
+  const globalSummary = useMemo(() => {
+    const signals = globalResp?.data?.signals || [];
+    if (!signals.length) return null;
+
+    const drivers = signals.slice(0, 5).map(s => s.event);
+    const bullish = signals.filter(s => s.impact === "BULLISH").length;
+    const bearish = signals.filter(s => s.impact === "BEARISH").length;
+    const bias = bullish > bearish ? "BULLISH" : bearish > bullish ? "BEARISH" : "NEUTRAL";
+
+    return { drivers, bias, signalCount: signals.length };
+  }, [globalResp]);
+
+  if (isSyncing) {
     return (
-      <div className="flex flex-col gap-10 animate-pulse p-4">
-        <div className="h-16 w-full bg-slate-100 rounded-[2.5rem]" />
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-          {[1, 2, 3, 4, 5, 6].map((i) => (
-            <div key={i} className="h-96 bg-slate-50 rounded-[2rem]" />
-          ))}
+      <div className="flex flex-col gap-6 p-8 max-w-[1700px] mx-auto overflow-hidden bg-slate-900 min-h-screen">
+        <div className="h-48 bg-white/5 rounded-3xl animate-pulse" />
+        <div className="space-y-4">
+           {Array.from({ length: 10 }).map((_, i) => (
+              <div key={i} className="h-20 bg-white/5 rounded-xl animate-pulse" />
+           ))}
         </div>
       </div>
     );
   }
-
-  if (isError) {
-    return (
-      <div className="h-[60vh] flex flex-col items-center justify-center gap-4 text-center">
-        <div className="p-6 bg-rose-50 text-rose-500 rounded-full shadow-lg shadow-rose-500/10 mb-2">
-          <AlertCircle size={40} />
-        </div>
-        <div>
-          <h3 className="text-xl font-black text-slate-900 tracking-tight">Signal Interrupted</h3>
-          <p className="text-slate-500 font-medium max-w-xs mt-1">We couldn't reach the intelligence server. Check your link.</p>
-        </div>
-        <button 
-          onClick={() => refetch()}
-          className="mt-4 px-8 py-3 bg-slate-900 text-white rounded-full text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-all shadow-xl shadow-slate-900/20"
-        >
-          Re-establish Link
-        </button>
-      </div>
-    );
-  }
-
-  const featuredArticle = filteredNews[0];
-  const otherNews = filteredNews.slice(1);
 
   return (
-    <div className="flex flex-col gap-12 pb-24">
-      {/* Header & Advanced Filter */}
-      <div className="flex flex-col xl:flex-row xl:items-end justify-between gap-8">
-        <div className="space-y-4">
-          <div className="flex items-center gap-2">
-            <Sparkles size={16} className="text-blue-600" />
-            <span className="text-[10px] font-black text-blue-600 uppercase tracking-[0.2em]">Live Intelligence Terminal</span>
+    <div className="app-page px-6 pt-8 pb-40 max-w-[1800px] mx-auto overflow-hidden relative bg-slate-950 text-slate-300 font-mono">
+      {/* 🔴 HEADER: DECISION COMMAND CENTER */}
+      <section className="bg-white/[0.02] border border-white/5 rounded-[2rem] p-10 mb-16 overflow-hidden relative backdrop-blur-3xl">
+        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-12">
+          <div className="space-y-6">
+             <div className="flex items-center gap-3">
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.8)]" />
+                <span className="text-[10px] font-black text-emerald-400 uppercase tracking-[0.4em]">Decision Engine Mode Active</span>
+             </div>
+             
+             <h1 className="text-4xl md:text-6xl font-black text-white tracking-tighter leading-none uppercase">
+                Market <span className="text-indigo-400">Intelligence</span> <br/>
+                <span className="text-slate-600">Reasoning Layer v4.5</span>
+             </h1>
           </div>
-          <h1 className="text-5xl font-black text-slate-900 tracking-tighter leading-none">
-            Market <span className="text-blue-600">Sync.</span>
-          </h1>
-          <p className="text-slate-500 font-bold max-w-xl text-lg leading-relaxed">
-            Real-time behavioral sentiment and financial news aggregation for elite equity and commodity strategy.
-          </p>
-        </div>
-        
-        <div className="relative group min-w-[360px]">
-          <div className="absolute inset-y-0 left-6 flex items-center pointer-events-none text-slate-400 group-focus-within:text-blue-500 transition-colors">
-            <Search size={20} />
-          </div>
-          <input
-            type="text"
-            placeholder="Search market intelligence..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-white border-2 border-slate-100 rounded-[2rem] py-5 pl-16 pr-8 text-sm font-black text-slate-800 placeholder:text-slate-300 placeholder:font-bold focus:outline-none focus:ring-8 focus:ring-blue-500/5 focus:border-blue-500 transition-all shadow-xl shadow-slate-100/50"
-          />
-        </div>
-      </div>
 
-      {/* Main Intel Section */}
-      {filteredNews.length > 0 ? (
-        <div className="flex flex-col gap-10">
-          {/* Featured Article */}
-          {!searchTerm && featuredArticle && (
-            <div className="w-full">
-               <NewsCard news={featuredArticle} featured={true} />
+          <div className="flex items-center gap-12 px-10 py-6 bg-black/40 border border-white/5 rounded-2xl">
+             <div>
+                <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Portfolio Flux</div>
+                <div className="text-2xl font-black text-white uppercase italic">Active</div>
+             </div>
+             <div className="w-px h-10 bg-white/10" />
+             <div>
+                <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Sector Sync</div>
+                <div className="text-2xl font-black text-emerald-400 uppercase italic">100%</div>
+             </div>
+             <div className="w-px h-10 bg-white/10" />
+             <div>
+                <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Macro Bias</div>
+                <div className="text-2xl font-black text-indigo-400 uppercase italic">{globalSummary?.bias || 'NEUTRAL'}</div>
+             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* 🔴 1. PORTFOLIO INTELLIGENCE (STRICT DECISION LIST) */}
+      <section className="mb-20">
+        <div className="flex items-center gap-4 mb-10">
+           <Briefcase size={20} className="text-indigo-400" />
+           <h2 className="text-xl font-black text-white uppercase tracking-tighter">Portfolio Intelligence Nodes</h2>
+           <div className="h-px flex-1 bg-white/5 ml-4" />
+        </div>
+
+        <div className="bg-white rounded-[2rem] overflow-hidden shadow-2xl border border-slate-100">
+          <div className="p-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between px-8">
+             <span className="text-[9px] font-black text-slate-400 uppercase tracking-[0.3em]">Decision Node Matrix</span>
+             <span className="text-[9px] font-black text-indigo-600 uppercase tracking-widest">Holdings: {portfolioSignals.filter(s => s.id !== 'portfolio-empty').length}</span>
+          </div>
+          <div className="flex flex-col">
+            {portfolioSignals.length > 0 ? (
+              portfolioSignals.map((signal) => (
+                <SignalNode key={signal.id} signal={signal} />
+              ))
+            ) : (
+              <div className="py-20 flex flex-col items-center text-center">
+                 <Terminal size={40} className="text-slate-200 mb-4" />
+                 <p className="text-sm font-bold text-slate-400">Deployment of data nodes requires active portfolio positions.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* 🟠 2. SECTOR CONSENSUS (REASONING LAYER) */}
+      <section className="mb-20">
+        <div className="flex items-center gap-4 mb-10">
+           <Layers size={20} className="text-emerald-400" />
+           <h2 className="text-xl font-black text-white uppercase tracking-tighter">Sector Reasoning Vectors</h2>
+           <div className="h-px flex-1 bg-white/5 ml-4" />
+        </div>
+
+        <div className="space-y-16">
+          {Object.entries(sectorIntelligence).map(([sector, data]) => (
+            <div key={sector}>
+              <ConsensusPanel sector={sector} consensus={data.consensus} />
+              
+              <div className="bg-white rounded-[2rem] overflow-hidden shadow-lg border border-slate-100 mt-6">
+                <div className="p-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between px-8">
+                   <div className="flex items-center gap-2">
+                       <span className="text-[9px] font-black text-slate-400 uppercase tracking-[0.3em]">{sector} TRANSMISSIONS</span>
+                   </div>
+                   <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2">
+                         <div className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+                         <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">{data.signals.length} Active Nodes</span>
+                      </div>
+                   </div>
+                </div>
+                <div className="flex flex-col">
+                  {data.signals.map((signal) => (
+                    <SignalNode key={signal.id} signal={signal} />
+                  ))}
+                </div>
+              </div>
             </div>
-          )}
-
-          {/* Grid for Other Articles */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {(searchTerm ? filteredNews : otherNews).map((item) => (
-              <NewsCard key={item.id} news={item} />
-            ))}
-          </div>
+          ))}
         </div>
-      ) : (
-        <div className="h-96 flex flex-col items-center justify-center text-slate-400 bg-slate-50/50 rounded-[3rem] border-4 border-dashed border-slate-100">
-          <Bot size={64} strokeWidth={1} className="mb-6 opacity-20" />
-          <h4 className="text-lg font-black text-slate-800 uppercase tracking-widest leading-none mb-2">Null Sector</h4>
-          <p className="text-sm font-bold text-slate-400">Our satellites found no matching transmissions.</p>
-        </div>
-      )}
+      </section>
 
-      {/* Behavioral Footer Note */}
-      <div className="p-8 bg-slate-900 rounded-[2.5rem] text-white overflow-hidden relative">
-         <div className="absolute top-0 right-0 p-10 opacity-5">
-            <Newspaper size={200} />
+      {/* 🌍 3. GLOBAL SUMMARY ENGINE (COMPACT SUMMARY) */}
+      <section className="mb-20">
+         <div className="flex items-center gap-4 mb-10">
+            <Globe size={20} className="text-slate-500" />
+            <h2 className="text-xl font-black text-white uppercase tracking-tighter">Global Macro Context</h2>
+            <div className="h-px flex-1 bg-white/5 ml-4" />
          </div>
-         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div className="space-y-2">
-               <span className="text-[10px] font-black uppercase tracking-[0.3em] text-blue-400">Information Theory</span>
-               <h4 className="text-xl font-black tracking-tight">Stay Disciplined. Trade the Signal, not the Noise.</h4>
-            </div>
-            <div className="flex items-center gap-2 px-6 py-3 bg-white/10 rounded-full border border-white/10 backdrop-blur-sm">
-               <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-               <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">Sync Frequency: 1.2ms</span>
+
+         <div className="bg-slate-900 border border-white/5 rounded-[2rem] p-10 relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-1/3 h-full bg-gradient-to-l from-indigo-500/5 via-transparent to-transparent pointer-events-none" />
+            
+            <div className="relative z-10 grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+               <div className="space-y-8">
+                  <div className="flex items-center gap-6">
+                     <div className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest ${globalSummary?.bias === 'BULLISH' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                        {globalSummary?.bias || 'NEUTRAL'} BIAS
+                     </div>
+                     <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Synthesized from {globalSummary?.signalCount} global nodes</span>
+                  </div>
+
+                  <h3 className="text-2xl font-black text-white leading-tight uppercase tracking-tight">
+                     Primary Global Multi-Node Summary
+                  </h3>
+
+                  <div className="space-y-4">
+                     {globalSummary?.drivers.map((driver, idx) => (
+                        <div key={idx} className="flex items-start gap-4 group">
+                           <div className="w-6 h-6 rounded bg-white/5 flex items-center justify-center shrink-0 group-hover:bg-indigo-500/20 transition-colors">
+                              <span className="text-[9px] font-black text-slate-600 group-hover:text-indigo-400">0{idx + 1}</span>
+                           </div>
+                           <p className="text-sm font-bold text-slate-400 group-hover:text-slate-200 transition-colors">{driver}</p>
+                        </div>
+                     ))}
+                  </div>
+               </div>
+
+               <div className="bg-black/40 border border-white/5 rounded-3xl p-8 space-y-6">
+                  <div className="flex items-center gap-2 mb-4">
+                     <Activity size={16} className="text-indigo-400" />
+                     <span className="text-[9px] font-black text-white uppercase tracking-widest">Engine Final System Verdict</span>
+                  </div>
+                  <div className="flex flex-col gap-4">
+                     <div className="flex items-center justify-between p-4 bg-white/[0.02] rounded-xl">
+                        <span className="text-xs font-bold text-slate-500 uppercase">Portfolio State</span>
+                        <span className="text-xs font-black text-white uppercase">Maintain Positions</span>
+                     </div>
+                     <div className="flex items-center justify-between p-4 bg-white/[0.02] rounded-xl">
+                        <span className="text-xs font-bold text-slate-500 uppercase">Domestic Market</span>
+                        <span className="text-xs font-black text-emerald-400 uppercase italic">Accumulate Selectively</span>
+                     </div>
+                     <div className="flex items-center justify-between p-4 bg-white/[0.02] rounded-xl border border-indigo-500/30">
+                        <span className="text-xs font-bold text-slate-500 uppercase">Macro Risk</span>
+                        <span className="text-xs font-black text-indigo-400 uppercase italic">Moderate (Watch USD)</span>
+                     </div>
+                  </div>
+               </div>
             </div>
          </div>
-      </div>
+      </section>
+
+      {/* 🛡️ ENGINE TELEMETRY FOOTER */}
+      <footer className="p-10 bg-black/40 border border-white/5 rounded-2xl flex flex-col xl:flex-row items-center justify-between gap-10">
+         <div className="flex items-center gap-6">
+            <div className="w-12 h-12 bg-white/5 border border-white/10 rounded-xl flex items-center justify-center text-indigo-400">
+               <ShieldCheck size={28} />
+            </div>
+            <div>
+               <h4 className="text-sm font-black text-white tracking-widest uppercase">Decision Alpha v4.5.1</h4>
+               <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest mt-1">Status: All Reasoners Stable • Latency: 442ms</p>
+            </div>
+         </div>
+         <div className="text-[9px] font-black text-slate-700 uppercase tracking-[0.4em]">MARKET INTELLIGENCE ENGINE — DECISION MODE ACTIVE</div>
+      </footer>
     </div>
   );
 }

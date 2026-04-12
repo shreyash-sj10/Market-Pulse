@@ -5,15 +5,28 @@ const Decimal = require("decimal.js");
  * Analyzes round-trip trades to detect psychological and strategic failure patterns.
  */
 const analyzeBehavior = (trades) => {
-  // Guard: Requirement for minimum 10 trades
-  if (!trades || trades.length < 10) {
-    return { success: false, error: "INSUFFICIENT_DATA" };
+  // Lower threshold for "Institutional" but "Dynamic" start
+  if (!trades || trades.length === 0) {
+    return { success: false, error: "NO_TRADES" };
   }
 
-  // Filter out any incomplete trades per requirement
-  const closedTrades = trades.filter(t => t.closedAt && t.createdAt);
-  if (closedTrades.length < 10) {
-    return { success: false, error: "INSUFFICIENT_DATA" };
+  // Filter out any incomplete trades
+  const closedTrades = trades.filter(t => t.type === 'SELL');
+  if (closedTrades.length === 0 && trades.length > 0) {
+    // If only BUY trades exist, we can still provide a basic risk profile
+    const avgRisk = trades.reduce((acc, t) => acc + (t.analysis?.riskScore || 50), 0) / trades.length;
+    return {
+      success: true,
+      patterns: [],
+      dominantMistake: "None Detected",
+      mistakeFrequency: {},
+      riskProfile: {
+        riskTolerance: avgRisk > 70 ? "Aggressive" : avgRisk > 40 ? "Moderate" : "Conservative",
+        consistencyScore: 100,
+        disciplineScore: 100,
+        avgRiskScore: Number(avgRisk.toFixed(2))
+      }
+    };
   }
 
   // Sort by closedAt to maintain chronological sequence
@@ -132,10 +145,18 @@ const analyzeBehavior = (trades) => {
   const consistencyScore = Math.max(0, 100 - Math.sqrt(variance) * 2);
   const disciplineScore = Math.max(0, 100 - patterns.length * 15);
 
+  const mistakeFrequency = {};
+  sorted.forEach(t => {
+    (t.analysis?.mistakeTags || []).forEach(tag => {
+      mistakeFrequency[tag] = (mistakeFrequency[tag] || 0) + 1;
+    });
+  });
+
   return {
     success: true,
     patterns,
     dominantMistake,
+    mistakeFrequency,
     riskProfile: {
       riskTolerance: avgRiskScore > 70 ? "Aggressive" : avgRiskScore > 40 ? "Moderate" : "Conservative",
       consistencyScore: Number(consistencyScore.toFixed(2)),
