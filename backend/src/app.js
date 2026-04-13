@@ -49,4 +49,13 @@ app.use("/api/metrics", require("./routes/metrics.route"));
 const errorHandler = require("./middlewares/error.middleware");
 app.use(errorHandler);
 
+// Start background workers
+const { startOutboxWorker } = require("./workers/outbox.worker");
+const { startSweeper } = require("./services/sweeper.service");
+
+if (process.env.NODE_ENV !== "test") {
+  startOutboxWorker();
+  startSweeper();
+}
+
 module.exports = app;

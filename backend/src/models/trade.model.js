@@ -20,7 +20,7 @@ const tradeSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["PROCESSING", "EXECUTED", "PENDING", "CLOSED", "COMPLETE", "EXECUTED_PENDING_REFLECTION"],
+      enum: ["PROCESSING", "EXECUTED", "PENDING", "PENDING_EXECUTION", "FAILED", "CLOSED", "COMPLETE", "EXECUTED_PENDING_REFLECTION"],
       default: "EXECUTED",
     },
     reflectionStatus: {

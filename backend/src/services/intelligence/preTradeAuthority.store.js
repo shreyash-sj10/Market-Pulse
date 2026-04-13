@@ -70,30 +70,37 @@ const issueDecisionToken = async ({ symbol, pricePaise, quantity, stopLossPaise,
 
 const getDecisionRecord = async (token) => {
   if (!token) return null;
+  
   if (redisClient && redisClient.isReady) {
      try {
-       const str = await redisClient.get(`pretrade:${token}`);
+       // Atomic Lua script: Get and Delete
+       const script = `
+         local val = redis.call("GET", KEYS[1])
+         if val then
+           redis.call("DEL", KEYS[1])
+         end
+         return val
+       `;
+       const str = await redisClient.eval(script, { keys: [`pretrade:\${token}`] });
        if (str) {
+         // Silently keep Mongo clean
+         PreTradeToken.deleteOne({ token }).catch(()=>{});
          const obj = JSON.parse(str);
          if (obj.expiresAt <= Date.now()) return null;
          return obj;
        }
      } catch(e) {}
   }
-  const record = await PreTradeToken.findOne({ token }).lean();
+  
+  // Atomic Mongo Fetch & Delete
+  const record = await PreTradeToken.findOneAndDelete({ token }).lean();
   if (!record) return null;
-  if (record.expiresAt <= new Date()) {
-    await PreTradeToken.deleteOne({ token });
-    return null;
-  }
+  if (record.expiresAt <= new Date()) return null;
   return record;
 };
 
 const consumeDecisionRecord = async (token) => {
-  if (redisClient && redisClient.isReady) {
-     try { await redisClient.del(`pretrade:${token}`); } catch(e){}
-  }
-  await PreTradeToken.deleteOne({ token });
+  // NO-OP: Token is now atomically popped by getDecisionRecord
 };
 
 // ── Test helpers (mirror of old __testables interface) ───────────────────────

@@ -2,6 +2,7 @@ const Trade = require("../models/trade.model");
 const User = require("../models/user.model");
 const Holding = require("../models/holding.model");
 const ExecutionLock = require("../models/executionLock.model");
+const Outbox = require("../models/outbox.model");
 const AppError = require("../utils/AppError");
 const calculateMistakeAnalysis = require("./mistakeAnalysis.service");
 const { generateExplanation, parseTradeIntent, generateFinalTradeCall } = require("./aiExplanation.service");
@@ -157,7 +158,7 @@ const placeOrder = async (userDoc, payload, type = "BUY") => {
         rawIntent: rawIntent || intent,
         intent,
         manualTags: manualTags || [],
-        status: "PENDING",
+        status: "PENDING_EXECUTION",
         queuedAt: new Date(),
         executionTime: null
       };
@@ -204,7 +205,7 @@ const placeOrder = async (userDoc, payload, type = "BUY") => {
 const executeOrder = async (tradeId) => {
   return await runInTransaction(async (session) => {
     const trade = await Trade.findOneAndUpdate(
-      { _id: tradeId, status: "PENDING" },
+      { _id: tradeId, status: "PENDING_EXECUTION" },
       { status: "PROCESSING" },
       { new: true, session }
     );
@@ -305,13 +306,10 @@ const executeOrder = async (tradeId) => {
     await user.save({ session });
 
     if (trade.type === "SELL") {
-      tradeQueue.add("TRADE_CLOSED", { tradeId: trade._id.toString(), userId: user._id.toString() }, {
-        attempts: 5,
-        backoff: { type: "exponential", delay: 2000 }
-      }).catch(err => {
-        logger.error(`[Queue] Failed to enqueue TRADE_CLOSED for \${trade._id}: \${err.message}`);
-      });
-      eventBus.emit("TRADE_CLOSED", { tradeId: trade._id.toString(), userId: user._id.toString() });
+      await Outbox.create([{
+        type: "TRADE_CLOSED",
+        payload: { tradeId: trade._id.toString(), userId: user._id.toString() }
+      }], { session });
     }
 
     const holdings = await Holding.find({ userId: user._id }).session(session);
