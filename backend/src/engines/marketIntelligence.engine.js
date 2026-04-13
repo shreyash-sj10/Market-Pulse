@@ -1,4 +1,4 @@
-const { summarizeMarketDrivers } = require('../services/aiExplanation.service');
+const { analyzeNews } = require('../services/aiExplanation.service');
 const {
   createValidStatus,
   createUnavailableStatus,
@@ -31,6 +31,7 @@ const analyzeMarketIntelligence = async (articles, symbol = "GENERAL") => {
   let bullishCount = 0;
   let bearishCount = 0;
   const rawContext = [];
+  const deterministicDrivers = [];
 
   articles.forEach(article => {
     const text = ((article.title || "") + " " + (article.description || "")).toLowerCase();
@@ -52,6 +53,9 @@ const analyzeMarketIntelligence = async (articles, symbol = "GENERAL") => {
 
     if (matches > 0) {
       rawContext.push(article.title);
+      if (deterministicDrivers.length < 5) {
+        deterministicDrivers.push(article.title);
+      }
     }
   });
 
@@ -69,7 +73,7 @@ const analyzeMarketIntelligence = async (articles, symbol = "GENERAL") => {
   }
 
   // AI Summary Layer (Restricted to driver summarization)
-  const driversResponse = await summarizeMarketDrivers(
+  const aiNews = await analyzeNews(
     rawContext.length > 0 ? rawContext.slice(0, 15) : articles.slice(0, 5).map(a => a.title)
   );
 
@@ -84,6 +88,7 @@ const analyzeMarketIntelligence = async (articles, symbol = "GENERAL") => {
       warnings: ["NO_CLASSIFIED_SIGNALS"],
       articleCount: articles.length,
       lastUpdated: new Date(),
+      ai: aiNews
     };
   }
 
@@ -94,10 +99,13 @@ const analyzeMarketIntelligence = async (articles, symbol = "GENERAL") => {
     symbol,
     sentiment,
     confidence,
-    drivers: isValidStatus(driversResponse) ? driversResponse.drivers : [],
+    // PHASE 3 FIX: Deterministic drivers are PRIMARY. Always present, never empty when signals exist.
+    drivers: deterministicDrivers,
     warnings: bearishCount > 8 ? ["Heavy negative cluster detected", "Institutional sentiment cooling"] : [],
     articleCount: articles.length,
-    lastUpdated: new Date()
+    lastUpdated: new Date(),
+    // AI is SECONDARY overlay — read-only, non-critical
+    ai: aiNews
   };
 };
 

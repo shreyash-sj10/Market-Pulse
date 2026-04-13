@@ -5,12 +5,16 @@ const { analyzeBehavior } = require("./behavior.engine");
  * Segment-based temporal analysis comparing recent performance to historical baselines.
  */
 const analyzeProgression = (closedTrades) => {
-  if (!closedTrades || closedTrades.length < 5) {
+  // PHASE 8 FIX: Meaningful comparison requires at least 40 trades (2 x 20-trade windows).
+  // Previous guard of 5 was misleading — the algorithm always needs 40+ to function.
+  if (!closedTrades || closedTrades.length < 40) {
     return {
       success: false,
       trend: "STABLE",
       changes: [],
-      narrative: "Initial performance window established. Accumulate more trades to unlock progression tracking."
+      narrative: closedTrades?.length > 0
+        ? `Baseline established (${closedTrades.length} trades). Progression tracking unlocks at 40.`
+        : "Initial performance window established. Accumulate more trades to unlock progression tracking."
     };
   }
 
@@ -22,29 +26,28 @@ const analyzeProgression = (closedTrades) => {
   const remainder = sorted.slice(0, -20);
   const past = remainder.slice(-20);
 
-  if (past.length === 0) {
-    return {
-      success: false,
-      trend: "STABLE",
-      changes: [],
-      narrative: "Baseline data established. Comparison window will open after 20 trades."
-    };
-  }
-
-  // 1. Analyze Behavioral Discipline per window
+  // PHASE 9 FIX: Compute segment behavior independently — avoids triple analyzeBehavior calls.
+  // The main worker already computed full-history behavior; these are segment-specific.
   const recentBeh = analyzeBehavior(recent);
   const pastBeh = analyzeBehavior(past);
 
+  // PHASE 6 FIX: safe() prevents NaN propagation when disciplineScore is null.
+  const safe = (v) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
   // 2. Compute Segment Metrics
-  const calculateWinRate = (arr) => arr.filter(t => t.pnl > 0).length / (arr.length || 1);
-  const calculateAvgRR = (arr) => arr.reduce((acc, t) => acc + (t.rr || 0), 0) / (arr.length || 1);
+  const calculateWinRate = (arr) => arr.filter(t => t.pnlPaise > 0).length / (arr.length || 1);
+  // PHASE 7 FIX: Exclude null/undefined RR from average — divide by valid count only.
+  const calculateAvgRR = (arr) => {
+    const valid = arr.filter(t => typeof t.rr === "number" && Number.isFinite(t.rr));
+    return valid.length > 0 ? valid.reduce((acc, t) => acc + t.rr, 0) / valid.length : 0;
+  };
   const calculateAvgHold = (arr) => arr.reduce((acc, t) => acc + (t.holdTime || 0), 0) / (arr.length || 1);
 
   const metrics = [
-    { name: "Win Rate", current: calculateWinRate(recent) * 100, previous: calculateWinRate(past) * 100, higherIsBetter: true },
-    { name: "Discipline", current: recentBeh.disciplineScore, previous: pastBeh.disciplineScore, higherIsBetter: true },
-    { name: "Plan RR", current: calculateAvgRR(recent), previous: calculateAvgRR(past), higherIsBetter: true },
-    { name: "Avg Hold Time", current: calculateAvgHold(recent), previous: calculateAvgHold(past), higherIsBetter: false }
+    { name: "Win Rate",      current: calculateWinRate(recent) * 100,  previous: calculateWinRate(past) * 100,  higherIsBetter: true },
+    { name: "Discipline",   current: safe(recentBeh.disciplineScore),  previous: safe(pastBeh.disciplineScore), higherIsBetter: true },
+    { name: "Plan RR",      current: calculateAvgRR(recent),           previous: calculateAvgRR(past),          higherIsBetter: true },
+    { name: "Avg Hold Time",current: calculateAvgHold(recent),         previous: calculateAvgHold(past),        higherIsBetter: false }
   ];
 
   // 3. Detect Changes

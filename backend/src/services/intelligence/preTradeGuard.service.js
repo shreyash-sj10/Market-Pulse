@@ -1,7 +1,7 @@
 const newsEngine = require("../news/news.engine");
 const Trade = require("../../models/trade.model");
 const adaptiveEngine = require("./adaptiveEngine.service");
-const { parseTradeIntent, generateFinalTradeCall } = require("../aiExplanation.service");
+const { parseUserBias, explainDecision } = require("../aiExplanation.service");
 const { validateStrategy } = require("../strategy.engine");
 const { issueDecisionToken } = require("./preTradeAuthority.store");
 const { toHoldingsObject } = require("../../utils/holdingsNormalizer");
@@ -19,12 +19,15 @@ const logger = require("../../lib/logger");
  */
 const getBehavioralFlags = async (user) => {
   const cfg = SYSTEM_CONFIG.intelligence.preTrade;
+  // PHASE 2 FIX: Derive revenge window from the single canonical config value.
+  // behavior.engine.js also uses cfg.behavior.revengeWindowMinutes — same value.
+  const revengeWindowMs = SYSTEM_CONFIG.behavior.revengeWindowMinutes * 60 * 1000;
   const lastTrades = await Trade.find({ user: user._id }).sort({ createdAt: -1 }).limit(5);
   const flags = [];
   
   if (lastTrades.length > 0) {
     const last = lastTrades[0];
-    if (last.pnlPaise < 0 && (Date.now() - new Date(last.createdAt).getTime() < cfg.revengeWindowMs)) {
+    if (last.pnlPaise < 0 && (Date.now() - new Date(last.createdAt).getTime() < revengeWindowMs)) {
       flags.push("REVENGE_TRADING_RISK");
     }
   }
@@ -53,15 +56,21 @@ const checkTradeRisk = async (tradeRequest, user) => {
   const marketStatus = newsResponse?.status || (consensus ? "VALID" : "UNAVAILABLE");
 
   // LAYER 2: TRADE SETUP (AI Intent + Strategy Rule)
-  const parsedIntent = await parseTradeIntent(userThinking);
-  const parsedIntentValid = isValidStatus(parsedIntent);
+  const parsedIntent = await parseUserBias(userThinking);
+  const parsedIntentValid = parsedIntent?.status === "OK";
+  // The strategy logic expects "parsedIntent" to be the AI output. But we need to check if strategy matches intent.
+  // Wait, the validation requires intent format: { strategy: ... } but we unified it to the AIResponse contract!
+  // It is now parsedIntent.explanation.summary (if mapped) or parsedIntent.behavior.tag.
+  // Actually, our Normalizer stores "strategy" into "summary" (normalizeAIOutput maps raw.strategy to summary).
+  const strategyString = parsedIntent?.strategyTag || "UNKNOWN";
+  
   const strategyAudit = parsedIntentValid
-    ? validateStrategy(parsedIntent, {
+    ? validateStrategy({ strategy: strategyString, reason: parsedIntent?.behavior?.explanation }, {
       rsi: Number(consensus?.rsi),
       trend: consensus?.verdict === "BUY" ? "BULLISH" : "BEARISH",
       volatility: Number(consensus?.volatility),
     })
-    : { isValid: false, mismatchReason: parsedIntent?.reason || "INSUFFICIENT_INTENT_DATA", score: null };
+    : { isValid: false, mismatchReason: "INSUFFICIENT_INTENT_DATA", score: null };
 
   // LAYER 3: BEHAVIORAL ANALYSIS
   const behavioralFlags = await getBehavioralFlags(user);
@@ -119,22 +128,7 @@ const checkTradeRisk = async (tradeRequest, user) => {
   const finalScore = entryDecision.riskScore;
   const verdict = mapDecisionVerdictToAuthorityVerdict(entryDecision.verdict);
 
-  const aiDecision = await generateFinalTradeCall({
-     market: { direction: consensus?.verdict, confidence: consensus?.confidence, reason: consensus?.judgment },
-     setup: { 
-       type: parsedIntentValid ? parsedIntent.strategy : "UNAVAILABLE",
-       score: strategyAudit.isValid ? cfg.setupValidScore : cfg.setupInvalidScore, 
-       reason: `${strategyAudit.mismatchReason || "Protocol alignment confirmed."} R:R Ratio: ${rr}.` 
-     },
-     behavior: { 
-       risk: adapted.adaptedRiskLevel, 
-       score: 100 - (behavioralFlags.length * cfg.behavioralScorePenaltyPerFlag), 
-       reason: adapted.adaptiveMessage 
-     },
-     risk: { level: verdict === "BUY" ? "LOW" : "HIGH", score: finalScore, reason: "Multiple factor adaptive risk audit complete." },
-     finalScore
-  }, { verdict });
-
+  // PHASE 1 FIX: Issue token FIRST — AI must never block trade authorization.
   const authority = await issueDecisionToken({
     symbol,
     pricePaise: finalPrice,
@@ -144,6 +138,16 @@ const checkTradeRisk = async (tradeRequest, user) => {
     verdict,
     userId: user._id,
   });
+
+  // AI runs in the BACKGROUND — fire-and-forget. Token is already issued.
+  const decisionSignals = {
+    verdict,
+    score: finalScore,
+    marketSignals: { direction: consensus?.verdict, confidence: consensus?.confidence },
+    behaviorSignals: { risk: adapted.adaptedRiskLevel, score: 100 - (behavioralFlags.length * cfg.behavioralScorePenaltyPerFlag) },
+    riskSignals: { level: verdict === "BUY" ? "LOW" : "HIGH", score: finalScore },
+  };
+  explainDecision(decisionSignals).catch(() => null); // Non-blocking: result not awaited
 
   logger.info({
     action: "PRE_TRADE_AUDIT",
@@ -228,7 +232,10 @@ const checkTradeRisk = async (tradeRequest, user) => {
           status: entryDecision.status || "VALID",
           reason: entryDecision.reason,
        },
-       verdict: aiDecision
+       bias: parsedIntent,
+       // AI explanation computed async in background after token issuance.
+       // Not included in synchronous response — consumers read from cache.
+       ai: null
     },
     authority: {
       token: authority.token,

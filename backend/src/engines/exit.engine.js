@@ -26,7 +26,12 @@ const evaluateExit = (input = {}) => {
     notes.push("STOPPED_OUT");
   } else if (isProfit && targetPricePaise && exitPricePaise > targetPricePaise) {
     exitType = "LATE_EXIT";
-    deviationScore = 60;
+    // Proportional: how far beyond target relative to planned reward.
+    // Slightly past target = score ~85. Far past target = score ~60.
+    const plannedReward = Math.abs(targetPricePaise - entryPricePaise);
+    const overshoot = Math.abs(exitPricePaise - targetPricePaise);
+    const overshootRatio = plannedReward > 0 ? Math.min(1, overshoot / plannedReward) : 1;
+    deviationScore = Math.max(50, Math.round(100 - (overshootRatio * 40)));
     notes.push("OVERHOLD");
   } else if (targetPricePaise && exitPricePaise >= targetPricePaise) {
     exitType = "NORMAL";
@@ -40,11 +45,24 @@ const evaluateExit = (input = {}) => {
     notes.push("EARLY_PROFIT_TAKE");
   } else if (isLoss && stopLossPaise && exitPricePaise > stopLossPaise) {
     exitType = "EARLY_EXIT";
-    deviationScore = 80;
+    // How far was the exit from the stop, as a fraction of full risk distance
+    // Closer to stop = low deviation (score near 100). Far from stop = high deviation (score near 0).
+    const distanceFromStop = Math.abs(exitPricePaise - stopLossPaise);
+    const fullRisk = Math.abs(entryPricePaise - stopLossPaise);
+    const ratio = fullRisk > 0 ? distanceFromStop / fullRisk : 1;
+    // (1 - ratio): exit AT stop → ratio=0 → score=100 (perfect early cut)
+    //              exit near entry → ratio=1 → score=0 (large unnecessary deviation)
+    deviationScore = Math.max(0, Math.min(100, Math.round((1 - ratio) * 100)));
     notes.push("EARLY_CUT");
   } else if (isLoss && stopLossPaise && exitPricePaise < stopLossPaise) {
     exitType = "LATE_EXIT";
-    deviationScore = 20;
+    // Proportional: how far below the stop relative to full risk.
+    // Exited at stop → score ~100 (but this branch is below stop, so minimum deviation).
+    // Far below stop → score approaches 0.
+    const distanceBeyondStop = Math.abs(exitPricePaise - stopLossPaise);
+    const fullRisk = Math.abs(entryPricePaise - stopLossPaise);
+    const normalizedOverrun = fullRisk > 0 ? Math.min(1, distanceBeyondStop / fullRisk) : 1;
+    deviationScore = Math.max(0, Math.round((1 - normalizedOverrun) * 100));
     notes.push("HOLDING_LOSERS");
   }
 

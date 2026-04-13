@@ -125,6 +125,25 @@ const tradeSchema = new mongoose.Schema(
       insight: { type: String },
       improvementSuggestion: { type: String },
     }, { _id: false }),
+    lesson: {
+      title: String,
+      insight: String,
+      correction: String
+    },
+    behaviorTranslation: [{
+      label: String,
+      explanation: String,
+      correction: String
+    }],
+    learningSurface: {
+      verdict: String,
+      primaryMistake: String,
+      insight: String,
+      correction: String,
+      confidence: Number,
+      tags: [String],
+      supportingData: mongoose.Schema.Types.Mixed
+    },
     finalTradeCall: {
       finalCall: String,
       confidence: Number,

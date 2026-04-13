@@ -1,6 +1,18 @@
 const Decimal = require("decimal.js");
 
 /**
+ * Computes reward-to-risk ratio from plan prices.
+ * Returns null if sufficient data is unavailable.
+ */
+const computeRR = (entryPaise, stopPaise, targetPaise) => {
+  if (!entryPaise || !stopPaise || !targetPaise) return null;
+  const risk = Math.abs(entryPaise - stopPaise);
+  const reward = Math.abs(targetPaise - entryPaise);
+  if (risk === 0) return null;
+  return Number((reward / risk).toFixed(2));
+};
+
+/**
  * Maps an array of normalized trades into paired ClosedTrade objects using FIFO logic.
  * Handles partial fills and ensures contract integrity.
  */
@@ -60,7 +72,11 @@ exports.mapToClosedTrades = (trades) => {
           pnlPaise,
           pnlPct,
           holdTime: Math.max(0, exitTime - entryTime),
-          rr: firstBuy.rr,
+          rr: firstBuy.rr ?? computeRR(
+            firstBuy.pricePaise,
+            firstBuy.stopLossPaise,
+            firstBuy.targetPricePaise
+          ),
           stopLossPaise: firstBuy.stopLossPaise,
           targetPricePaise: firstBuy.targetPricePaise,
           entryTime,
