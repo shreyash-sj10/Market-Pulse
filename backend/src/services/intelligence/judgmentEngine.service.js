@@ -9,7 +9,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const generateJudgment = async (tradeRequest, user) => {
-  const { symbol, side, price, quantity } = tradeRequest;
+  const { symbol, type, pricePaise, quantity } = tradeRequest;
   
   // 1. Building Context
   const news = await newsEngine.getProcessedNews(symbol);
@@ -28,10 +28,10 @@ const generateJudgment = async (tradeRequest, user) => {
   }, 0);
 
   if (sentimentSum > 1) {
-    trendAlignment = side === "BUY" ? "WITH_TREND" : "AGAINST_TREND";
+    trendAlignment = type === "BUY" ? "WITH_TREND" : "AGAINST_TREND";
     keyPoints.push(`Strong bullish sentiment detected in recent news (${sentimentSum} net signals)`);
   } else if (sentimentSum < -1) {
-    trendAlignment = side === "BUY" ? "AGAINST_TREND" : "WITH_TREND";
+    trendAlignment = type === "BUY" ? "AGAINST_TREND" : "WITH_TREND";
     keyPoints.push(`Bearish pressure detected in recent signals (${Math.abs(sentimentSum)} negative signals)`);
   } else {
     trendAlignment = "NEUTRAL";
@@ -48,7 +48,7 @@ const generateJudgment = async (tradeRequest, user) => {
 
   if (trendAlignment === "AGAINST_TREND") {
     riskScore += 40;
-    keyPoints.push(`Counter-trend execution: entering ${side} against negative sectoral velocity`);
+    keyPoints.push(`Counter-trend execution: entering ${type} against negative sectoral velocity`);
   }
 
   // 4. AI Summarization (Optional)
@@ -58,7 +58,7 @@ const generateJudgment = async (tradeRequest, user) => {
     try {
       const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
       const prompt = `Act as a cynical financial auditor. Summarize this trade in one punchy sentence. 
-        Symbol: ${symbol}, Intent: ${side}, News Sentiment Score: ${sentimentSum}, Risk Score: ${riskScore}, Behavioral Flags: ${flags.join(',')}.
+        Symbol: ${symbol}, Intent: ${type}, PricePaise: ${pricePaise}, Qty: ${quantity}, News Sentiment Score: ${sentimentSum}, Risk Score: ${riskScore}, Behavioral Flags: ${flags.join(',')}.
         Output only the sentence.`;
       const aiResult = await model.generateContent(prompt);
       summary = aiResult.response.text();

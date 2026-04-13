@@ -63,7 +63,7 @@ const adaptWarning = async (riskReport, userProfile) => {
     adaptedRiskLevel,
     adaptiveMessage,
     appliedAdjustments,
-    confidence: 0.95,
+    confidence: null,
     trace: `Profile adjustment based on ${strongPatterns.length} strong patterns.`
   };
 };

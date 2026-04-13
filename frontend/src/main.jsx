@@ -10,7 +10,9 @@ import { initCurrency } from "./utils/currency.utils";
 console.log("[Boot] Initializing Trading Platform (v3)...");
 
 // Initialize live currency exchange rate
-initCurrency();
+initCurrency().catch(() => {
+  console.warn("[Boot] Currency initialization unavailable; fallback state is visible in UI.");
+});
 
 const queryClient = new QueryClient({
   defaultOptions: {

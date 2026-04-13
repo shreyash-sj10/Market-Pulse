@@ -1,4 +1,9 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const {
+  createUnavailableStatus,
+  createValidStatus,
+  isValidStatus,
+} = require("../../constants/intelligenceStatus");
 
 /**
  * MASTER HYBRID TRADE EXECUTION ENGINE
@@ -8,7 +13,8 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 // Step 1: Raw News -> AI Interpretation
 const interpretMarketNuance = async (headline, summary) => {
-  if (!process.env.GEMINI_API_KEY) return null;
+  if (!process.env.GEMINI_API_KEY) return createUnavailableStatus("AI_UNAVAILABLE");
+  if (!headline) return createUnavailableStatus("INSUFFICIENT_MARKET_DATA");
 
   const prompt = `You are a Senior Market Reasoning AI.
     Headline: ${headline}
@@ -29,18 +35,23 @@ const interpretMarketNuance = async (headline, summary) => {
     });
     const result = await model.generateContent(prompt);
     const data = JSON.parse(result.response.text());
+    if (data?.sentimentScore === undefined || !data?.explanation) {
+      return createUnavailableStatus("AI_INVALID_RESPONSE");
+    }
     return {
+       ...createValidStatus(),
        ...data,
        reasoning: data.explanation // For backward compatibility if needed
     };
   } catch (error) {
-    return null;
+    return createUnavailableStatus("AI_UNAVAILABLE");
   }
 };
 
 // Step 3: Multiple signals -> AI Consensus Layer
 const interpretConsensusNuance = async (headlines, sector) => {
-  if (!process.env.GEMINI_API_KEY || !headlines.length) return null;
+  if (!process.env.GEMINI_API_KEY) return createUnavailableStatus("AI_UNAVAILABLE");
+  if (!headlines.length) return createUnavailableStatus("INSUFFICIENT_MARKET_DATA");
 
   const prompt = `You are a Senior Strategic Analyst.
     Sector context: ${sector}
@@ -71,30 +82,46 @@ const interpretConsensusNuance = async (headlines, sector) => {
       generationConfig: { responseMimeType: "application/json" }
     });
     const result = await model.generateContent(prompt);
-    return JSON.parse(result.response.text());
+    const parsed = JSON.parse(result.response.text());
+    if (parsed?.sentimentScore === undefined || !parsed?.explanation || !parsed?.keyDriver) {
+      return createUnavailableStatus("AI_INVALID_RESPONSE");
+    }
+    return {
+      ...createValidStatus(),
+      ...parsed,
+    };
   } catch (error) {
-    return null;
+    return createUnavailableStatus("AI_UNAVAILABLE");
   }
 };
 
 // Step 4 & 5: Weighted Scoring & Verdict (RULE ENGINE)
 const applyDeterministicRules = (consensusSignals, aiConsensus) => {
+  if (!Array.isArray(consensusSignals) || consensusSignals.length === 0) {
+    return createUnavailableStatus("NO_MARKET_SIGNALS");
+  }
+
   let weightedScore = 0;
   let totalConfidence = 0;
   
   const scopeWeights = { MACRO: 1.5, SECTOR: 1.2, STOCK: 1.0 };
 
-  consensusSignals.forEach(s => {
+  for (const s of consensusSignals) {
+    if (s.confidence === undefined || s.confidence === null) {
+      return createUnavailableStatus("INSUFFICIENT_MARKET_DATA");
+    }
     const dir = s.impact === "BULLISH" ? 1 : s.impact === "BEARISH" ? -1 : 0;
     const weight = scopeWeights[s.scope] || 1.0;
-    const conf = s.confidence || 50;
+    const conf = s.confidence;
     
     weightedScore += dir * conf * weight;
     totalConfidence += conf;
-  });
+  }
 
   const avgConfidence = Math.min(Math.round(totalConfidence / (consensusSignals.length || 1)), 98);
-  const aiBias = aiConsensus?.sentimentScore || (weightedScore / (consensusSignals.length || 1) / 10);
+  const aiBias = isValidStatus(aiConsensus)
+    ? aiConsensus.sentimentScore
+    : (weightedScore / (consensusSignals.length || 1) / 10);
   
   // Suggested Bias Logic
   let verdict = "WAIT";
@@ -109,11 +136,12 @@ const applyDeterministicRules = (consensusSignals, aiConsensus) => {
   if (consensusSignals.length < 2) riskWarnings.push("RELIANCE RISK: Single transmission node.");
 
   return {
+    ...createValidStatus(),
     verdict,
     confidenceScore: avgConfidence,
     riskWarnings,
-    reasoning: aiConsensus?.explanation || "Consensus derived via weighted rule processing.",
-    keyDriver: aiConsensus?.keyDriver || "Systemic transmission patterns."
+    reasoning: isValidStatus(aiConsensus) ? aiConsensus.explanation : "Consensus derived via weighted rule processing.",
+    keyDriver: isValidStatus(aiConsensus) ? aiConsensus.keyDriver : null,
   };
 };
 

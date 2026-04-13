@@ -1,10 +1,5 @@
-const VALID_SIDES = new Set(["BUY", "SELL"]);
-
-const toNullableNumber = (value) => {
-  if (value === undefined || value === null || value === "") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-};
+const VALID_TRADE_TYPES = new Set(["BUY", "SELL"]);
+const { toNullableNumber, calculateRR } = require("../services/risk.engine");
 
 const toId = (value) => {
   if (!value) return null;
@@ -13,38 +8,21 @@ const toId = (value) => {
   return String(value);
 };
 
-const computeRr = (side, pricePaise, stopLoss, targetPrice) => {
-  if (!VALID_SIDES.has(side)) {
-    throw new Error(`INVALID_TRADE_SIDE: ${side}`);
-  }
-
-  const entry = toNullableNumber(pricePaise);
-  const sl = toNullableNumber(stopLoss);
-  const target = toNullableNumber(targetPrice);
-
-  if (entry === null || sl === null || target === null) return null;
-
-  const risk = side === "BUY" ? entry - sl : sl - entry;
-  const reward = side === "BUY" ? target - entry : entry - target;
-
-  if (risk <= 0 || reward <= 0) return null;
-  return Number((reward / risk).toFixed(2));
-};
-
 const normalizeTrade = (rawTrade) => {
   if (!rawTrade) return null;
 
   const raw = typeof rawTrade.toObject === "function" ? rawTrade.toObject() : rawTrade;
-  const side = raw.side || raw.type;
 
-  if (!VALID_SIDES.has(side)) {
-    throw new Error(`INVALID_TRADE_SIDE: ${side}`);
+  const type = raw.type;
+
+  if (!VALID_TRADE_TYPES.has(type)) {
+    throw new Error(`INVALID_TRADE_TYPE: ${type}`);
   }
 
-  const pricePaise = Math.round(toNullableNumber(raw.pricePaise ?? raw.price) || 0);
-  const stopLossPaise = toNullableNumber(raw.stopLossPaise ?? raw.stopLoss);
-  const targetPricePaise = toNullableNumber(raw.targetPricePaise ?? raw.targetPrice);
-  const rr = toNullableNumber(raw.rr) ?? toNullableNumber(raw.rrRatio) ?? computeRr(side, pricePaise, stopLossPaise, targetPricePaise);
+  const pricePaise = Math.round(toNullableNumber(raw.pricePaise) || 0);
+  const stopLossPaise = toNullableNumber(raw.stopLossPaise);
+  const targetPricePaise = toNullableNumber(raw.targetPricePaise);
+  const rr = toNullableNumber(raw.rr) ?? (type === "BUY" ? calculateRR(pricePaise, stopLossPaise, targetPricePaise) : null);
 
   const decisionVerdict =
     raw.finalTradeCall?.finalCall ||
@@ -62,9 +40,10 @@ const normalizeTrade = (rawTrade) => {
     id: toId(raw._id || raw.id),
     userId: toId(raw.userId || raw.user),
     symbol: raw.symbol || null,
-    side,
+    type,
     quantity: toNullableNumber(raw.quantity) ?? 0,
     pricePaise,
+    totalValuePaise: toNullableNumber(raw.totalValuePaise),
     stopLossPaise,
     targetPricePaise,
     rr,
@@ -75,10 +54,14 @@ const normalizeTrade = (rawTrade) => {
       score: decisionScore,
       pillars: raw.intelligenceTimeline?.preTrade?.pillars || raw.decision?.pillars || {},
     },
-    openedAt: raw.openedAt || raw.entryTrade?.createdAt || (side === "BUY" ? raw.createdAt : null) || null,
-    closedAt: raw.closedAt || (side === "SELL" ? raw.createdAt : null) || null,
-    pnlPaise: toNullableNumber(raw.pnlPaise ?? raw.pnl),
-    pnlPct: toNullableNumber(raw.pnlPct ?? raw.pnlPercentage),
+    openedAt: raw.openedAt || raw.entryTrade?.createdAt || (type === "BUY" ? raw.createdAt : null) || null,
+    closedAt: raw.closedAt || (type === "SELL" ? raw.createdAt : null) || null,
+    pnlPaise: toNullableNumber(raw.pnlPaise),
+    pnlPct: toNullableNumber(raw.pnlPct),
+    analysis: raw.analysis || null,
+    manualTags: Array.isArray(raw.manualTags) ? raw.manualTags : [],
+    parsedIntent: raw.parsedIntent || null,
+    missedOpportunity: raw.missedOpportunity || null,
     entryTradeId: toId(raw.entryTradeId || raw.entryTrade),
     entryPlan: raw.entryPlan || null,
     decisionSnapshot: raw.decisionSnapshot || null,

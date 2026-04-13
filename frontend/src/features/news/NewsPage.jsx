@@ -33,7 +33,7 @@ export default function NewsPage() {
 
   // 1. PORTFOLIO INTELLIGENCE (TOP PRIORITY)
   const portfolioSignals = useMemo(() => {
-    return (portResp?.data?.signals || []).sort((a, b) => b.confidence - a.confidence);
+    return (portResp?.data?.signals || []).sort((a, b) => (b.confidence ?? -1) - (a.confidence ?? -1));
   }, [portResp]);
 
   // 2. SECTOR DECISION ENGINE
@@ -57,7 +57,8 @@ export default function NewsPage() {
     const drivers = signals.slice(0, 5).map(s => s.event);
     const bullish = signals.filter(s => s.impact === "BULLISH").length;
     const bearish = signals.filter(s => s.impact === "BEARISH").length;
-    const bias = bullish > bearish ? "BULLISH" : bearish > bullish ? "BEARISH" : "NEUTRAL";
+    const hasDirectional = bullish > 0 || bearish > 0;
+    const bias = hasDirectional ? (bullish > bearish ? "BULLISH" : bearish > bullish ? "BEARISH" : "MIXED") : "UNAVAILABLE";
 
     return { drivers, bias, signalCount: signals.length };
   }, [globalResp]);
@@ -74,6 +75,11 @@ export default function NewsPage() {
       </div>
     );
   }
+
+  const unavailableIntel =
+    marketResp?.data?.status === "UNAVAILABLE" ||
+    portResp?.data?.status === "UNAVAILABLE" ||
+    globalResp?.data?.status === "UNAVAILABLE";
 
   return (
     <div className="app-page px-6 pt-8 pb-40 max-w-[1800px] mx-auto overflow-hidden relative bg-slate-950 text-slate-300 font-mono">
@@ -105,10 +111,15 @@ export default function NewsPage() {
              <div className="w-px h-10 bg-white/10" />
              <div>
                 <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Macro Bias</div>
-                <div className="text-2xl font-black text-indigo-400 uppercase italic">{globalSummary?.bias || 'NEUTRAL'}</div>
+                <div className="text-2xl font-black text-indigo-400 uppercase italic">{globalSummary?.bias || 'UNAVAILABLE'}</div>
              </div>
           </div>
         </div>
+        {unavailableIntel && (
+          <div className="mt-6 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4 text-[11px] font-bold text-amber-300 uppercase tracking-wide">
+            Data not available. Decision limited due to missing signals.
+          </div>
+        )}
       </section>
 
       {/* 🔴 1. PORTFOLIO INTELLIGENCE (STRICT DECISION LIST) */}
@@ -189,8 +200,8 @@ export default function NewsPage() {
             <div className="relative z-10 grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
                <div className="space-y-8">
                   <div className="flex items-center gap-6">
-                     <div className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest ${globalSummary?.bias === 'BULLISH' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
-                        {globalSummary?.bias || 'NEUTRAL'} BIAS
+                     <div className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest ${globalSummary?.bias === 'BULLISH' ? 'bg-emerald-500/10 text-emerald-400' : globalSummary?.bias === 'BEARISH' ? 'bg-rose-500/10 text-rose-400' : 'bg-amber-500/10 text-amber-300'}`}>
+                        {globalSummary?.bias || 'UNAVAILABLE'} BIAS
                      </div>
                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Synthesized from {globalSummary?.signalCount} global nodes</span>
                   </div>

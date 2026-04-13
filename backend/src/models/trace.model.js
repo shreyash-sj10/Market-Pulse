@@ -1,6 +1,11 @@
 const mongoose = require("mongoose");
 
 const traceSchema = new mongoose.Schema({
+  createdAt: {
+    type: Date,
+    default: Date.now,
+    expires: 7776000
+  },
   type: {
     type: String,
     enum: ["PLAN", "TRADE", "ANALYSIS"],

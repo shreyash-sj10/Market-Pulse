@@ -3,7 +3,10 @@ const router = express.Router();
 const newsEngine = require('../services/news/news.engine');
 const authMiddleware = require('../middlewares/auth.middleware');
 const { toHoldingsObject } = require('../utils/holdingsNormalizer');
+const Holding = require("../models/holding.model");
 const preTradeGuard = require('../services/intelligence/preTradeGuard.service');
+const { validateTradePayload } = require("../middlewares/validateTradePayload");
+const { deriveIntelligenceState, deriveDecisionState } = require("../utils/systemState");
 
 /**
  * GET /api/intelligence/news
@@ -55,11 +58,17 @@ router.get('/news', authMiddleware, async (req, res, next) => {
   try {
     const category = "MARKET_FEED";
     const basket = ['^NSEI', '^BSESN', 'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS'];
-    const holdings = toHoldingsObject(req.user?.holdings);
+    const holdingDocs = await Holding.find({ userId: req.user._id });
+    const holdings = toHoldingsObject(holdingDocs.map((holding) => ({
+      symbol: holding.symbol,
+      quantity: holding.quantity,
+      avgPricePaise: holding.avgPricePaise,
+    })));
 
     const cached = intelligenceCache.get("intelligence", category);
     if (cached) {
-      res.json({ success: true, data: cached });
+      const state = deriveIntelligenceState({ signals: cached?.signals || [] });
+      res.json({ success: true, state, data: { ...cached, state } });
       // Non-blocking refresh
       setTimeout(() => refreshBasketIntelligence(category, basket, holdings), 0);
       return;
@@ -67,7 +76,8 @@ router.get('/news', authMiddleware, async (req, res, next) => {
 
     // Fallback sync compute
     const result = await refreshBasketIntelligence(category, basket, holdings);
-    res.json({ success: true, data: result });
+    const state = deriveIntelligenceState({ signals: result?.signals || [] });
+    res.json({ success: true, state, data: { ...(result || {}), state } });
   } catch (error) {
     next(error);
   }
@@ -80,18 +90,25 @@ router.get('/news', authMiddleware, async (req, res, next) => {
 router.get('/portfolio', authMiddleware, async (req, res, next) => {
   try {
     const category = "PORTFOLIO_FEED";
-    const holdings = toHoldingsObject(req.user?.holdings);
+    const holdingDocs = await Holding.find({ userId: req.user._id });
+    const holdings = toHoldingsObject(holdingDocs.map((holding) => ({
+      symbol: holding.symbol,
+      quantity: holding.quantity,
+      avgPricePaise: holding.avgPricePaise,
+    })));
     const basket = Object.keys(holdings).slice(0, 10);
 
     const cached = intelligenceCache.get("intelligence", category);
     if (cached) {
-      res.json({ success: true, data: cached });
+      const state = deriveIntelligenceState({ signals: cached?.signals || [] });
+      res.json({ success: true, state, data: { ...cached, state } });
       setTimeout(() => refreshBasketIntelligence(category, basket, holdings), 0);
       return;
     }
 
     const result = await refreshBasketIntelligence(category, basket, holdings);
-    res.json({ success: true, data: result });
+    const state = deriveIntelligenceState({ signals: result?.signals || [] });
+    res.json({ success: true, state, data: { ...(result || {}), state } });
   } catch (error) {
     next(error);
   }
@@ -105,17 +122,24 @@ router.get('/global', authMiddleware, async (req, res, next) => {
   try {
     const category = "GLOBAL_FEED";
     const globalBasket = ['CL=F', 'GC=F', '^DJI', '^GSPC', 'BTC-USD'];
-    const holdings = toHoldingsObject(req.user?.holdings);
+    const holdingDocs = await Holding.find({ userId: req.user._id });
+    const holdings = toHoldingsObject(holdingDocs.map((holding) => ({
+      symbol: holding.symbol,
+      quantity: holding.quantity,
+      avgPricePaise: holding.avgPricePaise,
+    })));
 
     const cached = intelligenceCache.get("intelligence", category);
     if (cached) {
-      res.json({ success: true, data: cached });
+      const state = deriveIntelligenceState({ signals: cached?.signals || [] });
+      res.json({ success: true, state, data: { ...cached, state } });
       setTimeout(() => refreshBasketIntelligence(category, globalBasket, holdings), 0);
       return;
     }
 
     const result = await refreshBasketIntelligence(category, globalBasket, holdings);
-    res.json({ success: true, data: result });
+    const state = deriveIntelligenceState({ signals: result?.signals || [] });
+    res.json({ success: true, state, data: { ...(result || {}), state } });
   } catch (error) {
     next(error);
   }
@@ -126,7 +150,9 @@ const timelineService = require('../services/intelligence/timeline.service');
 router.get('/timeline', authMiddleware, async (req, res, next) => {
   try {
     const timeline = await timelineService.getTimelineMap(req.user._id);
-    res.json({ success: true, data: { signals: (timeline || []) } });
+    const signals = timeline || [];
+    const state = deriveIntelligenceState({ signals });
+    res.json({ success: true, state, data: { signals, state } });
   } catch (error) {
     next(error);
   }
@@ -134,7 +160,7 @@ router.get('/timeline', authMiddleware, async (req, res, next) => {
 
 const logger = require("../lib/logger");
 
-router.post('/pre-trade', authMiddleware, async (req, res, next) => {
+router.post('/pre-trade', authMiddleware, validateTradePayload, async (req, res, next) => {
   const startTime = Date.now();
   try {
     const riskReport = await preTradeGuard.checkTradeRisk(req.body, req.user);
@@ -149,7 +175,20 @@ router.post('/pre-trade', authMiddleware, async (req, res, next) => {
       status: "SUCCESS"
     });
 
-    res.json({ success: true, data: riskReport });
+    const snapshot = riskReport?.snapshot || {};
+    const hasRequiredInputs =
+      Boolean(snapshot.market) &&
+      Boolean(snapshot.setup) &&
+      Boolean(snapshot.behavior) &&
+      Boolean(snapshot.risk) &&
+      Boolean(snapshot.verdict);
+    const isValidated =
+      hasRequiredInputs &&
+      snapshot.risk?.status !== "UNAVAILABLE" &&
+      Boolean(riskReport?.authority?.verdict);
+    const state = deriveDecisionState({ hasRequiredInputs, isValidated });
+
+    res.json({ success: true, state, data: { ...riskReport, state } });
   } catch (error) {
     logger.error({
       action: "PRE_TRADE_AUDIT_FAIL",

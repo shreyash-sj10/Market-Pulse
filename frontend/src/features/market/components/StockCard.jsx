@@ -78,6 +78,11 @@ const StockCard = memo(({ stock, isOwned, onOpenChart }) => {
                   {capInfo.label}
                 </span>
                 <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">NSE Live</span>
+                {(stock.isSynthetic || stock.isFallback) && (
+                  <span className="text-[9px] font-black uppercase tracking-wide text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1">
+                    {stock.isSynthetic ? "Synthetic" : "Fallback"}
+                  </span>
+                )}
               </div>
             </div>
 

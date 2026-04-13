@@ -31,8 +31,9 @@ const PortfolioNews = () => {
   }
 
   const signals = data?.signals || [];
+  const intelligenceState = data?.state || "EMPTY";
 
-  if (signals.length === 0) return null;
+  if (intelligenceState === "EMPTY" || signals.length === 0) return null;
 
   return (
     <div className="bg-white rounded-[3rem] p-10 border border-slate-100 shadow-sm">
@@ -46,6 +47,11 @@ const PortfolioNews = () => {
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Cross-Sector Intelligence Alignment</p>
           </div>
         </div>
+        {intelligenceState === "PARTIAL" && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-1 text-[9px] font-black uppercase tracking-wider text-amber-700">
+            Partial feed
+          </div>
+        )}
       </div>
 
       <div className="space-y-4">
@@ -66,8 +72,8 @@ const PortfolioNews = () => {
                  {item.mechanism}
               </p>
               <div className="flex items-center gap-3">
-                <span className={`text-[8px] font-black px-2 py-0.5 rounded ${item.impact === 'BULLISH' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
-                   CONFIDENCE: {item.confidence}%
+                <span className={`text-[8px] font-black px-2 py-0.5 rounded ${item.impact === 'BULLISH' ? 'bg-emerald-50 text-emerald-600' : item.impact === 'BEARISH' ? 'bg-rose-50 text-rose-600' : 'bg-amber-50 text-amber-700'}`}>
+                   {typeof item.confidence === "number" ? `CONFIDENCE: ${item.confidence}%` : "DATA NOT AVAILABLE"}
                 </span>
                 <div className="w-1 h-1 rounded-full bg-slate-200" />
                 <span className="text-[9px] font-bold text-slate-400 uppercase">{new Date(item.time).toLocaleDateString()}</span>

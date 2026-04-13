@@ -1,0 +1,57 @@
+name: Test Pipeline
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+
+    services:
+      mongodb:
+        image: mongo:6.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand({ ping: 1 })'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Run full test suite
+        working-directory: backend
+        env:
+          NODE_ENV: test
+          REQUIRE_DB_TESTS: "1"
+          MONGO_URI: mongodb://localhost:27017/trading_platform_test
+          MONGODB_URI: mongodb://localhost:27017/trading_platform_test
+          JWT_SECRET: ci_jwt_secret
+          JWT_REFRESH_SECRET: ci_refresh_secret
+        run: npm test
+
+      - name: Run coverage gate
+        working-directory: backend
+        env:
+          NODE_ENV: test
+          REQUIRE_DB_TESTS: "1"
+          MONGO_URI: mongodb://localhost:27017/trading_platform_test
+          MONGODB_URI: mongodb://localhost:27017/trading_platform_test
+          JWT_SECRET: ci_jwt_secret
+          JWT_REFRESH_SECRET: ci_refresh_secret
+        run: npm run test:coverage

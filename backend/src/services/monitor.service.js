@@ -1,8 +1,10 @@
 const User = require("../models/user.model");
+const Holding = require("../models/holding.model");
 const Trade = require("../models/trade.model");
 const marketService = require("./marketData.service");
 const tradeService = require("./trade.service");
 const logger = require("../utils/logger");
+const { issueDecisionToken } = require("./intelligence/preTradeAuthority.store");
 
 /**
  * StopLossMonitor
@@ -26,69 +28,91 @@ class MonitorService {
     this.isRunning = true;
 
     try {
-      const users = await User.find({ "holdings.0": { $exists: true } });
-      if (!users.length) {
+      const holdingDocs = await Holding.find({ quantity: { $gt: 0 } });
+      if (!holdingDocs.length) {
         this.isRunning = false;
         return;
       }
-
-      // Collect all symbols that need pricing
-      const symbolsToFetch = new Set();
-      users.forEach(user => {
-        for (const [symbol] of user.holdings) {
-          symbolsToFetch.add(symbol);
-        }
+      const holdingsByUserId = new Map();
+      holdingDocs.forEach((holding) => {
+        const key = String(holding.userId);
+        if (!holdingsByUserId.has(key)) holdingsByUserId.set(key, []);
+        holdingsByUserId.get(key).push(holding);
       });
+      const users = await User.find({ _id: { $in: Array.from(holdingsByUserId.keys()) } });
+      const usersById = new Map(users.map((user) => [String(user._id), user]));
+
+      // Collect all symbols that need quote retrieval
+      const symbolsToFetch = new Set();
+      holdingDocs.forEach((holding) => symbolsToFetch.add(holding.symbol));
 
       if (!symbolsToFetch.size) {
         this.isRunning = false;
         return;
       }
 
-      // Batch fetch prices
-      const priceMap = {};
+      // Batch fetch quotes in paise
+      const quoteMap = {};
       const symbolsArray = Array.from(symbolsToFetch);
       
       // We process symbols in chunks of 50 to avoid API limits/long URLs
       for (let i = 0; i < symbolsArray.length; i += 50) {
         const chunk = symbolsArray.slice(i, i + 50);
-        const prices = await marketService.getLivePrices(chunk);
-        Object.assign(priceMap, prices);
+        const quotePaiseMap = await marketService.getLivePrices(chunk);
+        Object.assign(quoteMap, quotePaiseMap);
       }
 
       // Check triggers for each user
-      for (const user of users) {
-        let hasChanges = false;
-        const holdings = user.holdings;
+      for (const [userId, userHoldings] of holdingsByUserId.entries()) {
+        const user = usersById.get(userId);
+        if (!user) continue;
 
-        for (const [symbol, data] of holdings) {
-          const currentPrice = priceMap[symbol];
-          if (!currentPrice) continue;
+        for (const data of userHoldings) {
+          const symbol = data.symbol;
+          const resolvedQuote = quoteMap[symbol];
+          const currentQuotePaise = resolvedQuote?.pricePaise;
+          if (!currentQuotePaise) continue;
 
+          const latestEntry = await Trade.findOne({ user: user._id, symbol, type: "BUY" }).sort({ createdAt: -1 });
+          if (!latestEntry) continue;
+
+          const stopLossPaise = latestEntry.stopLossPaise;
+          const targetPricePaise = latestEntry.targetPricePaise;
           let triggerHit = false;
           let exitReason = "";
 
-          if (data.stopLoss && currentPrice <= data.stopLoss) {
+          if (stopLossPaise && currentQuotePaise <= stopLossPaise) {
             triggerHit = true;
-            exitReason = `STOP_LOSS_REACHED: Price ${currentPrice} hit SL ${data.stopLoss}`;
-          } else if (data.targetPrice && currentPrice >= data.targetPrice) {
+            exitReason = `STOP_LOSS_REACHED: quotePaise ${currentQuotePaise} hit SL ${stopLossPaise}`;
+          } else if (targetPricePaise && currentQuotePaise >= targetPricePaise) {
             triggerHit = true;
-            exitReason = `TAKE_PROFIT_REACHED: Price ${currentPrice} hit TP ${data.targetPrice}`;
+            exitReason = `TAKE_PROFIT_REACHED: quotePaise ${currentQuotePaise} hit TP ${targetPricePaise}`;
           }
 
           if (triggerHit) {
-            logger.info(`🚨 Exit Trigger hit for ${user.email}: ${symbol} at ${currentPrice}`);
+            logger.info(`Exit trigger hit for ${user.email}: ${symbol} at ${currentQuotePaise} (${resolvedQuote.source})`);
             
             try {
+              const authority = await issueDecisionToken({
+                symbol,
+                pricePaise: currentQuotePaise,
+                quantity: data.quantity,
+                stopLossPaise: null,
+                targetPricePaise: null,
+                verdict: "SELL",
+                userId: user._id,
+              });
+
               // Execute exit trade
               await tradeService.executeSellTrade(user, {
                 symbol,
                 quantity: data.quantity,
-                price: currentPrice,
+                pricePaise: currentQuotePaise,
+                token: authority.token,
+                requestId: `${user._id}:${symbol}:${Date.now()}`,
                 reason: exitReason,
                 userThinking: "System-executed algorithmic safeguard (Auto-Exit)."
               });
-              hasChanges = true;
             } catch (tradeErr) {
               logger.error(`Failed auto-exit for ${user.email} on ${symbol}: ${tradeErr.message}`);
             }

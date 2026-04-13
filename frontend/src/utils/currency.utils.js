@@ -1,59 +1,67 @@
-import axios from 'axios';
+import axios from "axios";
 
-let currentExchangeRate = 83.5; // Fallback rate
-
-/**
- * PRODUCTION-GRADE CURRENCY PROTOCOL
- * Synchronizes with global exchange rates and provides integer-safe (Paise) formatting.
- */
+let currentExchangeRate = Number(import.meta.env.VITE_DEFAULT_USD_INR || NaN);
+let currencyStatus = {
+  isFallback: Number.isFinite(currentExchangeRate),
+  isSynthetic: false,
+  source: Number.isFinite(currentExchangeRate) ? "ENV_DEFAULT" : "UNAVAILABLE",
+};
 
 export const initCurrency = async () => {
   try {
-    const res = await axios.get('https://api.exchangerate-api.com/v4/latest/USD');
+    const res = await axios.get("https://api.exchangerate-api.com/v4/latest/USD");
     if (res.data?.rates?.INR) {
-      currentExchangeRate = res.data.rates.INR;
-      console.log(`[Currency] Global Sync Successful: 1 USD = ${currentExchangeRate} INR`);
+      currentExchangeRate = Number(res.data.rates.INR);
+      currencyStatus = { isFallback: false, isSynthetic: false, source: "LIVE_API" };
+      return currencyStatus;
     }
+    throw new Error("INR_RATE_NOT_FOUND");
   } catch (error) {
-    console.warn('[Currency] Sync failed. Reverting to hard-coded fallback (83.5)');
+    if (Number.isFinite(currentExchangeRate)) {
+      currencyStatus = { isFallback: true, isSynthetic: false, source: "ENV_DEFAULT" };
+      console.warn("[Currency] Live sync failed. Using explicit ENV fallback rate.");
+      return currencyStatus;
+    }
+    currencyStatus = { isFallback: true, isSynthetic: false, source: "UNAVAILABLE" };
+    throw new Error("CURRENCY_RATE_UNAVAILABLE");
   }
 };
 
 export const fromPaise = (paise) => (paise || 0) / 100;
 export const toPaise = (rupees) => Math.round((parseFloat(rupees) || 0) * 100);
 
-/**
- * Formats a number as Indian Rupees (INR)
- * @param {number} paise - The price in Paise (must be an integer)
- */
 export const formatINR = (paise) => {
   if (paise === undefined || paise === null || isNaN(paise)) {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR',
-      maximumFractionDigits: 2
+    return new Intl.NumberFormat("en-IN", {
+      style: "currency",
+      currency: "INR",
+      maximumFractionDigits: 2,
     }).format(0);
   }
 
-  const amount = (paise / 100);
-
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    maximumFractionDigits: 2
+  const amount = paise / 100;
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 2,
   }).format(amount);
 };
 
-export const getExchangeRate = () => currentExchangeRate;
+export const getExchangeRate = () => {
+  if (!Number.isFinite(currentExchangeRate)) {
+    throw new Error("CURRENCY_RATE_UNAVAILABLE");
+  }
+  return currentExchangeRate;
+};
 
-/**
- * Financial Delta Styling
- */
+export const getCurrencyStatus = () => ({ ...currencyStatus });
+
 export const getPriceColor = (change) => {
   if (change > 0) return "text-emerald-500";
   if (change < 0) return "text-rose-500";
   return "text-slate-400";
 };
 
-// Auto-init on launch
-initCurrency();
+initCurrency().catch(() => {
+  console.warn("[Currency] Live and ENV exchange rates unavailable.");
+});

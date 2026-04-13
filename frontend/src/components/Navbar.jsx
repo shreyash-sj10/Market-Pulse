@@ -1,9 +1,11 @@
 import MarketTickerTape from "./market/MarketTickerTape";
 import { useAuth } from "../features/auth/AuthContext";
 import { LogOut, LayoutDashboard, User } from "lucide-react";
+import { getCurrencyStatus } from "../utils/currency.utils";
 
 export default function Navbar() {
   const { user, logout } = useAuth();
+  const currencyStatus = getCurrencyStatus();
 
   return (
     <header className="fixed top-0 left-0 right-0 h-16 bg-white/70 backdrop-blur-lg border-b border-slate-200/60 z-20 flex items-center justify-between px-6 shadow-sm transition-all">
@@ -26,6 +28,11 @@ export default function Navbar() {
       </div>
 
       <div className="flex items-center gap-5">
+        {currencyStatus.isFallback && (
+          <div className="hidden md:block px-3 py-1 bg-amber-50 border border-amber-100 rounded-full text-[10px] font-black uppercase tracking-widest text-amber-700">
+            FX {currencyStatus.source}
+          </div>
+        )}
         {user ? (
           <>
             <div className="flex items-center gap-3 px-3 py-1.5 bg-slate-50 border border-slate-100 rounded-full shadow-inner">

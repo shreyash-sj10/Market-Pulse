@@ -14,6 +14,7 @@ export const getTradeHistory = async (page = 1, limit = 10) => {
 export const getTrades = ({ pageParam = 1 } = {}) => getTradeHistory(pageParam, 10);
 
 export const buyTrade = async ({
+  type,
   symbol,
   quantity,
   pricePaise,
@@ -25,6 +26,7 @@ export const buyTrade = async ({
   preTradeToken,
 }) => {
   const response = await api.post("/trades/buy", {
+    type,
     symbol,
     quantity,
     pricePaise,
@@ -39,6 +41,7 @@ export const buyTrade = async ({
 };
 
 export const sellTrade = async ({
+  type,
   symbol,
   quantity,
   pricePaise,
@@ -48,6 +51,7 @@ export const sellTrade = async ({
   preTradeToken,
 }) => {
   const response = await api.post("/trades/sell", {
+    type,
     symbol,
     quantity,
     pricePaise,
@@ -63,4 +67,3 @@ export const executeTrade = async (params) => {
   if (params.type === "BUY") return buyTrade(params);
   return sellTrade(params);
 };
-

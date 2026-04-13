@@ -7,7 +7,7 @@ const protect = require("../middlewares/auth.middleware");
 // ─── NEW MARKET INTELLIGENCE LAYER ───
 router.get('/indices', marketController.getIndices);
 router.get('/validate', marketController.validateSymbol);
-router.get('/price', marketController.getPrice);
+router.get('/quote', marketController.getQuote);
 router.get('/history', marketController.getHistory);
 router.get('/fundamentals', marketController.getFundamentals);
 router.get('/news', marketController.getNews);
@@ -19,8 +19,8 @@ router.get('/explore', async (req, res, next) => {
     const limit = parseInt(req.query.limit) || 16;
     const offset = parseInt(req.query.offset) || 0;
     const search = req.query.query || "";
-    const stocks = await marketDataService.getExploreData(limit, offset, search);
-    res.json({ success: true, stocks });
+    const result = await marketDataService.getExploreData(limit, offset, search);
+    res.json({ success: true, ...result });
   } catch (error) {
     next(error);
   }

@@ -1,6 +1,6 @@
 const Trade = require("../../models/trade.model");
 const preTradeGuard = require("./preTradeGuard.service");
-const reflectionEngine = require("./reflectionEngine.service");
+const { analyzeReflection } = require("../../engines/reflection.engine");
 
 /**
  * UNIFIED TRADER INTELLIGENCE TIMELINE — SYSTEM INTEGRATOR
@@ -41,22 +41,30 @@ const integratePreTrade = async (tradeRequest, user) => {
 };
 
 const integratePostTrade = async (trade, closeRequest) => {
-  const reflection = await reflectionEngine.generateReflection(trade, closeRequest);
+  const reflection = analyzeReflection({
+    symbol: trade.symbol,
+    entryPricePaise: trade.entryPlan?.entryPricePaise || trade.pricePaise,
+    exitPricePaise: closeRequest?.pricePaise,
+    stopLossPaise: trade.entryPlan?.stopLossPaise || trade.stopLossPaise,
+    targetPricePaise: trade.entryPlan?.targetPricePaise || trade.targetPricePaise,
+    pnlPaise: closeRequest?.pnlPaise || trade.pnlPaise || 0,
+    entryTime: new Date(trade.openedAt || trade.createdAt).getTime(),
+    exitTime: Date.now(),
+    behaviorTags: trade.analysis?.mistakeTags || [],
+  });
   
-  const learningTags = [...reflection.learningTags];
-  if (reflection.alignment === "AGAINST_TREND") learningTags.push("TREND_IGNORED");
-  if (reflection.behavioralFlags.includes("PANIC_EXIT_SIGNAL")) learningTags.push("EARLY_EXIT");
+  const learningTags = [...(reflection.tags || [])];
 
   return {
     postTrade: {
-      outcome: reflection.outcome,
-      alignment: reflection.alignment,
-      observations: reflection.keyObservations,
-      behavioralFlags: reflection.behavioralFlags,
-      insightSummary: reflection.insightSummary
+      outcome: reflection.executionPattern,
+      alignment: reflection.verdict,
+      observations: [reflection.insight],
+      behavioralFlags: reflection.tags || [],
+      insightSummary: reflection.insight
     },
     learningTags,
-    trace: [...(trade.intelligenceTimeline?.trace || []), `Reflection: Trade closed as ${reflection.outcome} with ${reflection.alignment} alignment.`]
+    trace: [...(trade.intelligenceTimeline?.trace || []), `Reflection: Trade classified as ${reflection.verdict}.`]
   };
 };
 

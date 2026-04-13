@@ -3,7 +3,7 @@ const { __testables } = require("../trade.service");
 
 describe("trade.service plan enforcement", () => {
   describe("BUY plan validation", () => {
-    it("rejects BUY when stopLoss/target are missing", () => {
+    it("rejects BUY when stopLossPaise/targetPricePaise are missing", () => {
       expect(() => __testables.validatePlanOrThrow("BUY", 10000, null, null))
         .toThrow("PLAN_REQUIRED");
     });
@@ -25,7 +25,7 @@ describe("trade.service plan enforcement", () => {
         .toThrow("INVALID_TARGET");
     });
 
-    it("enforces SELL stopLoss direction", () => {
+    it("enforces SELL stopLossPaise direction", () => {
       expect(() => __testables.validatePlanOrThrow("SELL", 10000, 9900, 9700))
         .toThrow("INVALID_STOPLOSS");
     });

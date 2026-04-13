@@ -1,74 +1,67 @@
+const { SYSTEM_CONFIG } = require("../config/system.config");
+const { calculateRR } = require("./risk.engine");
+
 const calculateMistakeAnalysis = ({
   tradeValue,
   balanceBeforeTrade,
-  stopLoss,
-  targetPrice,
-  entryPrice,
+  stopLossPaise,
+  targetPricePaise,
+  entryPricePaise,
   tradesLast24h,
   lastTradePnL,
-  lastTradeTime
+  lastTradeTime,
 }) => {
+  const cfg = SYSTEM_CONFIG.mistakeAnalysis;
   let riskScore = 0;
   const mistakeTags = new Set();
 
-  // ================= RULE 1 — OVER_RISK =================
   const riskPercent = (tradeValue / balanceBeforeTrade) * 100;
-
-  if (riskPercent > 20) {
-    riskScore += 40;
+  if (riskPercent > cfg.riskPercent.high) {
+    riskScore += cfg.riskPenalty.high;
     mistakeTags.add("OVER_RISK");
-  } else if (riskPercent > 10) {
-    riskScore += 25;
+  } else if (riskPercent > cfg.riskPercent.medium) {
+    riskScore += cfg.riskPenalty.medium;
     mistakeTags.add("OVER_RISK");
-  } else if (riskPercent > 5) {
-    riskScore += 10;
+  } else if (riskPercent > cfg.riskPercent.low) {
+    riskScore += cfg.riskPenalty.low;
     mistakeTags.add("OVER_RISK");
   }
 
-  // ================= RULE 2 — NO_STOP_LOSS =================
-  if (!stopLoss) {
-    riskScore += 20;
+  if (!stopLossPaise) {
+    riskScore += cfg.noStopLossPenalty;
     mistakeTags.add("NO_STOP_LOSS");
   }
 
-  // ================= RULE 3 — POOR_RR =================
-  if (stopLoss && targetPrice && entryPrice) {
-    const risk = Math.abs(entryPrice - stopLoss);
-    const reward = Math.abs(targetPrice - entryPrice);
-
-    if (risk > 0) {
-      const rr = reward / risk;
-
-      if (rr < 1) {
-        riskScore += 25;
+  if (stopLossPaise && targetPricePaise && entryPricePaise) {
+    const rr = calculateRR(entryPricePaise, stopLossPaise, targetPricePaise);
+    if (rr !== null) {
+      if (rr < cfg.poorRr.criticalThreshold) {
+        riskScore += cfg.poorRr.criticalPenalty;
         mistakeTags.add("POOR_RR");
-      } else if (rr < 2) {
-        riskScore += 10;
+      } else if (rr < cfg.poorRr.warningThreshold) {
+        riskScore += cfg.poorRr.warningPenalty;
         mistakeTags.add("POOR_RR");
       }
     }
   }
 
-  // ================= RULE 4 — OVERTRADING =================
-  if (tradesLast24h > 10) {
-    riskScore += 20;
+  if (tradesLast24h > cfg.overtrading.highThreshold) {
+    riskScore += cfg.overtrading.highPenalty;
     mistakeTags.add("OVERTRADING");
-  } else if (tradesLast24h > 5) {
-    riskScore += 10;
+  } else if (tradesLast24h > cfg.overtrading.mediumThreshold) {
+    riskScore += cfg.overtrading.mediumPenalty;
     mistakeTags.add("OVERTRADING");
   }
 
-  // ================= RULE 5 — REVENGE TRADING =================
   if (lastTradePnL < 0 && lastTradeTime) {
     const timeSinceLoss = (Date.now() - new Date(lastTradeTime).getTime()) / (1000 * 60 * 60);
-    if (timeSinceLoss < 2) {
-      riskScore += 30;
+    if (timeSinceLoss < cfg.revengeTrading.lookbackHours) {
+      riskScore += cfg.revengeTrading.penalty;
       mistakeTags.add("REVENGE_TRADING");
     }
   }
 
-  // Clamp score
-  if (riskScore > 100) riskScore = 100;
+  if (riskScore > cfg.maxRiskScore) riskScore = cfg.maxRiskScore;
 
   return {
     riskScore,

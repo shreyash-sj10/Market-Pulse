@@ -20,6 +20,8 @@ export default function SignalNode({ signal, compact = false }) {
   };
 
   const sent = sentimentStyles[signal.impact] || sentimentStyles.NEUTRAL;
+  const unavailable = signal?.status === "UNAVAILABLE";
+  const signalTime = signal?.time ? new Date(signal.time) : null;
 
   return (
     <motion.div 
@@ -36,7 +38,7 @@ export default function SignalNode({ signal, compact = false }) {
            <div className="flex items-center gap-3">
               <span className="text-[10px] font-black text-slate-800 uppercase tracking-widest">{signal.symbols?.join(', ')}</span>
               <span className="text-slate-300">•</span>
-              <span className={`text-[8px] font-black uppercase tracking-widest ${sent.color}`}>{signal.impact}</span>
+              <span className={`text-[8px] font-black uppercase tracking-widest ${sent.color}`}>{unavailable ? "UNAVAILABLE" : signal.impact}</span>
               {signal.temporal && (
                  <>
                     <span className="text-slate-300">•</span>
@@ -46,7 +48,7 @@ export default function SignalNode({ signal, compact = false }) {
            </div>
            <div className="flex items-center gap-3">
               <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                 <Clock size={10} /> {new Date(signal.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                 <Clock size={10} /> {signalTime ? signalTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "N/A"}
               </span>
               <span className={`px-2 py-0.5 border rounded text-[8px] font-black uppercase tracking-widest ${verdictStyles[signal.verdict]}`}>
                  {signal.verdict}
@@ -60,7 +62,7 @@ export default function SignalNode({ signal, compact = false }) {
            </div>
            <div className="flex-[1.5] flex items-center gap-4 text-xs font-medium text-slate-500 italic">
               <ArrowRight size={14} className="text-slate-300 shrink-0" />
-              <span>{signal.mechanism}</span>
+              <span>{unavailable ? "Data not available. Decision limited due to missing signals." : signal.mechanism}</span>
            </div>
            <div className="flex-1 border-l border-slate-200 pl-4 py-1">
               <p className="text-xs font-bold text-indigo-600 leading-relaxed">{signal.judgment}</p>

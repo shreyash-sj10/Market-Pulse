@@ -1,14 +1,15 @@
 const User = require("../models/user.model");
+const Holding = require("../models/holding.model");
 const Trade = require("../models/trade.model");
 const marketService = require("./marketData.service");
 const tradeService = require("./trade.service");
 const logger = require("../utils/logger");
-const { fromSafeKey } = require("../utils/safeUtils");
+const { issueDecisionToken } = require("./intelligence/preTradeAuthority.store");
 
 
 /**
  * Periodically monitors all user holdings and executes Stop Loss orders
- * if the current market price drops below the defined SL threshold.
+ * if the current market quote drops below the defined SL threshold.
  */
 class StopLossMonitor {
   constructor() {
@@ -46,47 +47,76 @@ class StopLossMonitor {
       // 1. Find all users who have at least one holding
       // In MongoDB, checking if a Map field has at least one entry can be done by checking size of object keys if stored as object,
       // but Mongoose Map is stored as a subdocument object. A simple existence check is usually enough to start.
-      const users = await User.find({ "holdings": { $ne: {} } });
+      const holdingDocs = await Holding.find({ quantity: { $gt: 0 } });
+      const holdingsByUserId = new Map();
+      holdingDocs.forEach((holding) => {
+        const key = String(holding.userId);
+        if (!holdingsByUserId.has(key)) holdingsByUserId.set(key, []);
+        holdingsByUserId.get(key).push(holding);
+      });
+      const users = await User.find({ _id: { $in: Array.from(holdingsByUserId.keys()) } });
+      const usersById = new Map(users.map((user) => [String(user._id), user]));
       
       if (!users.length) return;
 
-      for (const user of users) {
-        const symbolsToCheck = Array.from(user.holdings.keys()).map(fromSafeKey);
+      for (const [userId, userHoldings] of holdingsByUserId.entries()) {
+        const user = usersById.get(userId);
+        if (!user) continue;
+
+        const symbolsToCheck = userHoldings.map((holding) => holding.symbol);
         if (!symbolsToCheck.length) continue;
 
-        // 2. Fetch current prices for all symbols in this user's holdings
-        const priceMap = await marketService.getLivePrices(symbolsToCheck);
+        // 2. Fetch current quote paise values for all symbols in this user's holdings
+        const quotePaiseMap = await marketService.getLivePrices(symbolsToCheck);
 
-        for (const [safeSymbol, data] of user.holdings.entries()) {
-          const symbol = fromSafeKey(safeSymbol);
-          const currentPrice = priceMap[symbol];
-          if (!currentPrice) continue;
+        for (const data of userHoldings) {
+          const symbol = data.symbol;
+          const resolvedQuote = quotePaiseMap[symbol];
+          const currentQuotePaise = resolvedQuote?.pricePaise;
+          if (!currentQuotePaise) continue;
 
+          const latestEntry = await Trade.findOne({ user: user._id, symbol, type: "BUY" }).sort({ createdAt: -1 });
+          if (!latestEntry) continue;
+
+          const stopLossPaise = latestEntry.stopLossPaise;
+          const targetPricePaise = latestEntry.targetPricePaise;
           let triggerHit = false;
           let exitReason = "";
           let strategyType = "";
 
           // Check Stop Loss
-          if (data.stopLoss && data.stopLoss > 0 && currentPrice <= data.stopLoss) {
+          if (stopLossPaise && stopLossPaise > 0 && currentQuotePaise <= stopLossPaise) {
             triggerHit = true;
             strategyType = "STOP LOSS";
             exitReason = "STOP LOSS TRIGGERED AUTOMATICALLY";
           } 
-          // Check Take Profit (Target Price)
-          else if (data.targetPrice && data.targetPrice > 0 && currentPrice >= data.targetPrice) {
+          // Check Take Profit (Target Level)
+          else if (targetPricePaise && targetPricePaise > 0 && currentQuotePaise >= targetPricePaise) {
             triggerHit = true;
             strategyType = "TAKE PROFIT";
             exitReason = "TAKE PROFIT TARGET REACHED AUTOMATICALLY";
           }
 
           if (triggerHit) {
-            logger.info(`[Guardian] ${strategyType} Tripped for ${user.email} | ${symbol} at ${currentPrice}`);
+            logger.info(`[Guardian] ${strategyType} Tripped for ${user.email} | ${symbol} at ${currentQuotePaise} (${resolvedQuote.source})`);
             
             try {
+              const authority = await issueDecisionToken({
+                symbol,
+                pricePaise: currentQuotePaise,
+                quantity: data.quantity,
+                stopLossPaise: null,
+                targetPricePaise: null,
+                verdict: "SELL",
+                userId: user._id,
+              });
+
               await tradeService.executeSellTrade(user, {
                 symbol,
                 quantity: data.quantity,
-                price: currentPrice,
+                pricePaise: currentQuotePaise,
+                token: authority.token,
+                requestId: `${user._id}:${symbol}:${Date.now()}`,
                 reason: exitReason,
                 userThinking: `The AI Guardian automatically closed this position as the ${strategyType.toLowerCase()} threshold was breached. This action preserves your capital and adheres to your predefined risk parameters.`
               });

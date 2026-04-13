@@ -1,10 +1,13 @@
 const marketDataService = require('../services/marketData.service');
+const Holding = require("../models/holding.model");
+const { toHoldingsObject } = require("../utils/holdingsNormalizer");
+const { deriveIntelligenceState } = require("../utils/systemState");
 
-const getPrice = async (req, res, next) => {
+const getQuote = async (req, res, next) => {
   try {
     const { symbol } = req.query;
     if (!symbol) return res.status(400).json({ success: false, message: "Symbol required" });
-    const data = await marketDataService.getLivePrice(symbol);
+    const data = await marketDataService.resolvePrice(symbol);
     res.json({ success: true, data });
   } catch (error) {
     next(error);
@@ -30,9 +33,15 @@ const getNews = async (req, res, next) => {
 
     let data;
     if (symbol) {
-      const userHoldings = req.user?.holdings || {};
+      const holdingsDocs = await Holding.find({ userId: req.user._id });
+      const userHoldings = toHoldingsObject(holdingsDocs.map((holding) => ({
+        symbol: holding.symbol,
+        quantity: holding.quantity,
+        avgPricePaise: holding.avgPricePaise,
+      })));
       data = await newsEngine.getProcessedNews(symbol, userHoldings);
-      res.json({ success: true, ...data });
+      const state = deriveIntelligenceState({ signals: data?.signals || [] });
+      res.json({ success: true, state, ...data });
     } else {
       const newsData = await newsEngine.getTopNews();
       res.json({ success: true, ...newsData });
@@ -66,9 +75,15 @@ const validateSymbol = async (req, res, next) => {
 
 const getPortfolioNews = async (req, res, next) => {
   try {
-    const userHoldings = req.user?.holdings || {};
+    const holdingsDocs = await Holding.find({ userId: req.user._id });
+    const userHoldings = toHoldingsObject(holdingsDocs.map((holding) => ({
+      symbol: holding.symbol,
+      quantity: holding.quantity,
+      avgPricePaise: holding.avgPricePaise,
+    })));
     const data = await newsEngine.getPortfolioNews(userHoldings);
-    res.json({ success: true, ...data });
+    const state = deriveIntelligenceState({ signals: data?.signals || [] });
+    res.json({ success: true, state, ...data });
   } catch (error) {
     next(error);
   }
@@ -84,7 +99,7 @@ const getIndices = async (req, res, next) => {
 };
 
 module.exports = {
-  getPrice,
+  getQuote,
   getHistory,
   getNews,
   getFundamentals,

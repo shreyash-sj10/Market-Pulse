@@ -26,7 +26,7 @@ const toYahooSymbol = (symbol) => {
   return `${s}.NS`;
 };
 
-const getLivePrice = async (symbol) => {
+const resolvePrice = async (symbol) => {
   const normalizedSymbol = toYahooSymbol(symbol);
   
   // 1. Check Cache
@@ -44,9 +44,10 @@ const getLivePrice = async (symbol) => {
 
     const data = {
       symbol: quote.symbol,
-      price: Math.round(validPrice * 100), // Store as Paise
+      pricePaise: Math.round(validPrice * 100), // Store as Paise
       changePercent: Number((quote.regularMarketChangePercent || 0).toFixed(2)),
-      source: 'PRIMARY_YAHOO'
+      source: 'REAL',
+      isFallback: false
     };
     cache.set(normalizedSymbol, { data, timestamp: Date.now() });
     return data;
@@ -63,9 +64,10 @@ const getLivePrice = async (symbol) => {
 
       const data = {
         symbol: normalizedSymbol,
-        price: Math.round(res.data.c * 100), // Store as Paise
+        pricePaise: Math.round(res.data.c * 100), // Store as Paise
         changePercent: Number((res.data.dp || 0).toFixed(2)),
-        source: 'FALLBACK_FINNHUB'
+        source: 'FALLBACK',
+        isFallback: true
       };
       
       cache.set(normalizedSymbol, { data, timestamp: Date.now() });
@@ -79,7 +81,7 @@ const getLivePrice = async (symbol) => {
 
 /**
  * BATCH LIVE PROVIDER
- * Uses yahooFinance.quote(Array) to fetch multiple prices in a single request.
+ * Uses yahooFinance.quote(Array) to fetch multiple quotes in a single request.
  */
 const getLivePricesBatch = async (symbols) => {
   if (!symbols || !symbols.length) return {};
@@ -113,9 +115,10 @@ const getLivePricesBatch = async (symbols) => {
       
       const data = {
         symbol: sym,
-        price: pricePaise,
+        pricePaise,
         changePercent: Number((quote.regularMarketChangePercent || 0).toFixed(2)),
-        source: 'BATCH_YAHOO'
+        source: 'REAL',
+        isFallback: false
       };
       
       cache.set(sym, { data, timestamp: Date.now() });
@@ -126,7 +129,7 @@ const getLivePricesBatch = async (symbols) => {
     // Fallback one by one if batch fails (safest)
     for (const s of needed) {
       try {
-        const data = await getLivePrice(s);
+        const data = await resolvePrice(s);
         results[s] = data;
       } catch (e) {}
     }
@@ -135,4 +138,6 @@ const getLivePricesBatch = async (symbols) => {
   return results;
 };
 
-module.exports = { getLivePrice, getLivePricesBatch };
+const getLivePrice = resolvePrice;
+
+module.exports = { resolvePrice, getLivePrice, getLivePricesBatch };

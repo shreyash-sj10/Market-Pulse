@@ -12,22 +12,25 @@ const calculateConsensus = (signals = [], aiInsight = null) => {
   let bullishCount = 0;
   let bearishCount = 0;
 
-  signals.forEach(s => {
+  for (const s of signals) {
     const weight = s.impact === "BULLISH" ? 1 : s.impact === "BEARISH" ? -1 : 0;
-    const conf = s.confidence || 50;
+    if (s.confidence === undefined || s.confidence === null) {
+      return null;
+    }
+    const conf = s.confidence;
     totalScore += weight * conf;
     totalConfidence += conf;
     if (weight > 0) bullishCount++;
     else if (weight < 0) bearishCount++;
-  });
+  }
 
   const conflict = bullishCount > 0 && bearishCount > 0;
   const avgConfidence = Math.min(Math.round(totalConfidence / signals.length) + (signals.length * 2), 98);
   
   // 2. AI INTERPRETATION (If provided)
-  const reasoning = aiInsight?.reasoning || "Consensus derived from rule-based multi-node synthesis.";
-  const nuance = aiInsight?.nuance || "Standard directional transmission detected.";
-  const aiSentiment = aiInsight?.sentimentScore || (totalScore / signals.length / 5); // Fallback to rule sentiment
+  const reasoning = aiInsight?.reasoning;
+  const nuance = aiInsight?.nuance;
+  const aiSentiment = aiInsight?.sentimentScore ?? (totalScore / signals.length / 5);
 
   // 3. RULE ENGINE: Final Verdict & Risk Evaluation
   let verdict = "WAIT";

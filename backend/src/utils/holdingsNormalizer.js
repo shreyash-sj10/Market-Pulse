@@ -1,14 +1,15 @@
-const { fromSafeKey, toSafeKey } = require("./safeUtils");
-
 const toHoldingsObject = (holdings) => {
   if (!holdings) return {};
   if (holdings instanceof Map) return Object.fromEntries(holdings);
   if (Array.isArray(holdings)) {
     return holdings.reduce((acc, item) => {
       if (!item?.symbol) return acc;
-      acc[toSafeKey(item.symbol)] = {
+      const key = String(item.symbol).toUpperCase().trim();
+      acc[key] = {
         quantity: Number(item.quantity) || 0,
-        avgCost: Number(item.avgCost ?? item.avgPrice) || 0,
+        avgCost: Number(item.avgCost ?? item.avgPricePaise) || 0,
+        stopLossPaise: Number(item.stopLossPaise) || null,
+        targetPricePaise: Number(item.targetPricePaise) || null,
       };
       return acc;
     }, {});
@@ -19,9 +20,11 @@ const toHoldingsObject = (holdings) => {
 const toHoldingsArray = (holdings) => {
   const holdingsObject = toHoldingsObject(holdings);
   return Object.entries(holdingsObject).map(([safeSymbol, data]) => ({
-    symbol: fromSafeKey(safeSymbol),
+    symbol: safeSymbol.includes("_") ? safeSymbol.replace(/_/g, ".") : safeSymbol,
     quantity: Number(data?.quantity) || 0,
-    avgPrice: Math.round(Number(data?.avgCost ?? data?.avgPrice) || 0),
+    avgPrice: Math.round(Number(data?.avgCost) || 0),
+    stopLossPaise: Number(data?.stopLossPaise) || null,
+    targetPricePaise: Number(data?.targetPricePaise) || null,
   }));
 };
 

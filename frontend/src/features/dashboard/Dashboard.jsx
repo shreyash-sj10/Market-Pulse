@@ -47,8 +47,10 @@ const Dashboard = () => {
   });
 
   const summary = summaryResponse?.data;
+  const summaryState = summaryResponse?.state || summaryResponse?.data?.state;
 
   const positions = posResponse?.positions || [];
+  const portfolioState = posResponse?.state || "EMPTY";
   const trades = tradesResponse?.trades || [];
 
   const [selectedSellPos, setSelectedSellPos] = useState(null);
@@ -71,8 +73,8 @@ const Dashboard = () => {
       const audit = await getPreTradeGuard({
         symbol: selectedSellPos.symbol,
         quantity: sellQuantity,
-        price: selectedSellPos.currentPricePaise,
-        side: "SELL",
+        pricePaise: selectedSellPos.currentPricePaise,
+        type: "SELL",
         userThinking: "Direct portfolio liquidation via dashboard."
       });
 
@@ -210,12 +212,24 @@ const Dashboard = () => {
               </button>
             </div>
 
+            {portfolioState === "PARTIAL" && (
+              <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-amber-700">
+                Partial market sync detected. Some prices are fallback values.
+              </div>
+            )}
+
+            {portfolioState === "COMPLETE" && (
+              <div className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-emerald-700">
+                Complete analytics online for all active positions.
+              </div>
+            )}
+
             {posLoading ? (
               <div className="space-y-4">
                 <div className="h-20 bg-slate-50 rounded-2xl animate-pulse" />
                 <div className="h-20 bg-slate-50 rounded-2xl animate-pulse" />
               </div>
-            ) : positions.length === 0 ? (
+            ) : portfolioState === "EMPTY" || positions.length === 0 ? (
               <div className="py-24 text-center bg-slate-50 rounded-3xl border border-dashed border-slate-200">
                 <p className="text-sm font-bold text-slate-400 italic">No active positions in current cycle.</p>
                 <button
@@ -368,8 +382,8 @@ const Dashboard = () => {
                         <span className="block text-[10px] font-bold text-slate-400 tracking-widest">{trade.type}</span>
                       </td>
                       <td className="px-12 py-6 text-right">
-                        <span className="font-bold text-slate-900 text-sm">{formatINR(trade.totalValue)}</span>
-                        <span className="block text-[9px] font-medium text-slate-400">{trade.quantity} @ {formatINR(trade.price)}</span>
+                        <span className="font-bold text-slate-900 text-sm">{formatINR(trade.totalValuePaise)}</span>
+                        <span className="block text-[9px] font-medium text-slate-400">{trade.quantity} @ {formatINR(trade.pricePaise)}</span>
                       </td>
                       <td className="px-12 py-6 text-right">
                         <div className={`inline-block px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider ${trade.analysis?.riskScore > 70 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
@@ -395,7 +409,7 @@ const Dashboard = () => {
                 <h3 className="text-lg font-black tracking-tight text-slate-900">Psych Audit</h3>
               </div>
               <div className="px-3 py-1 bg-white rounded-full border border-slate-100 text-[8px] font-black text-slate-400 uppercase tracking-widest">
-                V1.0
+                {summaryState || "ACTIVE"}
               </div>
             </div>
 

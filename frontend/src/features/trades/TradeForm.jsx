@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { formatINR } from "../../utils/currency.utils";
@@ -6,16 +6,13 @@ import toast from "react-hot-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   validateSymbol,
-  getLivePrice,
 } from "../../services/market.api";
 import { executeTrade } from "../../services/trade.api";
-import { getPositions, getPortfolioSummary } from "../../services/portfolio.api";
 import { getPreTradeGuard, getAdaptiveProfile } from "../../services/intelligence.api";
 import SelectionPulse from "./components/SelectionPulse";
 import DecisionPanel from "./components/DecisionPanel";
 import ExecutionPersona from "./components/ExecutionPersona";
 import TradeInsight from "./components/TradeInsight";
-import PriceChart from "./components/PriceChart";
 import {
   Search,
   Activity,
@@ -60,23 +57,10 @@ export default function TradeForm() {
     staleTime: 60000,
   });
 
-  const { data: posResponse } = useQuery({
-    queryKey: ["positions"],
-    queryFn: getPositions,
-  });
-
-  const { data: summaryResponse } = useQuery({
-    queryKey: ["portfolio"],
-    queryFn: getPortfolioSummary,
-  });
-
   const { data: persona } = useQuery({
     queryKey: ["adaptive-profile"],
     queryFn: getAdaptiveProfile,
   });
-
-  const summary = summaryResponse?.data;
-  const positions = posResponse?.positions || [];
 
   // Auto-fill price on symbol validation
   useEffect(() => {
@@ -86,33 +70,7 @@ export default function TradeForm() {
   }, [validation]);
 
   // ── CALCULATIONS ─────────────────────────────────────────────────────────
-  const rrCalculation = useMemo(() => {
-    const entry = parseFloat(priceRupees);
-    const sl = parseFloat(stopLoss);
-    const target = parseFloat(targetPrice);
-
-    if (!entry || !sl || !target) return null;
-
-    const risk = entry - sl;
-    const reward = target - entry;
-
-    if (risk <= 0 || reward <= 0) return { isValid: false, ratio: 0, reason: "Math violation" };
-
-    const ratio = Number((reward / risk).toFixed(2));
-    let color = "bg-rose-500";
-    if (ratio >= 3) color = "bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.4)]";
-    else if (ratio >= 2) color = "bg-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.4)]";
-    else if (ratio >= 1.5) color = "bg-amber-500";
-
-    return {
-      isValid: true,
-      ratio,
-      color,
-      status: ratio >= 3 ? "Institutional" : ratio >= 2 ? "Optimal" : ratio >= 1.5 ? "Acceptable" : "Sub-optimal"
-    };
-  }, [priceRupees, stopLoss, targetPrice]);
-
-  const canProceed = symbol && quantity > 0 && priceRupees > 0 && stopLoss > 0 && targetPrice > 0 && rrCalculation?.isValid;
+  const canProceed = symbol && quantity > 0 && priceRupees > 0 && stopLoss > 0 && targetPrice > 0;
 
   // ── HANDLERS ──────────────────────────────────────────────────────────────
   const [executionMetadata, setExecutionMetadata] = useState({ token: null, idempotencyKey: null });
@@ -125,14 +83,14 @@ export default function TradeForm() {
       const response = await getPreTradeGuard({
         symbol,
         quantity: parseInt(quantity),
-        price: parseFloat(priceRupees) * 100,
-        stopLoss: parseFloat(stopLoss) * 100,
-        targetPrice: parseFloat(targetPrice) * 100,
-        side: tradeType,
+        pricePaise: Math.round(parseFloat(priceRupees) * 100),
+        stopLossPaise: Math.round(parseFloat(stopLoss) * 100),
+        targetPricePaise: Math.round(parseFloat(targetPrice) * 100),
+        type: tradeType,
         userThinking
       });
       
-      setDecisionSnapshot(response.snapshot);
+      setDecisionSnapshot({ ...response.snapshot, state: response.state });
       setExecutionMetadata(prev => ({ ...prev, token: response.token }));
       setStep(2); // Progress to Phase 2: Intelligence Review
       setShowDecisionPanel(true);
@@ -331,16 +289,14 @@ export default function TradeForm() {
                    <div className="text-right">
                       <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Risk/Reward Profile</span>
                       <div className="flex items-center gap-3">
-                         <span className="text-xl font-black text-white">{rrCalculation?.ratio || "-"}</span>
-                         {rrCalculation?.isValid && (
-                           <div className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase tracking-widest text-white ${rrCalculation.color}`}>
-                              {rrCalculation.status}
-                           </div>
-                         )}
+                         <span className="text-xl font-black text-white">-</span>
+                         <div className="px-2 py-0.5 rounded text-[8px] font-bold uppercase tracking-widest text-white bg-slate-700">
+                            Server-Validated
+                         </div>
                       </div>
                    </div>
                    <div className="w-10 h-10 rounded-full border border-slate-700 flex items-center justify-center">
-                      <div className={`w-2 h-2 rounded-full ${rrCalculation?.ratio >= 2 ? 'bg-emerald-500 animate-ping' : 'bg-slate-700'}`} />
+                      <div className="w-2 h-2 rounded-full bg-slate-500" />
                    </div>
                 </div>
              </div>

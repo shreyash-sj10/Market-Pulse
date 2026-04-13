@@ -2,7 +2,6 @@ const express = require("express");
 const router = express.Router();
 
 const protect = require("../middlewares/auth.middleware");
-const { createTradeSchema, validateData } = require("../validations/trade.schema");
 const {
   buyTrade,
   sellTrade,
@@ -10,6 +9,8 @@ const {
 } = require("../controllers/trade.controller");
 
 const rateLimit = require("express-rate-limit");
+const { validatePlan } = require("../services/risk.engine");
+const { validateTradePayload } = require("../middlewares/validateTradePayload");
 
 const tradeLimiter = rateLimit({
   windowMs: process.env.NODE_ENV === "test" ? 10 * 1000 : 10 * 1000,
@@ -29,15 +30,22 @@ const enforceReview = (req, res, next) => {
   next();
 };
 
+const enforceRequestId = (req, res, next) => {
+  const requestId = req.headers["idempotency-key"];
+  if (!requestId || typeof requestId !== "string" || requestId.trim().length === 0) {
+    return res.status(400).json({
+      success: false,
+      message: "REQUEST_ID_REQUIRED"
+    });
+  }
+  next();
+};
+
 const enforceBuyReview = (req, res, next) => {
-  const { stopLoss, targetPrice, price, pricePaise: rawPricePaise, stopLossPaise, targetPricePaise } = req.body;
   const preTradeToken = req.headers["pre-trade-token"] || req.body.preTradeToken;
+  const { pricePaise, stopLossPaise, targetPricePaise } = req.body;
 
-  const finalPrice = Math.round(rawPricePaise ?? price ?? 0);
-  const finalSL = Math.round(stopLossPaise ?? stopLoss ?? 0);
-  const finalTP = Math.round(targetPricePaise ?? targetPrice ?? 0);
-
-  if (!finalSL || !finalTP) {
+  if (!stopLossPaise || !targetPricePaise) {
     return res.status(403).json({
       success: false,
       message: "PLAN_REQUIRED: Buy orders must include stopLossPaise and targetPricePaise."
@@ -52,32 +60,43 @@ const enforceBuyReview = (req, res, next) => {
   }
 
   // Risk/Reward Enforcement (Pre-Controller)
-  const risk = finalPrice - finalSL;
-  const reward = finalTP - finalPrice;
-  const rr = risk > 0 ? reward / risk : 0;
-
-  if (rr < 1.2) {
+  const planValidation = validatePlan({
+    side: "BUY",
+    pricePaise,
+    stopLossPaise,
+    targetPricePaise,
+  });
+  if (!planValidation.isValid) {
     return res.status(403).json({
       success: false,
-      message: "INVALID_RR: Plan does not meet minimum 1.2 risk/reward ratio."
+      message: `${planValidation.errorCode}: Buy plan failed institutional risk constraints.`
     });
   }
 
-  // Canonicalize for Service
   req.body.token = preTradeToken;
-  req.body.pricePaise = finalPrice;
-  req.body.stopLossPaise = finalSL;
-  req.body.targetPricePaise = finalTP;
   next();
 };
 
+const enforceSellReview = (req, res, next) => {
+  const preTradeToken = req.headers["pre-trade-token"] || req.body.preTradeToken;
+
+  if (!preTradeToken) {
+    return res.status(403).json({
+      success: false,
+      message: "PRE_TRADE_REQUIRED: Sell orders must include a valid preTradeToken."
+    });
+  }
+
+  req.body.token = preTradeToken;
+  next();
+};
 
 
 router.get("/", protect, getTradeHistory);
 
 // Only allow execution via reviewed flow
-router.post("/buy", protect, tradeLimiter, validateData(createTradeSchema), enforceReview, enforceBuyReview, buyTrade);
-router.post("/sell", protect, tradeLimiter, validateData(createTradeSchema), enforceReview, sellTrade);
+router.post("/buy", protect, tradeLimiter, enforceReview, enforceRequestId, validateTradePayload, enforceBuyReview, buyTrade);
+router.post("/sell", protect, tradeLimiter, enforceReview, enforceRequestId, validateTradePayload, enforceSellReview, sellTrade);
 
 
 module.exports = router;

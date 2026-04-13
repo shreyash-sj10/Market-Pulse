@@ -150,34 +150,34 @@ export default function JournalPage() {
                            <h4 className="text-2xl font-black text-slate-900 tracking-tighter uppercase">{trade.symbol.split('.')[0]}</h4>
                            <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Round-Trip ID: {trade.id?.toString().slice(-6)}</span>
                         </div>
-                        <div className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest ${trade.pnl >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
-                           {trade.pnl >= 0 ? '+' : ''}{formatINR(trade.pnl)}
+                        <div className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest ${trade.pnlPaise >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                           {trade.pnlPaise >= 0 ? '+' : ''}{formatINR(trade.pnlPaise)}
                         </div>
                      </div>
                      <div className="space-y-4 pt-8 border-t border-slate-200/50">
                         <div className="flex justify-between items-center text-[10px] font-bold">
                            <span className="text-slate-400 uppercase tracking-widest">Execution Delta</span>
-                           <span className={`font-black ${trade.pnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                              {trade.pnlPercentage}% Efficiency
+                           <span className={`font-black ${trade.pnlPaise >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                              {trade.pnlPct}% Efficiency
                            </span>
                         </div>
                         <div className="flex justify-between items-center text-[10px] font-bold">
                            <span className="text-slate-400 uppercase tracking-widest">Plan R:R</span>
-                           <span className={`px-1.5 py-0.5 rounded text-[8px] font-black ${trade.rrRatio >= 2 ? 'bg-emerald-500 text-white' : 'bg-amber-500 text-white'}`}>{trade.rrRatio?.toFixed(2) || 'N/A'}</span>
+                           <span className={`px-1.5 py-0.5 rounded text-[8px] font-black ${trade.rr >= 2 ? 'bg-emerald-500 text-white' : 'bg-amber-500 text-white'}`}>{trade.rr?.toFixed(2) || 'N/A'}</span>
                         </div>
                         <div className="space-y-3 pt-3 border-t border-slate-100">
                            <div className="flex justify-between items-center text-[9px] font-bold">
                               <span className="text-slate-400 uppercase tracking-widest">Exit Logic</span>
-                              <span className="text-slate-900 font-black">{formatINR(trade.price)}</span>
+                              <span className="text-slate-900 font-black">{formatINR(trade.pricePaise)}</span>
                            </div>
                            <div className="grid grid-cols-2 gap-2">
                               <div className="p-2 bg-rose-50 rounded-lg border border-rose-100">
                                  <span className="block text-[6px] font-black text-rose-400 uppercase mb-1">Plan SL</span>
-                                 <span className="text-[10px] font-black text-rose-600">{formatINR(trade.stopLoss)}</span>
+                                 <span className="text-[10px] font-black text-rose-600">{formatINR(trade.stopLossPaise)}</span>
                               </div>
                               <div className="p-2 bg-emerald-50 rounded-lg border border-emerald-100">
                                  <span className="block text-[6px] font-black text-emerald-400 uppercase mb-1">Plan Target</span>
-                                 <span className="text-[10px] font-black text-emerald-600">{formatINR(trade.targetPrice)}</span>
+                                 <span className="text-[10px] font-black text-emerald-600">{formatINR(trade.targetPricePaise)}</span>
                               </div>
                            </div>
                         </div>

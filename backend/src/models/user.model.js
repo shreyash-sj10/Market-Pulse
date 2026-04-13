@@ -26,16 +26,6 @@ const userSchema = new mongoose.Schema(
       default: 10000000, // ₹100,000.00 (1 Lakh) stored as 10,000,000 paise
       min: 0,
     },
-    holdings: {
-      type: Map,
-      of: new mongoose.Schema({
-        quantity: { type: Number, default: 0 },
-        avgCost: { type: Number, default: 0 },
-        stopLoss: { type: Number, default: null },
-        targetPrice: { type: Number, default: null },
-      }, { _id: false }),
-      default: {},
-    },
     totalInvested: {
       type: Number,
       default: 0,

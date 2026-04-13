@@ -1,327 +1,306 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const {
+  createValidStatus,
+  createUnavailableStatus,
+} = require("../constants/intelligenceStatus");
 
-const generateDeterministicExplanation = (riskScore, mistakeTags) => {
-  const explanation = (!mistakeTags || mistakeTags.length === 0)
-    ? `This trade has an acceptable risk score of ${riskScore}. No critical mistakes were detected.`
-    : `This trade carries a risk score of ${riskScore} due to: ${mistakeTags.join(", ")}.`;
+const withTimeout = (promise, timeoutMs = 12000) =>
+  Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("AI_TIMEOUT")), timeoutMs)),
+  ]);
 
-  return {
-    explanation,
-    behaviorAnalysis: "Standard trading behavior observed."
-  };
-};
+const buildUnavailable = (reason) => ({
+  ...createUnavailableStatus(reason),
+});
 
 const generateExplanation = async (riskScore, mistakeTags, context = {}) => {
   if (!process.env.GEMINI_API_KEY) {
-    return generateDeterministicExplanation(riskScore, mistakeTags);
+    return buildUnavailable("AI_UNAVAILABLE");
+  }
+  if (!Number.isFinite(Number(riskScore)) || !Array.isArray(mistakeTags)) {
+    return buildUnavailable("INSUFFICIENT_INPUT_DATA");
   }
 
   const { symbol, type, reason, userThinking } = context;
-
   const prompt = `You are a professional trading psychologist and risk analyst.
 Context:
-- Symbol: ${symbol}
-- Trade Type: ${type}
+- Symbol: ${symbol || "UNKNOWN"}
+- Trade Type: ${type || "UNKNOWN"}
 - Risk Score: ${riskScore}/100
 - Mistake Tags: ${mistakeTags.length > 0 ? mistakeTags.join(", ") : "None"}
 - User's Stated Reason: ${reason || "Not provided"}
 - User's Internal Thinking: ${userThinking || "Not provided"}
 
-Produce a JSON response with two fields:
-1. "explanation": A concise (2 sentences) explanation of the technical risk.
-2. "behaviorAnalysis": A deep, empathetic analysis of the user's psychological state and decision-making logic. Identify if they are being impulsive, disciplined, fearful, or overly optimistic.
-
-Rules:
-- Be professional yet humanised.
-- Use the User's Thinking to reveal hidden biases.
-- Keep the tone constructive.
-- Response MUST be valid JSON.`;
+Produce JSON:
+1. explanation: concise technical risk explanation.
+2. behaviorAnalysis: psychological analysis.
+Response MUST be valid JSON.`;
 
   try {
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({
       model: "gemini-1.5-flash",
-      generationConfig: { responseMimeType: "application/json" }
+      generationConfig: { responseMimeType: "application/json" },
     });
 
-    const result = await Promise.race([
-      model.generateContent(prompt),
-      timeoutPromise
-    ]);
+    const result = await withTimeout(model.generateContent(prompt));
+    const parsed = JSON.parse(result.response.text());
 
-    const responseText = result.response.text();
-    return JSON.parse(responseText);
+    if (!parsed?.explanation || !parsed?.behaviorAnalysis) {
+      return buildUnavailable("AI_INVALID_RESPONSE");
+    }
+
+    return {
+      ...createValidStatus(),
+      explanation: parsed.explanation,
+      behaviorAnalysis: parsed.behaviorAnalysis,
+    };
   } catch (error) {
     const logger = require("../lib/logger");
     logger.error({ action: "AI_GENERATION_FAILED", error: error.message, model: "gemini-1.5-flash" });
-    return generateDeterministicExplanation(riskScore, mistakeTags);
+    return buildUnavailable("AI_UNAVAILABLE");
   }
 };
 
 const generateMarketInsight = async (symbol, technicals, newsItems) => {
   if (!process.env.GEMINI_API_KEY) {
-    return {
-      signal: "NEUTRAL",
-      analysis: "AI Insight currently unavailable (API Key missing). Rely on technical indicators.",
-      confidence: 50
-    };
+    return buildUnavailable("AI_UNAVAILABLE");
+  }
+  if (!symbol || !technicals || !Array.isArray(newsItems) || newsItems.length === 0) {
+    return buildUnavailable("INSUFFICIENT_MARKET_DATA");
   }
 
   const prompt = `You are a Senior Quantitative Analyst at a top-tier hedge fund.
-    Context:
-    - Asset: ${symbol}
-    - Technicals: RSI=${technicals.rsi}, Change=${technicals.change}%, Volume=${technicals.volume}
-    - News Headlines: ${newsItems.map(n => n.title).join(" | ")}
+Context:
+- Asset: ${symbol}
+- Technicals: RSI=${technicals.rsi}, Change=${technicals.change}%, Volume=${technicals.volume}
+- News Headlines: ${newsItems.map((n) => n.title).join(" | ")}
 
-    Analyze this data and produce a JSON response with:
-    1. "signal": "STRONG BUY", "BUY", "NEUTRAL", "SELL", or "STRONG SELL"
-    2. "analysis": A deep 3-sentence synthesis of how the news interacts with the price action.
-    3. "confidence": A percentage score (0-100).
-    4. "keyRisk": The single biggest risk factor right now.
-
-    Rules:
-    - Do not be generic. Mention specific headlines if relevant.
-    - If news contradicts technicals, explain the divergence.
-    - Response MUST be valid JSON.`;
+Return JSON with signal, analysis, confidence, keyRisk.`;
 
   try {
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ 
+    const model = genAI.getGenerativeModel({
       model: "gemini-1.5-flash",
-      generationConfig: { responseMimeType: "application/json" }
+      generationConfig: { responseMimeType: "application/json" },
     });
 
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    return JSON.parse(response.text());
-  } catch (error) {
-    console.error("[AI Insight Error]", error);
+    const result = await withTimeout(model.generateContent(prompt));
+    const parsed = JSON.parse(result.response.text());
+
+    if (!parsed?.signal || !parsed?.analysis || parsed?.confidence === undefined) {
+      return buildUnavailable("AI_INVALID_RESPONSE");
+    }
+
     return {
-      signal: "NEUTRAL",
-      analysis: "Unable to synthesize AI narrative. Market volatility may be exceeding processing limits.",
-      confidence: 0
+      ...createValidStatus(),
+      signal: parsed.signal,
+      analysis: parsed.analysis,
+      confidence: parsed.confidence,
+      keyRisk: parsed.keyRisk,
     };
+  } catch (error) {
+    return buildUnavailable("AI_UNAVAILABLE");
   }
 };
 
 const parseTradeIntent = async (rawIntent) => {
-  if (!rawIntent || !process.env.GEMINI_API_KEY) {
-    return { strategy: 'General', confidence: 50, keywords: [] };
+  if (!process.env.GEMINI_API_KEY) {
+    return buildUnavailable("AI_UNAVAILABLE");
+  }
+  if (!rawIntent || !String(rawIntent).trim()) {
+    return buildUnavailable("INSUFFICIENT_INTENT_DATA");
   }
 
   const prompt = `You are a trading strategy classifier.
-    User Intent: "${rawIntent}"
+User Intent: "${rawIntent}"
 
-    Extract the following in JSON format:
-    1. "strategy": Categorize into ONE: "BREAKOUT", "MEAN_REVERSION", "SCALPING", "TREND_FOLLOWING", "NEWS_PLAY", "VALUE_INVESTING", or "GENERAL".
-    2. "confidence": Estimate user's confidence level (0-100) based on their wording.
-    3. "keywords": List 3-5 key technical or emotional keywords.
-
-    Response MUST be valid JSON.`;
+Extract JSON fields: strategy, confidence, keywords.`;
 
   try {
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ 
+    const model = genAI.getGenerativeModel({
       model: "gemini-1.5-flash",
-      generationConfig: { responseMimeType: "application/json" }
+      generationConfig: { responseMimeType: "application/json" },
     });
 
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    return JSON.parse(response.text());
+    const result = await withTimeout(model.generateContent(prompt));
+    const parsed = JSON.parse(result.response.text());
+
+    if (!parsed?.strategy || parsed?.confidence === undefined || !Array.isArray(parsed?.keywords)) {
+      return buildUnavailable("AI_INVALID_RESPONSE");
+    }
+
+    return {
+      ...createValidStatus(),
+      strategy: parsed.strategy,
+      confidence: parsed.confidence,
+      keywords: parsed.keywords,
+    };
   } catch (error) {
-    console.error("[Intent Parser Error]", error);
-    return { strategy: 'General', confidence: 50, keywords: [] };
+    return buildUnavailable("AI_UNAVAILABLE");
   }
 };
 
 const generateTradeReviewSummary = async (reviewData, tradeContext) => {
   if (!process.env.GEMINI_API_KEY) {
-    return "Retrospective analysis currently being processed. Review technical audit for raw data.";
+    return buildUnavailable("AI_UNAVAILABLE");
+  }
+  if (!reviewData || !tradeContext) {
+    return buildUnavailable("INSUFFICIENT_INPUT_DATA");
   }
 
   const { verdict, strategyDescription } = reviewData;
   const { symbol, pnl, missedOpportunity } = tradeContext;
 
   const prompt = `You are a Performance Coach for Institutional Traders.
-    Symbol: ${symbol}
-    Verdict: ${verdict}
-    Strategy: ${strategyDescription}
-    PnL: ₹${(pnl / 100).toFixed(2)}
-    Missed Opp: ₹${((missedOpportunity?.maxPotentialProfit || 0) / 100).toFixed(2)}
+Symbol: ${symbol}
+Verdict: ${verdict}
+Strategy: ${strategyDescription}
+PnL: ${pnl}
+Missed Opp: ${missedOpportunity?.maxPotentialProfit || 0}
 
-    Write a 2-sentence 'Post-Mortem' summary.
-    - If GOOD but Loss, praise the discipline.
-    - If LUCK but Profit, warn about the hidden risk in strategy mismatch.
-    - If POOR, be firm but constructive about the mistake.
-    - Mention if they left significant money on the table.`;
+Write a concise post-mortem summary.`;
 
   try {
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-    const result = await model.generateContent(prompt);
-    return result.response.text().trim();
+    const result = await withTimeout(model.generateContent(prompt));
+
+    return {
+      ...createValidStatus(),
+      summary: result.response.text().trim(),
+    };
   } catch (err) {
-    return `Trade classified as ${verdict}. Review strategy audit for deeper metrics.`;
+    return buildUnavailable("AI_UNAVAILABLE");
   }
 };
 
-/**
- * HYBRID ENGINE: AI INTERPRETATION LAYER
- * Extracts sentiment with nuance, summarizes multiple signals, and provides reasoning.
- * AI MUST NOT output BUY/SELL.
- */
 const interpretMarketSignal = async (headlines, context = {}) => {
   if (!process.env.GEMINI_API_KEY) {
-    return {
-      nuance: "Standard signal processing active.",
-      sentimentScore: 0,
-      reasoning: "AI Interpretation node on standby. Relying on deterministic baselines.",
-      confidence: 50
-    };
+    return buildUnavailable("AI_UNAVAILABLE");
+  }
+  if (!Array.isArray(headlines) || headlines.length === 0) {
+    return buildUnavailable("INSUFFICIENT_MARKET_DATA");
   }
 
   const prompt = `You are a Senior Macro Intelligence AI.
-    Headlines: ${headlines.join(" | ")}
-    Sector: ${context.sector || "General"}
-    
-    Task:
-    1. Extract directional sentiment nuance (Why is this happening?).
-    2. Quantify sentiment score (-10 to +10).
-    3. Generate human-readable reasoning (2 sentences).
-    4. Resolve any contradictions between headlines.
-    
-    Rules:
-    - DO NOT output BUY or SELL.
-    - Be objective and institutional.
-    - Response MUST be valid JSON with fields: "nuance", "sentimentScore", "reasoning", "confidence".
-    
-    Format: JSON`;
+Headlines: ${headlines.join(" | ")}
+Sector: ${context.sector || "General"}
 
-  try {
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash",
-      generationConfig: { responseMimeType: "application/json" }
-    });
-
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    return JSON.parse(response.text());
-  } catch (error) {
-    console.error("[AI Interpretation Error]", error);
-    return {
-      nuance: "Nuance extraction failed.",
-      sentimentScore: 0,
-      reasoning: "Consensus engines maintaining rule-based baselines.",
-      confidence: 40
-    };
-  }
-};
-
-/**
- * AI FINAL TRADE CALL
- * Synthesizes market context, setup, behavior, and risk into a definitive call.
- * RULES: Do NOT change final verdict.
- */
-const generateFinalTradeCall = async (inputs, context = {}) => {
-  if (!process.env.GEMINI_API_KEY) {
-    return {
-      finalCall: context.verdict || "WAIT",
-      confidence: context.score || 50,
-      reasoning: "Rule-based synthesis active. Awaiting AI node synchronization.",
-      suggestedAction: context.verdict === "BUY" ? "Enter Position" : "Wait for Clarity"
-    };
-  }
-
-  const { market, setup, behavior, risk, finalScore } = inputs;
-  const verdict = context.verdict || "WAIT";
-
-  const prompt = `You are a Chief Investment Officer.
-    
-    Market Context:
-    - Direction: ${market.direction}, Confidence: ${market.confidence}%, Reason: ${market.reason}
-    
-    Trade Setup:
-    - Type: ${setup.type}, Quality: ${setup.score}, Reason: ${setup.reason}
-    
-    Behavioral State:
-    - Risk: ${behavior.risk}, Score: ${behavior.score}, Reason: ${behavior.reason}
-    
-    Risk Exposure:
-    - Level: ${risk.level}, Score: ${risk.score}, Reason: ${risk.reason}
-    
-    Final Score: ${finalScore}
-    Final Verdict: ${verdict}
-    
-    TASK:
-    Generate a final trade decision explanation.
-    
-    RULES:
-    - Do NOT change the final verdict (${verdict}).
-    - Explain WHY the decision was reached.
-    - Highlight conflicts (if any).
-    - Keep explanation concise (3-5 lines).
-    - Tone: Professional, analytical, decisive.
-    
-    OUTPUT FORMAT (JSON):
-    {
-      "reasoning": "A summary of key drivers across market, setup, behavior, and risk",
-      "suggestedAction": "Enter / Wait / Reduce Size / Avoid",
-      "confidence": ${finalScore}
-    }`;
-
-  try {
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash",
-      generationConfig: { responseMimeType: "application/json" }
-    });
-
-    const result = await model.generateContent(prompt);
-    const data = JSON.parse(result.response.text());
-    
-    return {
-      finalCall: verdict,
-      confidence: data.confidence,
-      reasoning: data.reasoning,
-      suggestedAction: data.suggestedAction
-    };
-  } catch (error) {
-    console.error("[AI Final Call Error]", error);
-    return {
-      finalCall: verdict,
-      confidence: finalScore,
-      reasoning: "Deterministic fallback active. Logic aligned with rule-based risk audit.",
-      suggestedAction: "Follow Rule-based Protocol"
-    };
-  }
-};
-
-const summarizeMarketDrivers = async (headlines) => {
-  if (!headlines || headlines.length === 0 || !process.env.GEMINI_API_KEY) {
-    return ["General market movement observed."];
-  }
-
-  const prompt = `You are a financial news summarizer. 
-  Headlines: ${headlines.join(" | ")}
-  
-  Extract the 3 most significant market themes/drivers from these headlines.
-  Return ONE JSON array of strings, each string maximum 10 words.
-  Response MUST be valid JSON array of strings.`;
+Return JSON: nuance, sentimentScore, reasoning, confidence.`;
 
   try {
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({
       model: "gemini-1.5-flash",
-      generationConfig: { responseMimeType: "application/json" }
+      generationConfig: { responseMimeType: "application/json" },
     });
 
-    const result = await model.generateContent(prompt);
-    return JSON.parse(result.response.text());
+    const result = await withTimeout(model.generateContent(prompt));
+    const parsed = JSON.parse(result.response.text());
+
+    if (!parsed?.nuance || parsed?.confidence === undefined || parsed?.sentimentScore === undefined) {
+      return buildUnavailable("AI_INVALID_RESPONSE");
+    }
+
+    return {
+      ...createValidStatus(),
+      nuance: parsed.nuance,
+      sentimentScore: parsed.sentimentScore,
+      reasoning: parsed.reasoning,
+      confidence: parsed.confidence,
+    };
   } catch (error) {
-    console.error("[AI Summary Error]", error);
-    return headlines.slice(0, 3);
+    return buildUnavailable("AI_UNAVAILABLE");
+  }
+};
+
+const generateFinalTradeCall = async (inputs, context = {}) => {
+  const verdict = context.verdict;
+  if (!verdict) {
+    return buildUnavailable("INSUFFICIENT_INPUT_DATA");
+  }
+  if (!process.env.GEMINI_API_KEY) {
+    return buildUnavailable("AI_UNAVAILABLE");
+  }
+  if (!inputs?.market || !inputs?.setup || !inputs?.behavior || !inputs?.risk || inputs?.finalScore === undefined || inputs?.finalScore === null) {
+    return buildUnavailable("INSUFFICIENT_INPUT_DATA");
+  }
+
+  const { market, setup, behavior, risk, finalScore } = inputs;
+  const prompt = `You are a Chief Investment Officer.
+Market Context:
+- Direction: ${market.direction}, Confidence: ${market.confidence}, Reason: ${market.reason}
+Trade Setup:
+- Type: ${setup.type}, Quality: ${setup.score}, Reason: ${setup.reason}
+Behavioral State:
+- Risk: ${behavior.risk}, Score: ${behavior.score}, Reason: ${behavior.reason}
+Risk Exposure:
+- Level: ${risk.level}, Score: ${risk.score}, Reason: ${risk.reason}
+Final Score: ${finalScore}
+Final Verdict: ${verdict}
+
+Return JSON with reasoning and suggestedAction.`;
+
+  try {
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash",
+      generationConfig: { responseMimeType: "application/json" },
+    });
+
+    const result = await withTimeout(model.generateContent(prompt));
+    const parsed = JSON.parse(result.response.text());
+
+    if (!parsed?.reasoning || !parsed?.suggestedAction) {
+      return buildUnavailable("AI_INVALID_RESPONSE");
+    }
+
+    return {
+      ...createValidStatus(),
+      finalCall: verdict,
+      confidence: finalScore,
+      reasoning: parsed.reasoning,
+      suggestedAction: parsed.suggestedAction,
+    };
+  } catch (error) {
+    return buildUnavailable("AI_UNAVAILABLE");
+  }
+};
+
+const summarizeMarketDrivers = async (headlines) => {
+  if (!process.env.GEMINI_API_KEY) {
+    return buildUnavailable("AI_UNAVAILABLE");
+  }
+  if (!Array.isArray(headlines) || headlines.length === 0) {
+    return buildUnavailable("INSUFFICIENT_MARKET_DATA");
+  }
+
+  const prompt = `You are a financial news summarizer.
+Headlines: ${headlines.join(" | ")}
+Return JSON array of 3 concise market drivers.`;
+
+  try {
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash",
+      generationConfig: { responseMimeType: "application/json" },
+    });
+
+    const result = await withTimeout(model.generateContent(prompt));
+    const parsed = JSON.parse(result.response.text());
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      return buildUnavailable("AI_INVALID_RESPONSE");
+    }
+
+    return {
+      ...createValidStatus(),
+      drivers: parsed,
+    };
+  } catch (error) {
+    return buildUnavailable("AI_UNAVAILABLE");
   }
 };
 
@@ -332,6 +311,5 @@ module.exports = {
   generateTradeReviewSummary,
   interpretMarketSignal,
   generateFinalTradeCall,
-  summarizeMarketDrivers
+  summarizeMarketDrivers,
 };
-

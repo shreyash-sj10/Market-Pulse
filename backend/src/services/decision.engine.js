@@ -2,6 +2,8 @@ const aiService = require("./aiExplanation.service");
 const scoringEngine = require("./scoring.engine");
 const mistakeAnalysis = require("./mistakeAnalysis.service");
 const Trace = require("../models/trace.model");
+const { isValidStatus } = require("../constants/intelligenceStatus");
+const { deriveDecisionState } = require("../utils/systemState");
 
 /**
  * FINAL TRADE CALL ENGINE (HYBRID)
@@ -10,14 +12,40 @@ const Trace = require("../models/trace.model");
  */
 
 const generateFinalTradeCall = async (tradeData, marketContext, behaviorProfile) => {
+  if (
+    !tradeData ||
+    !marketContext ||
+    marketContext.confidence === undefined ||
+    !behaviorProfile
+  ) {
+    return {
+      state: deriveDecisionState({ hasRequiredInputs: false, isValidated: false }),
+      status: "UNAVAILABLE",
+      reason: "INSUFFICIENT_DATA",
+      finalCall: "AVOID",
+      verdict: "AVOID",
+      reasons: ["INSUFFICIENT_DATA"],
+    };
+  }
+
   // 1. Setup Input Blocks (Rule Engine Prep)
-  const setupScore = tradeData.setupScore || 70;
+  const setupScore = tradeData.setupScore;
+  if (setupScore === undefined || setupScore === null) {
+    return {
+      state: deriveDecisionState({ hasRequiredInputs: false, isValidated: false }),
+      status: "UNAVAILABLE",
+      reason: "INSUFFICIENT_DATA",
+      finalCall: "AVOID",
+      verdict: "AVOID",
+      reasons: ["INSUFFICIENT_DATA"],
+    };
+  }
   const riskStats = mistakeAnalysis({
     tradeValue: tradeData.totalValuePaise || 0,
     balanceBeforeTrade: tradeData.balance || 1000000,
-    stopLoss: tradeData.stopLoss,
-    targetPrice: tradeData.targetPrice,
-    entryPrice: tradeData.pricePaise,
+    stopLossPaise: tradeData.stopLossPaise,
+    targetPricePaise: tradeData.targetPricePaise,
+    entryPricePaise: tradeData.pricePaise,
     tradesLast24h: behaviorProfile.tradesCount24h || 0,
     lastTradePnL: behaviorProfile.lastPnL || 0,
     lastTradeTime: behaviorProfile.lastTradeTime
@@ -25,19 +53,19 @@ const generateFinalTradeCall = async (tradeData, marketContext, behaviorProfile)
 
   const inputs = {
     market: {
-      direction: marketContext.impact || "NEUTRAL",
-      confidence: marketContext.confidence || 50,
-      reason: marketContext.mechanism || marketContext.explanation || "Ambiguous market vector."
+      direction: marketContext.impact,
+      confidence: marketContext.confidence,
+      reason: marketContext.mechanism || marketContext.explanation,
     },
     setup: {
-      type: tradeData.strategy || "BREAKOUT",
+      type: tradeData.strategy,
       score: setupScore,
-      reason: tradeData.reason || "Technical alignment with pattern."
+      reason: tradeData.reason
     },
     behavior: {
-      risk: behaviorProfile.dominantMistake || "None",
-      score: 100 - (behaviorProfile.consistencyScore || 0),
-      reason: behaviorProfile.summary || "Stable behavioral profile."
+      risk: behaviorProfile.dominantMistake,
+      score: 100 - behaviorProfile.consistencyScore,
+      reason: behaviorProfile.summary
     },
     risk: {
       level: riskStats.riskScore > 60 ? "HIGH" : riskStats.riskScore > 30 ? "MEDIUM" : "LOW",
@@ -46,6 +74,22 @@ const generateFinalTradeCall = async (tradeData, marketContext, behaviorProfile)
     },
     finalScore: Math.round((setupScore + marketContext.confidence + (100 - riskStats.riskScore)) / 3)
   };
+
+  if (
+    inputs.market.direction === undefined ||
+    inputs.market.reason === undefined ||
+    inputs.behavior.score === undefined ||
+    !Number.isFinite(inputs.behavior.score)
+  ) {
+    return {
+      state: deriveDecisionState({ hasRequiredInputs: false, isValidated: false }),
+      status: "UNAVAILABLE",
+      reason: "INSUFFICIENT_DATA",
+      finalCall: "AVOID",
+      verdict: "AVOID",
+      reasons: ["INSUFFICIENT_DATA"],
+    };
+  }
 
   // 2. Deterministic Verdict (RULE ENGINE)
   let verdict = "WAIT";
@@ -61,6 +105,21 @@ const generateFinalTradeCall = async (tradeData, marketContext, behaviorProfile)
 
   // 3. AI Synthesis (AI ASSISTIVE)
   const aiCall = await aiService.generateFinalTradeCall(inputs, { verdict, score: inputs.finalScore });
+  if (!isValidStatus(aiCall)) {
+    return {
+      state: deriveDecisionState({ hasRequiredInputs: true, isValidated: false }),
+      status: "UNAVAILABLE",
+      reason: aiCall?.reason || "AI_UNAVAILABLE",
+      finalCall: "AVOID",
+      verdict,
+      reasons: [
+        inputs.market.reason,
+        inputs.setup.reason,
+        inputs.behavior.reason,
+        inputs.risk.reason,
+      ],
+    };
+  }
 
   // 4. Record DECISION TRACE (Persistence)
   const decisionTrace = {
@@ -101,7 +160,15 @@ const generateFinalTradeCall = async (tradeData, marketContext, behaviorProfile)
 
   return {
     ...aiCall,
-    inputs
+    inputs,
+    state: deriveDecisionState({ hasRequiredInputs: true, isValidated: true }),
+    verdict,
+    reasons: [
+      inputs.market.reason,
+      inputs.setup.reason,
+      inputs.behavior.reason,
+      inputs.risk.reason,
+    ],
   };
 };
 

@@ -4,6 +4,9 @@ const cache = require('./news.cache');
 const classificationEngine = require('./classification.engine');
 const hybridService = require('./hybridIntelligence.service');
 const { toHoldingsArray, toHoldingsLookup } = require('../../utils/holdingsNormalizer');
+const {
+  isValidStatus,
+} = require("../../constants/intelligenceStatus");
 
 /**
  * HYBRID TRADE EXECUTION ENGINE (NEWS/SIGNAL LAYER)
@@ -24,6 +27,16 @@ const getProcessedNews = async (symbol, userHoldings = {}) => {
     try { rawNews = await finnhubProvider.getNews(symbol); } catch (fErr) { rawNews = []; }
   }
 
+  if (!Array.isArray(rawNews) || rawNews.length === 0) {
+    return {
+      symbol,
+      status: "UNAVAILABLE",
+      reason: "NO_MARKET_SIGNALS",
+      signals: [generateUnavailableSignal(symbol, "NO_MARKET_SIGNALS")],
+      stats: { total: 0, lastUpdated: new Date().toISOString() },
+    };
+  }
+
   // 2. Step 1 & 2: Raw News -> AI Interpretation & Rule Classification
   const initialSignals = await Promise.all(rawNews.slice(0, 10).map(async (item, idx) => {
     const rawHeadline = (item.headline || item.title || "").trim();
@@ -31,6 +44,7 @@ const getProcessedNews = async (symbol, userHoldings = {}) => {
 
     // AI Step 1: Interpret Nuance
     const aiNuance = await hybridService.interpretMarketNuance(rawHeadline, item.summary);
+    if (!isValidStatus(aiNuance)) return null;
 
     // Rule Step 2: Classification Mapping
     const text = `${rawHeadline} ${item.summary || ""}`;
@@ -41,9 +55,9 @@ const getProcessedNews = async (symbol, userHoldings = {}) => {
     return {
       id: `hyp-sig-${idx}`,
       event: rawHeadline,
-      nuance: aiNuance?.nuance || "Nuance extraction on standby.",
-      impact: (aiNuance?.sentimentScore > 2) ? "BULLISH" : (aiNuance?.sentimentScore < -2) ? "BEARISH" : "NEUTRAL",
-      confidence: aiNuance?.confidence || 60,
+      nuance: aiNuance.nuance,
+      impact: (aiNuance.sentimentScore > 2) ? "BULLISH" : (aiNuance.sentimentScore < -2) ? "BEARISH" : "NEUTRAL",
+      confidence: aiNuance.confidence,
       sector,
       relevance,
       time: new Date(item.timestamp || Date.now()).toISOString(),
@@ -52,7 +66,16 @@ const getProcessedNews = async (symbol, userHoldings = {}) => {
   }));
 
   const validSignals = initialSignals.filter(s => !!s);
-  const signals = validSignals.length ? validSignals : [generateFallbackSignal(symbol)];
+  if (!validSignals.length) {
+    return {
+      symbol,
+      status: "UNAVAILABLE",
+      reason: "NO_MARKET_SIGNALS",
+      signals: [generateUnavailableSignal(symbol, "NO_MARKET_SIGNALS")],
+      stats: { total: 0, lastUpdated: new Date().toISOString() },
+    };
+  }
+  const signals = validSignals;
 
   // 3. Step 3: Multiple signals -> AI Consensus Layer
   const sectorGroups = {};
@@ -69,6 +92,9 @@ const getProcessedNews = async (symbol, userHoldings = {}) => {
 
      // Rule Step 4 & 5: Deterministic Scoring & Verdict
      const finalDecision = hybridService.applyDeterministicRules(sectorSignals, aiConsensus);
+     if (!isValidStatus(finalDecision)) {
+       return generateUnavailableSignal(symbol, finalDecision.reason || "NO_MARKET_SIGNALS", sector);
+     }
 
      // Temporal delta
      const prev = previousData?.signals?.find(p => p.sector === sector);
@@ -81,7 +107,7 @@ const getProcessedNews = async (symbol, userHoldings = {}) => {
      return {
         id: `consensus-${sector}`,
         event: `${sector} HYBRID INTELLIGENCE`,
-        mechanism: aiConsensus?.explanation || "Standard directional transmission.",
+        mechanism: isValidStatus(aiConsensus) ? aiConsensus.explanation : "Consensus derived via weighted rule processing.",
         judgment: finalDecision.reasoning,
         keyDriver: finalDecision.keyDriver,
         verdict: finalDecision.verdict,
@@ -92,12 +118,14 @@ const getProcessedNews = async (symbol, userHoldings = {}) => {
         sector,
         symbols: [symbol.toUpperCase()],
         signalCount: sectorSignals.length,
-        isConsensus: true
+        isConsensus: true,
+        status: "VALID",
      };
   }));
 
   const response = {
     symbol,
+    status: "VALID",
     signals: finalDecisionNodes,
     stats: { total: finalDecisionNodes.length, lastUpdated: new Date().toISOString() }
   };
@@ -115,20 +143,10 @@ const getPortfolioNews = async (userHoldings = {}) => {
   const symbols = holdingsArray.map((h) => h.symbol).slice(0, 15);
   
   if (!symbols.length) {
-    return { 
-      signals: [{
-        id: 'portfolio-empty',
-        event: 'PORTFOLIO VESTIBULE EMPTY',
-        mechanism: 'No active asset nodes detected in terminal vault.',
-        judgment: 'Deploy liquidity to activate portfolio monitoring.',
-        verdict: 'WAIT',
-        impact: 'NEUTRAL',
-        confidence: 100,
-        scope: 'MARKET',
-        sector: 'GENERAL',
-        temporal: 'STABLE',
-        relevance: 'DIRECT'
-      }] 
+    return {
+      status: "UNAVAILABLE",
+      reason: "NO_PORTFOLIO_ASSETS",
+      signals: [generateUnavailableSignal("PORTFOLIO", "NO_PORTFOLIO_ASSETS", "GENERAL")],
     };
   }
 
@@ -146,19 +164,30 @@ const getPortfolioNews = async (userHoldings = {}) => {
      }
   });
 
-  return { signals: uniqueBySymbol.slice(0, 30) };
+  if (!uniqueBySymbol.length) {
+    return {
+      status: "UNAVAILABLE",
+      reason: "NO_MARKET_SIGNALS",
+      signals: [generateUnavailableSignal("PORTFOLIO", "NO_MARKET_SIGNALS", "GENERAL")],
+    };
+  }
+
+  return { status: "VALID", signals: uniqueBySymbol.slice(0, 30) };
 };
 
-const generateFallbackSignal = (symbol) => ({
-  id: `fallback-${symbol}`,
-  event: `${symbol} STRUCTURAL PULSE BASELINE`,
-  mechanism: "Market in consolidation phase. No high-impact triggers detected.",
-  judgment: "Maintain risk-neutral posture until directional vector clears.",
+const generateUnavailableSignal = (symbol, reason, sector = classificationEngine.mapSector(symbol)) => ({
+  id: `unavailable-${symbol}-${reason}`,
+  event: `${symbol} INTELLIGENCE UNAVAILABLE`,
+  mechanism: `Data not available (${reason}).`,
+  judgment: "Decision limited due to missing signals.",
   verdict: "WAIT",
-  impact: "NEUTRAL",
-  confidence: 60,
+  status: "UNAVAILABLE",
+  reason,
+  impact: null,
+  confidence: null,
   scope: "MARKET",
-  sector: classificationEngine.mapSector(symbol),
+  sector,
+  time: new Date().toISOString(),
   temporal: "STABLE",
   relevance: "MACRO"
 });

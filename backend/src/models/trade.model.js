@@ -100,14 +100,13 @@ const tradeSchema = new mongoose.Schema(
       maxProfitPct: { type: Number, default: 0 },
       peakPrice: { type: Number, default: 0 }
     },
-    learningOutcome: {
+    learningOutcome: new mongoose.Schema({
       verdict: { type: String, enum: ["GOOD", "LUCK", "POOR", "NEUTRAL", "DISCIPLINED_PROFIT", "LUCKY_PROFIT", "DISCIPLINED_LOSS", "POOR_PROCESS"] },
-
-      type: String, // Mistake Type
-      context: String,
-      insight: String,
-      improvementSuggestion: String
-    },
+      type: { type: String }, // Mistake Type
+      context: { type: String },
+      insight: { type: String },
+      improvementSuggestion: { type: String },
+    }, { _id: false }),
     finalTradeCall: {
       finalCall: String,
       confidence: Number,
@@ -130,7 +129,7 @@ const tradeSchema = new mongoose.Schema(
       learningTags: [String],
       trace: [String]
     },
-    rrRatio: {
+    rr: {
       type: Number,
       default: null,
     },
@@ -171,27 +170,11 @@ const tradeSchema = new mongoose.Schema(
       ]
     },
     idempotencyKey: {
-
       type: String,
       unique: true,
       sparse: true,
       trim: true,
     },
-    learningOutcome: {
-      verdict: String,
-      insight: String,
-      improvementSuggestion: String
-    },
-    pnlPaise: {
-      type: Number,
-      default: 0
-    },
-    pnlPct: {
-      type: Number,
-      default: 0
-    }
-
-
   },
   {
     timestamps: true,

@@ -1,4 +1,5 @@
 const User = require("../models/user.model");
+const Holding = require("../models/holding.model");
 const Trade = require("../models/trade.model");
 const { getLivePrices } = require("../services/marketData.service");
 const Decimal = require("decimal.js");
@@ -6,10 +7,13 @@ const { analyzeBehavior } = require("../services/behavior.engine");
 const { analyzeProgression } = require("../services/progression.engine");
 const { calculateSkillScore } = require("../services/skill.engine");
 const { normalizeTrade } = require("../domain/trade.contract");
-const { fromSafeKey } = require("../utils/safeUtils");
-const { toHoldingsArray, toHoldingsObject } = require("../utils/holdingsNormalizer");
 const { mapToClosedTrades } = require("../domain/closedTrade.mapper");
 const { analyzeReflection } = require("../engines/reflection.engine");
+const {
+  derivePortfolioPositionsState,
+  derivePortfolioSummaryState,
+} = require("../utils/systemState");
+const { SYSTEM_STATE } = require("../constants/systemState");
 
 // buildClosedTrades has been replaced by src/domain/closedTrade.mapper.js
 
@@ -21,22 +25,23 @@ const getPortfolioSummary = async (req, res, next) => {
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
-    const holdingsObject = toHoldingsObject(user.holdings);
+    const holdingsDocs = await Holding.find({ userId });
 
     // 1. Get Live Prices
-    const holdingSymbols = Object.keys(holdingsObject).map(fromSafeKey);
+    const holdingSymbols = holdingsDocs.map((h) => h.symbol);
     const livePrices = await getLivePrices(holdingSymbols);
 
     // 2. Compute MTM
     let unrealizedPnL = new Decimal(0);
     let currentEquityValue = new Decimal(0);
 
-    Object.entries(holdingsObject).forEach(([safeSymbol, data]) => {
-      const symbol = fromSafeKey(safeSymbol);
-      const livePrice = livePrices[symbol];
-      const effectivePrice = livePrice !== undefined ? livePrice : data.avgCost;
+    holdingsDocs.forEach((data) => {
+      const symbol = data.symbol;
+      const liveQuote = livePrices[symbol];
+      const livePrice = liveQuote?.pricePaise;
+      const effectivePrice = livePrice !== undefined ? livePrice : data.avgPricePaise;
       const marketValue = new Decimal(data.quantity).mul(effectivePrice);
-      const costBasis = new Decimal(data.quantity).mul(data.avgCost);
+      const costBasis = new Decimal(data.quantity).mul(data.avgPricePaise);
       const gain = marketValue.sub(costBasis);
       unrealizedPnL = unrealizedPnL.add(gain);
       currentEquityValue = currentEquityValue.add(marketValue);
@@ -96,16 +101,52 @@ const getPortfolioSummary = async (req, res, next) => {
 
 
     // 4. Construct Response (STRICT CONTRACT)
+    const winRate = await computeWinRate(userId);
+
+    const holdingsPositions = holdingsDocs.map((holding) => ({
+      symbol: holding.symbol,
+      quantity: Number(holding.quantity) || 0,
+      avgPrice: Math.round(Number(holding.avgPricePaise) || 0),
+      stopLossPaise: null,
+      targetPricePaise: null,
+    }));
+
+    const summaryState = derivePortfolioSummaryState({
+      holdingsCount: holdingsDocs.length,
+      positions: holdingsDocs.map((data) => {
+        const liveQuote = livePrices[data.symbol];
+        const livePrice = liveQuote?.pricePaise;
+        return {
+          currentPricePaise: livePrice !== undefined ? livePrice : data.avgPricePaise,
+          isFallback: livePrice === undefined || Boolean(liveQuote?.isFallback),
+          investedValuePaise: Number(new Decimal(data.quantity).mul(data.avgPricePaise)),
+          currentValuePaise: Number(new Decimal(data.quantity).mul(livePrice !== undefined ? livePrice : data.avgPricePaise)),
+          unrealizedPnL: Number(new Decimal(data.quantity).mul(livePrice !== undefined ? livePrice : data.avgPricePaise).sub(new Decimal(data.quantity).mul(data.avgPricePaise))),
+          pnlPct: 0,
+        };
+      }),
+      summary: {
+        realizedPnL: user.realizedPnL || 0,
+        unrealizedPnL: Number(unrealizedPnL.toFixed(2)),
+        netEquity: Number(new Decimal(user.balance).add(currentEquityValue).toFixed(2)),
+        winRate,
+        skillAudit,
+        behaviorInsights: behavior,
+      },
+    });
+
     const response = {
       success: true,
+      state: summaryState,
       data: {
+        state: summaryState,
         balance: user.balance,
         totalInvested: user.totalInvested || 0,
         realizedPnL: user.realizedPnL || 0,
         unrealizedPnL: Number(unrealizedPnL.toFixed(2)),
         netEquity: Number(new Decimal(user.balance).add(currentEquityValue).toFixed(2)),
-        winRate: await computeWinRate(userId),
-        holdings: toHoldingsArray(holdingsObject),
+        winRate,
+        holdings: holdingsPositions,
         skillAudit,
         behaviorInsights: {
           success: behavior.success,
@@ -120,7 +161,7 @@ const getPortfolioSummary = async (req, res, next) => {
 
           recentBehaviors: recentBehaviors.map(t => ({
             symbol: t.symbol,
-            side: t.side,
+            type: t.type,
             behavior: t.reasoning || "Analyzing...",
             timestamp: t.createdAt
           }))
@@ -165,27 +206,28 @@ const getPositions = async (req, res, next) => {
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
-    const holdingsObject = toHoldingsObject(user.holdings);
+    const holdingsDocs = await Holding.find({ userId });
 
-    const holdingSymbols = Object.keys(holdingsObject).map(fromSafeKey);
+    const holdingSymbols = holdingsDocs.map((holding) => holding.symbol);
     if (holdingSymbols.length === 0) {
-      return res.status(200).json({ success: true, positions: [] });
+      return res.status(200).json({ success: true, state: SYSTEM_STATE.EMPTY, positions: [] });
     }
 
     // Fetch live prices
     const livePrices = await getLivePrices(holdingSymbols);
 
-    const positions = Object.entries(holdingsObject).map(([safeSymbol, data]) => {
-      const symbol = fromSafeKey(safeSymbol);
-      const livePrice = livePrices[symbol];
+    const positions = holdingsDocs.map((data) => {
+      const symbol = data.symbol;
+      const liveQuote = livePrices[symbol];
+      const livePrice = liveQuote?.pricePaise;
 
       // Fallback: Use avgCost as currentPrice if live fetch failed
-      const currentPrice = livePrice !== undefined ? livePrice : data.avgCost;
+      const currentPrice = livePrice !== undefined ? livePrice : data.avgPricePaise;
       if (livePrice === undefined) {
-        console.warn(`[POS_FALLBACK] Missing live price for ${symbol}`);
+        console.warn(`[POS_FALLBACK] Missing live quote for ${symbol}`);
       }
 
-      const investedValue = new Decimal(data.quantity).mul(data.avgCost).toNumber();
+      const investedValue = new Decimal(data.quantity).mul(data.avgPricePaise).toNumber();
       const currentValue = new Decimal(data.quantity).mul(currentPrice).toNumber();
       const unrealizedPnL = new Decimal(currentValue).sub(investedValue).toNumber();
 
@@ -193,8 +235,10 @@ const getPositions = async (req, res, next) => {
         symbol: symbol.split(".")[0],
         fullSymbol: symbol,
         quantity: data.quantity,
-        avgPricePaise: Math.round(data.avgCost),
+        avgPricePaise: Math.round(data.avgPricePaise),
         currentPricePaise: Math.round(currentPrice),
+        source: liveQuote?.source || "FALLBACK",
+        isFallback: liveQuote ? Boolean(liveQuote.isFallback) : true,
         investedValuePaise: Math.round(investedValue),
         currentValuePaise: Math.round(currentValue),
         unrealizedPnL: Math.round(unrealizedPnL),
@@ -202,7 +246,12 @@ const getPositions = async (req, res, next) => {
       };
     });
 
-    res.status(200).json({ success: true, positions });
+    const state = derivePortfolioPositionsState({
+      holdingsCount: holdingsDocs.length,
+      positions,
+    });
+
+    res.status(200).json({ success: true, state, positions });
   } catch (error) {
     next(error);
   }

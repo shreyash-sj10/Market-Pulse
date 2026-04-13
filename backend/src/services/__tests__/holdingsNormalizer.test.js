@@ -23,7 +23,7 @@ describe("holdings normalizer", () => {
 
     const arr = toHoldingsArray(holdingsMap);
     expect(arr).toEqual([
-      { symbol: "INFY.NS", quantity: 3, avgPrice: 152080 },
+      { symbol: "INFY.NS", quantity: 3, avgPrice: 152080, stopLossPaise: null, targetPricePaise: null },
     ]);
   });
 

@@ -15,13 +15,15 @@ exports.mapToClosedTrades = (trades) => {
 
   sorted.forEach((trade) => {
     const symbol = trade.symbol;
-    if (trade.side === "BUY") {
+    const tradeType = trade.type;
+
+    if (tradeType === "BUY") {
       if (!holdingsPool[symbol]) holdingsPool[symbol] = [];
       holdingsPool[symbol].push({ ...trade }); // Clone to track remaining quantity locally
       return;
     }
 
-    if (trade.side === "SELL") {
+    if (tradeType === "SELL") {
       let sellQty = trade.quantity;
       const buyStack = holdingsPool[symbol] || [];
 
@@ -39,11 +41,11 @@ exports.mapToClosedTrades = (trades) => {
 
         const entryVal = new Decimal(matchedQty).mul(firstBuy.pricePaise);
         const exitVal = new Decimal(matchedQty).mul(trade.pricePaise);
-        const pnl = exitVal.sub(entryVal).toNumber();
+        const pnlPaise = exitVal.sub(entryVal).toNumber();
         
         const entryBasis = new Decimal(matchedQty).mul(firstBuy.pricePaise);
-        const pnlPct = entryBasis.gt(0) 
-            ? Number(new Decimal(pnl).div(entryBasis).toFixed(4)) 
+        const pnlPct = entryBasis.gt(0)
+            ? Number(new Decimal(pnlPaise).div(entryBasis).mul(100).toFixed(2))
             : 0;
 
         const entryTime = new Date(firstBuy.openedAt || firstBuy.createdAt).getTime();
@@ -55,12 +57,12 @@ exports.mapToClosedTrades = (trades) => {
           entryPricePaise: firstBuy.pricePaise,
           exitPricePaise: trade.pricePaise,
           quantity: matchedQty,
-          pnl,
+          pnlPaise,
           pnlPct,
           holdTime: Math.max(0, exitTime - entryTime),
-          rr: firstBuy.rrRatio || firstBuy.rr, 
-          stopLossPaise: firstBuy.stopLossPaise || firstBuy.stopLoss,
-          targetPricePaise: firstBuy.targetPricePaise || firstBuy.targetPrice,
+          rr: firstBuy.rr,
+          stopLossPaise: firstBuy.stopLossPaise,
+          targetPricePaise: firstBuy.targetPricePaise,
           entryTime,
           exitTime,
           entryTradeId: firstBuy.id,
@@ -85,8 +87,11 @@ exports.mapToClosedTrades = (trades) => {
         throw new Error(`STATE_CORRUPTION_DETECTED: Unfilled SELL quantity (${sellQty}) for ${symbol} with empty buy stack.`);
       }
     }
+
+    if (tradeType !== "BUY" && tradeType !== "SELL") {
+      throw new Error(`INVALID_TRADE_TYPE_IN_CLOSED_MAPPER:${tradeType}`);
+    }
   });
 
   return closedTrades;
 };
-

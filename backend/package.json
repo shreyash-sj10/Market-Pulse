@@ -4,9 +4,15 @@
   "main": "index.js",
   "scripts": {
     "test": "jest --runInBand --forceExit",
+    "test:unit": "jest --runInBand --forceExit tests/unit src/middlewares/__tests__ src/services/__tests__",
+    "test:integration": "jest --runInBand --forceExit tests/integration",
+    "test:concurrency": "jest --runInBand --forceExit tests/concurrency",
+    "test:security": "jest --runInBand --forceExit tests/security",
     "test:watch": "jest --watchAll",
-    "test:coverage": "jest --coverage --runInBand --forceExit",
-    "dev": "nodemon src/server.js"
+    "test:coverage": "jest --coverage --runInBand --forceExit tests/unit src/middlewares/__tests__ src/services/__tests__",
+    "dev": "nodemon src/server.js",
+    "migrate:strict": "node scripts/strictMigration.js",
+    "migrate:holdings": "node scripts/migrateHoldingsToCollection.js"
   },
   "jest": {
     "testEnvironment": "node",
@@ -14,10 +20,76 @@
       "**/__tests__/**/*.test.js",
       "**/tests/**/*.test.js"
     ],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/coverage/"
+    ],
     "collectCoverageFrom": [
-      "src/services/**/*.js",
-      "!src/services/__tests__/**"
-    ]
+      "src/engines/entry.engine.js",
+      "src/engines/exit.engine.js",
+      "src/engines/reflection.engine.js",
+      "src/services/risk.engine.js",
+      "src/services/behavior.engine.js",
+      "src/services/mistakeAnalysis.service.js",
+      "src/middlewares/auth.middleware.js",
+      "src/middlewares/validateTradePayload.js"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "branches": 75,
+        "functions": 85,
+        "lines": 85,
+        "statements": 85
+      },
+      "src/engines/entry.engine.js": {
+        "branches": 75,
+        "functions": 90,
+        "lines": 90,
+        "statements": 90
+      },
+      "src/engines/exit.engine.js": {
+        "branches": 75,
+        "functions": 90,
+        "lines": 90,
+        "statements": 90
+      },
+      "src/engines/reflection.engine.js": {
+        "branches": 70,
+        "functions": 90,
+        "lines": 85,
+        "statements": 85
+      },
+      "src/services/risk.engine.js": {
+        "branches": 75,
+        "functions": 85,
+        "lines": 85,
+        "statements": 85
+      },
+      "src/services/behavior.engine.js": {
+        "branches": 75,
+        "functions": 85,
+        "lines": 85,
+        "statements": 85
+      },
+      "src/services/mistakeAnalysis.service.js": {
+        "branches": 80,
+        "functions": 85,
+        "lines": 85,
+        "statements": 85
+      },
+      "src/middlewares/auth.middleware.js": {
+        "branches": 75,
+        "functions": 80,
+        "lines": 80,
+        "statements": 80
+      },
+      "src/middlewares/validateTradePayload.js": {
+        "branches": 70,
+        "functions": 80,
+        "lines": 80,
+        "statements": 80
+      }
+    }
   },
   "keywords": [],
   "author": "",

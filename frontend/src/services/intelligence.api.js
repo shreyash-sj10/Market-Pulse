@@ -10,8 +10,10 @@ export const getMarketIntelligence = async () => {
     const res = await api.get("/intelligence/news");
     return res.data;
   } catch (error) {
-    console.warn("[IntelAPI] Market movers failed, returning empty.");
-    return { data: [] };
+    return {
+      state: "PARTIAL",
+      data: { state: "PARTIAL", status: "UNAVAILABLE", reason: "NO_MARKET_SIGNALS", signals: [] },
+    };
   }
 };
 
@@ -20,7 +22,10 @@ export const getPortfolioIntelligence = async () => {
     const res = await api.get("/intelligence/portfolio");
     return res.data;
   } catch (error) {
-    return { data: [] };
+    return {
+      state: "PARTIAL",
+      data: { state: "PARTIAL", status: "UNAVAILABLE", reason: "NO_MARKET_SIGNALS", signals: [] },
+    };
   }
 };
 
@@ -29,7 +34,10 @@ export const getGlobalIntelligence = async () => {
     const res = await api.get("/intelligence/global");
     return res.data;
   } catch (error) {
-    return { data: [] };
+    return {
+      state: "PARTIAL",
+      data: { state: "PARTIAL", status: "UNAVAILABLE", reason: "NO_MARKET_SIGNALS", signals: [] },
+    };
   }
 };
 

@@ -32,7 +32,7 @@ export default function TradeInsight({ symbol, trade }) {
 
     const rsiVal = point.rsi;
     const emaVal = point.ema;
-    const priceVal = trade.pricePaise || trade.price || point.price;
+    const priceVal = trade.pricePaise || point.price;
     const risk = trade.analysis?.riskScore || 0;
 
     // 3. Generate RSI Descriptions

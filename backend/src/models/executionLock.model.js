@@ -2,10 +2,9 @@ const mongoose = require("mongoose");
 
 const executionLockSchema = new mongoose.Schema(
   {
-    idempotencyKey: {
+    requestId: {
       type: String,
       required: true,
-      unique: true,
       trim: true,
     },
     userId: {
@@ -26,14 +25,16 @@ const executionLockSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: null,
     },
+    createdAt: {
+      type: Date,
+      default: Date.now,
+    },
   },
-  {
-    timestamps: true,
-  }
+  {}
 );
 
-// TTL index to automatically remove old locks after 24 hours
-executionLockSchema.index({ createdAt: 1 }, { expireAfterSeconds: 86400 });
+executionLockSchema.index({ requestId: 1 }, { unique: true, name: "requestId_1" });
+executionLockSchema.index({ createdAt: 1 }, { expireAfterSeconds: 120, name: "createdAt_1" });
 
 const ExecutionLock = mongoose.model("ExecutionLock", executionLockSchema);
 module.exports = ExecutionLock;

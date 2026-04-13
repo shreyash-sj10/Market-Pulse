@@ -152,7 +152,7 @@ export const getLivePrice = getStockPriceINR;
 
 // ─── Professional Historical Data (Backend Source) ──────────────────────────
 export const getHistoricalPrices = async (symbol, timeframe = "1mo") => {
-  if (!symbol) return { data: [], isSimulated: false };
+  if (!symbol) return { data: [], isSynthetic: false, isFallback: false };
 
   try {
     // Map timeframes to Yahoo-compatible periods
@@ -184,12 +184,13 @@ export const getHistoricalPrices = async (symbol, timeframe = "1mo") => {
 
     return {
       data: prices,
-      isSimulated: false,
-      source: res.data.data.source
+      isSynthetic: Boolean(res.data.data.isSynthetic),
+      isFallback: Boolean(res.data.data.isFallback),
+      source: res.data.data.source,
     };
   } catch (error) {
     console.warn("[MarketAPI] History fetch failed:", error.message);
-    return { data: [], isSimulated: false };
+    return { data: [], isSynthetic: false, isFallback: true };
   }
 };
 

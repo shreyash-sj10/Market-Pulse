@@ -11,6 +11,8 @@ export default function DecisionPanel({ isOpen, onClose, onConfirm, snapshot, tr
   if (!isOpen || !snapshot) return null;
 
   const { market, setup, behavior, risk, verdict } = snapshot;
+  const decisionState = snapshot.state || "ACTIVE";
+  const unavailable = risk?.status === "UNAVAILABLE" || verdict?.status === "UNAVAILABLE";
 
   const riskStyles = {
     OPTIMAL: { color: "text-emerald-500", bg: "bg-emerald-50", border: "border-emerald-100", btn: "bg-emerald-600 shadow-emerald-200" },
@@ -35,9 +37,12 @@ export default function DecisionPanel({ isOpen, onClose, onConfirm, snapshot, tr
                 <div>
                    <h2 className="text-2xl font-black text-slate-900 tracking-tight">Executive Decision Audit</h2>
                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Protocol: Pre-Execution Authorization Required</p>
+                   {decisionState === "PARTIAL" && (
+                     <p className="mt-2 text-[10px] font-black uppercase tracking-widest text-amber-600">Partial decision context detected.</p>
+                   )}
                 </div>
                 <div className={`px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${style.bg} ${style.color}`}>
-                   {risk.level} RISK
+                   {decisionState} | {risk.level} RISK
                 </div>
              </header>
 
@@ -82,15 +87,19 @@ export default function DecisionPanel({ isOpen, onClose, onConfirm, snapshot, tr
              <div className="relative z-10 space-y-8">
                 <div>
                    <span className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.3em] mb-4 block">Final AI Appraisal</span>
-                   <h3 className={`text-5xl font-black tracking-tighter ${verdict.finalCall === 'BUY' ? 'text-emerald-400' : verdict.finalCall === 'AVOID' ? 'text-rose-400' : 'text-amber-400'}`}>
-                      {verdict.finalCall}
+                   <h3 className={`text-5xl font-black tracking-tighter ${unavailable ? 'text-slate-500' : verdict.finalCall === 'BUY' ? 'text-emerald-400' : verdict.finalCall === 'AVOID' ? 'text-rose-400' : 'text-amber-400'}`}>
+                      {unavailable ? "UNAVAILABLE" : verdict.finalCall}
                    </h3>
-                   <div className="flex items-center gap-2 mt-2">
-                      <div className="h-1 flex-grow bg-white/5 rounded-full overflow-hidden">
-                         <div className="h-full bg-emerald-400 transition-all duration-1000" style={{ width: `${verdict.confidence}%` }} />
-                      </div>
-                      <span className="text-[10px] font-black text-slate-500">{verdict.confidence}%</span>
-                   </div>
+                   {!unavailable ? (
+                     <div className="flex items-center gap-2 mt-2">
+                        <div className="h-1 flex-grow bg-white/5 rounded-full overflow-hidden">
+                           <div className="h-full bg-emerald-400 transition-all duration-1000" style={{ width: `${verdict.confidence}%` }} />
+                        </div>
+                        <span className="text-[10px] font-black text-slate-500">{verdict.confidence}%</span>
+                     </div>
+                   ) : (
+                     <p className="text-[10px] font-black text-amber-400 uppercase tracking-wider mt-2">Data not available</p>
+                   )}
                 </div>
 
                 <div className="p-6 bg-white/5 rounded-3xl border border-white/5 space-y-4">
@@ -99,7 +108,7 @@ export default function DecisionPanel({ isOpen, onClose, onConfirm, snapshot, tr
                       <span className="text-[9px] font-black uppercase tracking-widest text-white">CIO Logic Synthesis</span>
                    </div>
                    <p className="text-xs font-medium text-slate-400 leading-relaxed italic">
-                      "{verdict.reasoning}"
+                      "{unavailable ? (risk?.reason || verdict?.reason || "Decision limited due to missing signals") : verdict.reasoning}"
                    </p>
                 </div>
 
@@ -107,19 +116,19 @@ export default function DecisionPanel({ isOpen, onClose, onConfirm, snapshot, tr
                    <div className="flex justify-between text-[11px] font-bold">
                       <span className="text-slate-500 uppercase tracking-widest">Plan R:R</span>
                       <div className="flex items-center gap-2">
-                         <span className="text-white font-black">{risk.rrRatio || '0.00'}</span>
-                         <span className={`px-1.5 py-0.5 rounded text-[7px] font-black uppercase ${risk.rrRatio >= 2 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>
-                            {risk.rrRatio >= 2 ? 'Optimal' : risk.rrRatio >= 1.5 ? 'Acceptable' : 'Sub-optimal'}
+                      <span className="text-white font-black">{risk.rr ?? 'N/A'}</span>
+                         <span className={`px-1.5 py-0.5 rounded text-[7px] font-black uppercase ${typeof risk.rr === 'number' && risk.rr >= 2 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>
+                            {typeof risk.rr !== 'number' ? 'Unavailable' : risk.rr >= 2 ? 'Optimal' : risk.rr >= 1.5 ? 'Acceptable' : 'Sub-optimal'}
                          </span>
                       </div>
                    </div>
                    <div className="flex justify-between text-[11px] font-bold">
                       <span className="text-slate-500 uppercase tracking-widest">Recommended</span>
-                      <span className="text-white">{verdict.suggestedAction}</span>
+                      <span className="text-white">{unavailable ? "Decision limited due to missing signals" : verdict.suggestedAction}</span>
                    </div>
                    <div className="flex justify-between text-[11px] font-bold">
                       <span className="text-slate-500 uppercase tracking-widest">Risk Index</span>
-                      <span className="text-slate-300">{risk.score}/100</span>
+                      <span className="text-slate-300">{risk.score ?? "N/A"}</span>
                    </div>
                 </div>
              </div>
@@ -127,6 +136,7 @@ export default function DecisionPanel({ isOpen, onClose, onConfirm, snapshot, tr
              <div className="relative z-10 space-y-4 mt-12 md:mt-0">
                 <button
                    onClick={onConfirm}
+                   disabled={unavailable}
                    className={`w-full py-5 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 shadow-2xl ${style.btn} text-white hover:scale-[1.02] active:scale-95`}
                 >
                    Authorize Execution <ArrowRight size={16} />

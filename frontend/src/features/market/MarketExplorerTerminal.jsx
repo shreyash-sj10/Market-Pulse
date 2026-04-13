@@ -30,6 +30,7 @@ const MarketExplorer = () => {
   });
 
   const allStocks = explorerResponse?.stocks || [];
+  const explorerMeta = explorerResponse?.meta || { isSynthetic: false, isFallback: false };
   const [displayLimit, setDisplayLimit] = useState(24);
 
   const filteredStocks = useMemo(() => {
@@ -150,6 +151,11 @@ const MarketExplorer = () => {
             <div className="px-3 py-1 bg-slate-50 border border-slate-100 rounded-full text-[9px] font-bold uppercase tracking-widest text-slate-400">
               Universe: NIFTY 500+
             </div>
+            {(explorerMeta.isSynthetic || explorerMeta.isFallback) && (
+              <div className="px-3 py-1 bg-amber-50 border border-amber-100 rounded-full text-[9px] font-bold uppercase tracking-widest text-amber-700">
+                {explorerMeta.isSynthetic ? "Synthetic Feed" : "Fallback Feed"}
+              </div>
+            )}
           </div>
 
           {isLoading ? (
@@ -242,7 +248,7 @@ const MarketExplorer = () => {
                 onClick={() => {
                   const symbol = chartSymbol;
                   setChartSymbol("");
-                  navigate(`/trade?symbol=${symbol}&side=BUY`);
+                  navigate(`/trade?symbol=${symbol}&type=BUY`);
                 }}
                 className="px-6 py-2.5 rounded-xl bg-indigo-600 text-white text-[11px] font-black uppercase tracking-widest hover:bg-indigo-500 transition-all shadow-lg shadow-indigo-200"
               >

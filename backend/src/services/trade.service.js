@@ -1,18 +1,16 @@
 const Trade = require("../models/trade.model");
 const User = require("../models/user.model");
+const Holding = require("../models/holding.model");
 const ExecutionLock = require("../models/executionLock.model");
 const AppError = require("../utils/AppError");
 const calculateMistakeAnalysis = require("./mistakeAnalysis.service");
 const { generateExplanation, parseTradeIntent, generateFinalTradeCall } = require("./aiExplanation.service");
 const { validateSystemInvariants } = require("../utils/invariants");
 const Trace = require("../models/trace.model");
-const { toSafeKey } = require("../utils/safeUtils");
 const { runInTransaction } = require("../utils/transaction");
 const { normalizeTrade } = require("../domain/trade.contract");
-const { analyzeReview } = require("./review.engine");
 const marketDataService = require("./marketData.service");
-const timelineService = require("./intelligence/timeline.service");
-const { toHoldingsObject } = require("../utils/holdingsNormalizer");
+const { validatePlan, computePnlPct } = require("./risk.engine");
 const {
   buildPayloadHash,
   getDecisionRecord,
@@ -24,6 +22,8 @@ const { analyzeReflection } = require("../engines/reflection.engine");
 const { analyzeBehavior } = require("./behavior.engine");
 const { analyzeProgression } = require("./progression.engine");
 const { calculateSkillScore } = require("./skill.engine");
+const { SYSTEM_CONFIG } = require("../config/system.config");
+const { isValidStatus } = require("../constants/intelligenceStatus");
 const logger = require("../lib/logger");
 
 
@@ -37,99 +37,49 @@ const normalizeSymbol = (symbol) => {
   return `${s}.NS`; 
 };
 
-const MIN_RR = 1.2;
-
-const computePlanMetrics = (side, entryPricePaise, stopLossPaise, targetPricePaise) => {
-  if (!stopLossPaise || !targetPricePaise || !entryPricePaise) return null;
-
-  const isBuy = side === "BUY";
-  const risk = isBuy ? entryPricePaise - stopLossPaise : stopLossPaise - entryPricePaise;
-  const reward = isBuy ? targetPricePaise - entryPricePaise : entryPricePaise - targetPricePaise;
-  if (risk <= 0 || reward <= 0) return null;
-
-  return {
-    risk,
-    reward,
-    rr: reward / risk,
-  };
+const validatePlanOrThrow = (type, pricePaise, stopLossPaise, targetPricePaise) => {
+  const result = validatePlan({
+    side: type,
+    pricePaise,
+    stopLossPaise,
+    targetPricePaise,
+  });
+  if (!result.isValid) {
+    throw new AppError(result.errorCode, 400);
+  }
+  return result.rr;
 };
 
-const computeRr = (side, entryPricePaise, stopLossPaise, targetPricePaise) => {
-  const metrics = computePlanMetrics(side, entryPricePaise, stopLossPaise, targetPricePaise);
-  if (!metrics) return null;
-  return Number(metrics.rr.toFixed(2));
-};
-
-const validatePlanOrThrow = (side, pricePaise, stopLossPaise, targetPricePaise) => {
-  if (!stopLossPaise || !targetPricePaise) {
-    throw new AppError("PLAN_REQUIRED", 400);
-  }
-
-  if (side === "BUY") {
-    if (targetPricePaise <= pricePaise) {
-      throw new AppError("INVALID_TARGET", 400);
-    }
-    if (stopLossPaise >= pricePaise) {
-      throw new AppError("INVALID_STOPLOSS", 400);
-    }
-  } else if (side === "SELL") {
-    if (targetPricePaise >= pricePaise) {
-      throw new AppError("INVALID_TARGET", 400);
-    }
-    if (stopLossPaise <= pricePaise) {
-      throw new AppError("INVALID_STOPLOSS", 400);
-    }
-  }
-
-  const metrics = computePlanMetrics(side, pricePaise, stopLossPaise, targetPricePaise);
-  if (!metrics || !Number.isFinite(metrics.rr) || metrics.rr < MIN_RR) {
-    throw new AppError("INVALID_RR", 400);
-  }
-
-  return Number(metrics.rr.toFixed(2));
-};
-
-const recalculateTotalInvested = (user) => {
-  const holdingsObject = toHoldingsObject(user.holdings);
+const recalculateTotalInvested = (user, holdings) => {
   let totalPaise = 0;
-  Object.values(holdingsObject).forEach((data) => {
-    totalPaise += Math.round(data.quantity * data.avgCost);
+  holdings.forEach((holding) => {
+    totalPaise += Math.round((holding.quantity || 0) * (holding.avgPricePaise || 0));
   });
   user.totalInvested = totalPaise;
 };
 
-const ensureHoldingsMap = (user) => {
-  if (user.holdings instanceof Map) return user.holdings;
-  const asMap = new Map(Object.entries(toHoldingsObject(user.holdings)));
-  user.holdings = asMap;
-  return asMap;
-};
-
-const handleIdempotency = async (userId, idempotencyKey) => {
-  if (!idempotencyKey) {
-    throw new AppError("IDEMPOTENCY_KEY_REQUIRED", 400);
+const handleIdempotency = async (userId, requestId) => {
+  if (!requestId) {
+    throw new AppError("REQUEST_ID_REQUIRED", 400);
   }
 
-  const existingLock = await ExecutionLock.findOne({ idempotencyKey });
-  if (existingLock) {
-    if (existingLock.status === "PENDING") {
-      throw new AppError("DUPLICATE_REQUEST_PENDING", 409);
+  try {
+    await ExecutionLock.create({
+      requestId,
+      userId,
+      status: "PENDING"
+    });
+  } catch (error) {
+    if (error?.code === 11000) {
+      throw new AppError("DUPLICATE_EXECUTION_BLOCKED", 409);
     }
-    return existingLock.responseData;
+    throw error;
   }
-
-  // Create PENDING lock
-  await ExecutionLock.create({
-    idempotencyKey,
-    userId,
-    status: "PENDING"
-  });
-  return null;
 };
 
-const completeIdempotency = async (idempotencyKey, responseData) => {
+const completeIdempotency = async (requestId, responseData) => {
   await ExecutionLock.findOneAndUpdate(
-    { idempotencyKey },
+    { requestId },
     { 
       status: "COMPLETED",
       responseData
@@ -138,11 +88,23 @@ const completeIdempotency = async (idempotencyKey, responseData) => {
 };
 
 const executeBuyTrade = async (userDoc, payload) => {
-  const idempotencyKey = payload?.idempotencyKey;
-  const cachedResponse = await handleIdempotency(userDoc._id, idempotencyKey);
-  if (cachedResponse) return cachedResponse;
+  const rrAcceptableThreshold = SYSTEM_CONFIG.intelligence.preTrade.lowRrThreshold;
+  const avoidRiskScore = SYSTEM_CONFIG.trade.executionAvoidRiskScore;
+  const requestId = payload?.requestId;
+  await handleIdempotency(userDoc._id, requestId);
 
-  const startTime = Date.now();
+  // ── Fetch REAL behavioral inputs BEFORE opening the session ──────────────
+  // These queries read committed data; they must not sit inside the session
+  // transaction to avoid stale-read or session-contention issues.
+  const now = new Date();
+  const cutoff24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const [tradesLast24h, lastTrade] = await Promise.all([
+    Trade.countDocuments({ user: userDoc._id, createdAt: { $gte: cutoff24h } }),
+    Trade.findOne({ user: userDoc._id }).sort({ createdAt: -1 }).lean(),
+  ]);
+  const lastTradePnL = lastTrade?.pnlPaise ?? null;
+  const lastTradeTime = lastTrade?.createdAt ?? null;
+
   try {
     logger.info({
       action: "BUY_EXECUTION_INITIATED",
@@ -164,7 +126,7 @@ const executeBuyTrade = async (userDoc, payload) => {
         throw new AppError("PRE_TRADE_REQUIRED", 400);
       }
 
-      const record = getDecisionRecord(token);
+      const record = await getDecisionRecord(token);
       if (!record) {
         throw new AppError("INVALID_TOKEN", 400);
       }
@@ -186,7 +148,7 @@ const executeBuyTrade = async (userDoc, payload) => {
         throw new AppError("TRADE_BLOCKED_BY_DECISION_ENGINE", 400);
       }
 
-      consumeDecisionRecord(token);
+      await consumeDecisionRecord(token);
 
       const validation = await marketDataService.validateSymbol(symbol);
       if (!validation.isValid || !pricePaise || pricePaise <= 0) {
@@ -206,29 +168,64 @@ const executeBuyTrade = async (userDoc, payload) => {
       }
 
       user.balance -= totalValuePaise;
-      const holdingsMap = ensureHoldingsMap(user);
-      const currentHolding = holdingsMap.get(toSafeKey(symbol)) || { quantity: 0, avgCost: 0, stopLossPaise: null };
-      const newQuantity = currentHolding.quantity + quantity;
-      const newAvgCostPaise = Math.round((currentHolding.quantity * currentHolding.avgCost + quantity * pricePaise) / newQuantity);
+      await Holding.findOneAndUpdate(
+        { userId: user._id, symbol },
+        [
+          {
+            $set: {
+              userId: { $ifNull: ["$userId", user._id] },
+              symbol: { $ifNull: ["$symbol", symbol] },
+              quantity: { $add: [{ $ifNull: ["$quantity", 0] }, quantity] },
+              avgPricePaise: {
+                $let: {
+                  vars: {
+                    oldQty: { $ifNull: ["$quantity", 0] },
+                    oldAvg: { $ifNull: ["$avgPricePaise", 0] },
+                    buyQty: quantity,
+                    buyPrice: pricePaise,
+                  },
+                  in: {
+                    $round: [
+                      {
+                        $divide: [
+                          {
+                            $add: [
+                              { $multiply: ["$$oldQty", "$$oldAvg"] },
+                              { $multiply: ["$$buyQty", "$$buyPrice"] },
+                            ],
+                          },
+                          { $add: ["$$oldQty", "$$buyQty"] },
+                        ],
+                      },
+                      0,
+                    ],
+                  },
+                },
+              },
+              updatedAt: "$$NOW",
+            },
+          },
+        ],
+        {
+          upsert: true,
+          updatePipeline: true,
+          session,
+        }
+      );
 
-      holdingsMap.set(toSafeKey(symbol), {
-        quantity: newQuantity,
-        avgCost: newAvgCostPaise,
-        stopLossPaise: stopLossPaise || currentHolding.stopLossPaise
-      });
-
-      recalculateTotalInvested(user);
-      validateSystemInvariants(user);
+      const holdings = await Holding.find({ userId: user._id }).session(session);
+      recalculateTotalInvested(user, holdings);
+      validateSystemInvariants(user, holdings);
 
       const analysis = calculateMistakeAnalysis({
         tradeValue: totalValuePaise,
         balanceBeforeTrade: user.balance + totalValuePaise,
-        stopLoss: stopLossPaise,
-        targetPrice: targetPricePaise,
-        entryPrice: pricePaise,
-        tradesLast24h: 0, 
-        lastTradePnL: 0,
-        lastTradeTime: null
+        stopLossPaise,
+        targetPricePaise,
+        entryPricePaise: pricePaise,
+        tradesLast24h,    // real count from DB — enables OVERTRADING detection
+        lastTradePnL,     // real PnL from last trade — enables REVENGE_TRADING detection
+        lastTradeTime,    // real timestamp — enables time-window checks
       });
 
       const [parsedIntent, aiExplanation] = await Promise.all([
@@ -237,18 +234,36 @@ const executeBuyTrade = async (userDoc, payload) => {
           symbol, type: "BUY", reason, userThinking
         })
       ]);
+      const parsedIntentValid = isValidStatus(parsedIntent);
+      const aiExplanationValid = isValidStatus(aiExplanation);
 
       const finalTradeCallAndVerdict = await generateFinalTradeCall({
-        market: { direction: preTrade?.riskLevel || "NEUTRAL", confidence: preTrade?.confidence || 50, reason: preTrade?.reasoning?.[0] || "Analysis pending." },
-        setup: { type: parsedIntent?.strategy || "General", score: 80, reason: "Setup aligns with current market bias." },
-        behavior: { risk: analysis.mistakeTags.length > 0 ? "Elevated" : "Controlled", score: 100 - analysis.riskScore, reason: aiExplanation.behaviorAnalysis },
-        risk: { level: preTrade?.riskLevel || "LOW", score: analysis.riskScore, reason: aiExplanation.explanation },
+        market: {
+          direction: preTrade?.riskLevel ?? "UNAVAILABLE",
+          confidence: preTrade?.confidence ?? null,
+          reason: preTrade?.reasoning?.[0] ?? preTrade?.reason ?? "INSUFFICIENT_MARKET_DATA",
+        },
+        setup: {
+          type: parsedIntentValid ? parsedIntent.strategy : "UNAVAILABLE",
+          score: parsedIntentValid ? (parsedIntent.confidence ?? null) : null,
+          reason: parsedIntentValid ? "Setup aligns with current market bias." : parsedIntent?.reason || "INSUFFICIENT_INTENT_DATA",
+        },
+        behavior: {
+          risk: analysis.mistakeTags.length > 0 ? "Elevated" : "Controlled",
+          score: 100 - analysis.riskScore,
+          reason: aiExplanationValid ? aiExplanation.behaviorAnalysis : aiExplanation?.reason || "AI_UNAVAILABLE",
+        },
+        risk: {
+          level: preTrade?.riskLevel || "LOW",
+          score: analysis.riskScore,
+          reason: aiExplanationValid ? aiExplanation.explanation : aiExplanation?.reason || "AI_UNAVAILABLE",
+        },
         finalScore: 100 - analysis.riskScore
-      }, { verdict: analysis.riskScore > 70 ? "AVOID" : "BUY" });
+      }, { verdict: analysis.riskScore > avoidRiskScore ? "AVOID" : "BUY" });
 
       const [trade] = await Trade.create([{
         user: user._id,
-        idempotencyKey,
+        idempotencyKey: requestId,
         symbol,
         type: "BUY",
         quantity,
@@ -261,13 +276,15 @@ const executeBuyTrade = async (userDoc, payload) => {
         rawIntent: rawIntent || intent,
         intent,
         manualTags: manualTags || [],
-        rrRatio: rr,
+        rr,
         parsedIntent,
         finalTradeCall: finalTradeCallAndVerdict,
         analysis: {
           ...analysis,
-          explanation: aiExplanation.explanation,
-          humanBehavior: aiExplanation.behaviorAnalysis,
+          explanation: aiExplanationValid ? aiExplanation.explanation : null,
+          humanBehavior: aiExplanationValid ? aiExplanation.behaviorAnalysis : null,
+          intelligenceStatus: aiExplanation?.status || "UNAVAILABLE",
+          intelligenceReason: aiExplanationValid ? null : (aiExplanation?.reason || "AI_UNAVAILABLE"),
         },
         // --- PART 3: SNAPSHOT INTEGRITY (FIXED) ---
         entryPlan: {
@@ -275,22 +292,25 @@ const executeBuyTrade = async (userDoc, payload) => {
           stopLossPaise: stopLossPaise,
           targetPricePaise: targetPricePaise,
           rr: rr,
-          intent: parsedIntent?.strategy || "General",
+          intent: parsedIntentValid ? parsedIntent.strategy : "UNAVAILABLE",
           reasoning: userThinking || "Institutional process verified."
         },
         decisionSnapshot: {
-          verdict: finalTradeCallAndVerdict?.suggestedAction || "Proceed with Caution",
+          verdict: finalTradeCallAndVerdict?.suggestedAction || finalTradeCallAndVerdict?.status || "UNAVAILABLE",
           score: 100 - (analysis?.riskScore || 0),
           pillars: {
             market: { direction: preTrade?.riskLevel, reasoning: preTrade?.reasoning?.[0] },
-            behavior: { tags: analysis.mistakeTags, assessment: aiExplanation.behaviorAnalysis },
+            behavior: { tags: analysis.mistakeTags, assessment: aiExplanationValid ? aiExplanation.behaviorAnalysis : null },
             risk: { score: analysis.riskScore, level: preTrade?.riskLevel },
-            rr: { ratio: rr, status: rr >= 1.5 ? "OPTIMAL" : "MINIMAL" }
+            rr: { ratio: rr, status: rr >= rrAcceptableThreshold ? "OPTIMAL" : "MINIMAL" }
           }
         },
         intelligenceTimeline: { 
           preTrade: preTrade || null,
-          trace: ["Order authorized for Market Entry.", `AI Intelligence Decision: ${finalTradeCallAndVerdict.suggestedAction}`]
+          trace: [
+            "Order authorized for Market Entry.",
+            `AI Intelligence Decision: ${finalTradeCallAndVerdict?.suggestedAction || finalTradeCallAndVerdict?.reason || "UNAVAILABLE"}`,
+          ]
         },
         trace: {
           timeline: [
@@ -317,24 +337,32 @@ const executeBuyTrade = async (userDoc, payload) => {
 
       await user.save({ session });
       const result = { trade: normalizeTrade(trade), updatedBalance: user.balance };
-      await completeIdempotency(idempotencyKey, result);
+      await completeIdempotency(requestId, result);
       return result;
     };
 
     return await runInTransaction(tradeTask);
   } catch (error) {
     // Cleanup lock if it failed (only if it was us who created it and it's still PENDING)
-    await ExecutionLock.deleteOne({ idempotencyKey, status: "PENDING" });
+    await ExecutionLock.deleteOne({ requestId, status: "PENDING" });
     throw error;
   }
 };
 
 const executeSellTrade = async (userDoc, payload) => {
-  const idempotencyKey = payload?.idempotencyKey;
-  const cachedResponse = await handleIdempotency(userDoc._id, idempotencyKey);
-  if (cachedResponse) return cachedResponse;
+  const requestId = payload?.requestId;
+  await handleIdempotency(userDoc._id, requestId);
 
-  const startTime = Date.now();
+  // ── Fetch REAL behavioral inputs BEFORE opening the session ──────────────
+  const now = new Date();
+  const cutoff24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const [tradesLast24h, lastTrade] = await Promise.all([
+    Trade.countDocuments({ user: userDoc._id, createdAt: { $gte: cutoff24h } }),
+    Trade.findOne({ user: userDoc._id }).sort({ createdAt: -1 }).lean(),
+  ]);
+  const lastTradePnL = lastTrade?.pnlPaise ?? null;
+  const lastTradeTime = lastTrade?.createdAt ?? null;
+
   try {
     logger.info({
       action: "SELL_EXECUTION_INITIATED",
@@ -345,8 +373,31 @@ const executeSellTrade = async (userDoc, payload) => {
     });
 
     const tradeTask = async (session) => {
-      const { symbol: rawSymbol, quantity, pricePaise, reason, userThinking, rawIntent } = payload;
+      const { symbol: rawSymbol, quantity, pricePaise, reason, userThinking, rawIntent, token } = payload;
       const symbol = normalizeSymbol(rawSymbol);
+
+      if (!token) {
+        throw new AppError("PRE_TRADE_REQUIRED", 400);
+      }
+
+      const record = await getDecisionRecord(token);
+      if (!record) {
+        throw new AppError("INVALID_TOKEN", 400);
+      }
+
+      const currentPayloadHash = buildPayloadHash({
+        symbol,
+        pricePaise,
+        quantity,
+        stopLossPaise: null,
+        targetPricePaise: null,
+      });
+
+      if (record.payloadHash !== currentPayloadHash) {
+        throw new AppError("PAYLOAD_MISMATCH", 400);
+      }
+
+      await consumeDecisionRecord(token);
 
       const validation = await marketDataService.validateSymbol(symbol);
       if (!validation.isValid || !pricePaise || pricePaise <= 0) {
@@ -354,15 +405,18 @@ const executeSellTrade = async (userDoc, payload) => {
       }
 
       const user = await User.findById(userDoc._id).session(session);
-      const holdingsMap = ensureHoldingsMap(user);
-      const currentHolding = holdingsMap.get(toSafeKey(symbol));
+      const currentHolding = await Holding.findOne({ userId: user._id, symbol }).session(session);
 
-      if (!currentHolding || currentHolding.quantity < quantity) {
+      if (!currentHolding) {
+        throw new AppError("POSITION_NOT_FOUND", 400);
+      }
+
+      if (currentHolding.quantity < quantity) {
         throw new AppError("INSUFFICIENT_QUANTITY", 400);
       }
 
       const totalValuePaise = quantity * pricePaise;
-      const costBasisPaise = Math.round(quantity * currentHolding.avgCost);
+      const costBasisPaise = Math.round(quantity * currentHolding.avgPricePaise);
       const tradePnLPaise = totalValuePaise - costBasisPaise;
 
       user.balance += totalValuePaise;
@@ -370,35 +424,40 @@ const executeSellTrade = async (userDoc, payload) => {
 
       const remainingQty = currentHolding.quantity - quantity;
       if (remainingQty <= 0) {
-        holdingsMap.delete(toSafeKey(symbol));
+        await Holding.deleteOne({ _id: currentHolding._id }).session(session);
       } else {
-        holdingsMap.set(toSafeKey(symbol), {
-          quantity: remainingQty,
-          avgCost: currentHolding.avgCost,
-          stopLossPaise: currentHolding.stopLossPaise
-        });
+        currentHolding.quantity = remainingQty;
+        currentHolding.updatedAt = new Date();
+        await currentHolding.save({ session });
       }
 
-      recalculateTotalInvested(user);
-      validateSystemInvariants(user);
+      const holdings = await Holding.find({ userId: user._id }).session(session);
+      recalculateTotalInvested(user, holdings);
+      validateSystemInvariants(user, holdings);
 
       const analysis = calculateMistakeAnalysis({
         tradeValue: totalValuePaise,
         balanceBeforeTrade: user.balance - totalValuePaise,
-        entryPrice: pricePaise,
-        tradesLast24h: 0,
-        lastTradePnL: 0,
-        lastTradeTime: null
+        entryPricePaise: pricePaise,
+        tradesLast24h,    // real count from DB — enables OVERTRADING detection
+        lastTradePnL,     // real PnL from last trade — enables REVENGE_TRADING detection
+        lastTradeTime,    // real timestamp — enables time-window checks
       });
 
-      const entryTrade = await Trade.findOne({ user: user._id, symbol, type: "BUY" }).sort({ createdAt: -1 });
-      const rr = computeRr("BUY", entryTrade?.pricePaise || currentHolding.avgCost, entryTrade?.stopLossPaise, entryTrade?.targetPricePaise);
+      const entryTrade = await Trade.findOne({ user: user._id, symbol, type: "BUY" })
+        .sort({ createdAt: -1 })
+        .session(session);
+      if (!entryTrade) {
+        throw new AppError("ENTRY_TRADE_NOT_FOUND", 400);
+      }
+
+      const rr = entryTrade.rr ?? entryTrade.entryPlan?.rr ?? null;
 
       // Use the entryPlan snapshot if available
-      const entryPlan = entryTrade?.entryPlan || {
-        entryPricePaise: entryTrade?.pricePaise || currentHolding.avgCost || 0,
-        stopLossPaise: entryTrade?.stopLossPaise || 0,
-        targetPricePaise: entryTrade?.targetPricePaise || 0,
+      const entryPlan = entryTrade.entryPlan || {
+        entryPricePaise: entryTrade.pricePaise || currentHolding.avgPricePaise || 0,
+        stopLossPaise: entryTrade.stopLossPaise || 0,
+        targetPricePaise: entryTrade.targetPricePaise || 0,
         rr: rr || 0
       };
 
@@ -410,7 +469,7 @@ const executeSellTrade = async (userDoc, payload) => {
 
       const [trade] = await Trade.create([{
         user: user._id,
-        idempotencyKey,
+        idempotencyKey: requestId,
         symbol,
         type: "SELL",
         quantity,
@@ -421,11 +480,11 @@ const executeSellTrade = async (userDoc, payload) => {
         rawIntent,
         analysis,
         pnlPaise: tradePnLPaise,
-        pnlPct: costBasisPaise > 0 ? Number(((tradePnLPaise / costBasisPaise) * 100).toFixed(2)) : 0,
-        entryTradeId: entryTrade?._id || null,
-        stopLossPaise: entryTrade?.stopLossPaise || null,
-        targetPricePaise: entryTrade?.targetPricePaise || null,
-        rrRatio: rr,
+        pnlPct: computePnlPct(tradePnLPaise, costBasisPaise),
+        entryTradeId: entryTrade._id,
+        stopLossPaise: entryTrade.stopLossPaise || null,
+        targetPricePaise: entryTrade.targetPricePaise || null,
+        rr,
         learningOutcome: {
           verdict: reflection.verdict,
           insight: reflection.insight,
@@ -441,7 +500,11 @@ const executeSellTrade = async (userDoc, payload) => {
         },
         decisionSnapshot: {
           verdict: reflection.verdict,
-          score: 100,
+          // Score derived from exit engine's deviation analysis: lower deviation = higher quality.
+          // Falls back to the behavior risk score if exit engine score is unavailable.
+          score: typeof reflection.deviationScore === "number"
+            ? Math.max(0, 100 - reflection.deviationScore)
+            : (typeof analysis?.riskScore === "number" ? Math.max(0, 100 - analysis.riskScore) : null),
           pillars: {
              market: { verdict: "N/A" },
              behavior: { verdict: reflection.verdict },
@@ -458,7 +521,7 @@ const executeSellTrade = async (userDoc, payload) => {
         trace: {
           timeline: [
             { stage: "EXECUTION_STARTED" },
-            { stage: "EXECUTION_COMMITTED", metadata: { pnl: tradePnLPaise, pnlPct: costBasisPaise > 0 ? Number(((tradePnLPaise / costBasisPaise) * 100).toFixed(2)) : 0 } },
+            { stage: "EXECUTION_COMMITTED", metadata: { pnl: tradePnLPaise, pnlPct: computePnlPct(tradePnLPaise, costBasisPaise) } },
             { stage: "REFLECTION_COMPLETED", metadata: { verdict: reflection.verdict } }
           ]
         }
@@ -500,21 +563,21 @@ const executeSellTrade = async (userDoc, payload) => {
       const result = { 
         trade: normalizeTrade({
           ...trade.toObject(),
-          entryTradeId: entryTrade?._id || null,
-          openedAt: entryTrade?.createdAt || null,
+          entryTradeId: entryTrade._id,
+          openedAt: entryTrade.createdAt || null,
         }),
         updatedBalance: user.balance
       };
-      await completeIdempotency(idempotencyKey, result);
+      await completeIdempotency(requestId, result);
       return result;
     };
 
     return await runInTransaction(tradeTask);
   } catch (error) {
-    await ExecutionLock.deleteOne({ idempotencyKey, status: "PENDING" });
+    await ExecutionLock.deleteOne({ requestId, status: "PENDING" });
     throw error;
   }
 };
 
 module.exports = { executeBuyTrade, executeSellTrade };
-module.exports.__testables = { computeRr, validatePlanOrThrow };
+module.exports.__testables = { validatePlanOrThrow };

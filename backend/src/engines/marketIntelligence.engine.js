@@ -1,4 +1,9 @@
 const { summarizeMarketDrivers } = require('../services/aiExplanation.service');
+const {
+  createValidStatus,
+  createUnavailableStatus,
+  isValidStatus,
+} = require("../constants/intelligenceStatus");
 
 /**
  * MARKET INTELLIGENCE ENGINE
@@ -8,11 +13,12 @@ const { summarizeMarketDrivers } = require('../services/aiExplanation.service');
 const analyzeMarketIntelligence = async (articles, symbol = "GENERAL") => {
   if (!articles || articles.length === 0) {
     return {
+      ...createUnavailableStatus("INSUFFICIENT_MARKET_DATA"),
       symbol,
-      sentiment: "MIXED",
-      confidence: 0,
-      drivers: ["No significant news catalysts detected in the current window."],
-      warnings: ["DATA_SCARECIETY"],
+      sentiment: null,
+      confidence: null,
+      drivers: [],
+      warnings: ["DATA_SCARCITY"],
       articleCount: 0,
       lastUpdated: new Date()
     };
@@ -63,18 +69,32 @@ const analyzeMarketIntelligence = async (articles, symbol = "GENERAL") => {
   }
 
   // AI Summary Layer (Restricted to driver summarization)
-  const drivers = await summarizeMarketDrivers(rawContext.length > 0 ? rawContext.slice(0, 15) : articles.slice(0, 5).map(a => a.title));
+  const driversResponse = await summarizeMarketDrivers(
+    rawContext.length > 0 ? rawContext.slice(0, 15) : articles.slice(0, 5).map(a => a.title)
+  );
 
   const totalHits = bullishCount + bearishCount;
-  const confidence = totalHits > 0 
-    ? Number((Math.min(100, (Math.abs(bullishCount - bearishCount) / totalHits) * 100 + 40) / 100).toFixed(2)) 
-    : 0.5;
+  if (totalHits === 0) {
+    return {
+      ...createUnavailableStatus("INSUFFICIENT_MARKET_DATA"),
+      symbol,
+      sentiment: null,
+      confidence: null,
+      drivers: [],
+      warnings: ["NO_CLASSIFIED_SIGNALS"],
+      articleCount: articles.length,
+      lastUpdated: new Date(),
+    };
+  }
+
+  const confidence = Number((Math.min(100, (Math.abs(bullishCount - bearishCount) / totalHits) * 100 + 40) / 100).toFixed(2));
 
   return {
+    ...createValidStatus(),
     symbol,
     sentiment,
     confidence,
-    drivers: drivers && drivers.length > 0 ? drivers : ["Consolidation around current equilibrium."],
+    drivers: isValidStatus(driversResponse) ? driversResponse.drivers : [],
     warnings: bearishCount > 8 ? ["Heavy negative cluster detected", "Institutional sentiment cooling"] : [],
     articleCount: articles.length,
     lastUpdated: new Date()

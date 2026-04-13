@@ -6,7 +6,7 @@ const AppError = require("./AppError");
  * Enforces system-wide financial invariants to prevent state corruption.
  * This is the ultimate guardrail for the trading terminal.
  */
-const validateSystemInvariants = (user) => {
+const validateSystemInvariants = (user, holdings = []) => {
   const errors = [];
 
   // 1. Balance Invariant: Must Never Be Negative
@@ -18,15 +18,19 @@ const validateSystemInvariants = (user) => {
   //    Consistency Check: totalInvested must match sum(quantity * avgCost)
   let calculatedTotalInvested = new Decimal(0);
   
-  user.holdings.forEach((data, symbol) => {
-    if (data.quantity <= 0) {
-      errors.push(`Holdings violation: ${symbol} has invalid quantity ${data.quantity}`);
+  holdings.forEach((holding) => {
+    const symbol = holding.symbol;
+    const quantity = Number(holding.quantity) || 0;
+    const avgPricePaise = Number(holding.avgPricePaise) || 0;
+
+    if (quantity <= 0) {
+      errors.push(`Holdings violation: ${symbol} has invalid quantity ${quantity}`);
     }
-    if (data.avgCost < 0) {
-      errors.push(`Holdings violation: ${symbol} has invalid avgCost ${data.avgCost}`);
+    if (avgPricePaise < 0) {
+      errors.push(`Holdings violation: ${symbol} has invalid avgPricePaise ${avgPricePaise}`);
     }
-    
-    const investment = new Decimal(data.quantity).mul(data.avgCost);
+
+    const investment = new Decimal(quantity).mul(avgPricePaise);
     calculatedTotalInvested = calculatedTotalInvested.add(investment);
   });
 
@@ -44,7 +48,7 @@ const validateSystemInvariants = (user) => {
       snapshot: {
         balance: user.balance,
         totalInvested: user.totalInvested,
-        holdingsCount: user.holdings.size
+        holdingsCount: holdings.length
       }
     });
 

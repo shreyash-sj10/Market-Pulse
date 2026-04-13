@@ -19,19 +19,19 @@ const audit = async () => {
     const raw = await yahooFinance.quote(apiSymbol);
     console.log(`[PROVIDER] Raw Yahoo Response for ${apiSymbol}:`, {
         symbol: raw.symbol,
-        price: raw.regularMarketPrice,
+        pricePaise: Math.round((raw.regularMarketPrice || 0) * 100),
         currency: raw.currency,
         exchange: raw.fullExchangeName
     });
 
-    const normalized = await marketDataService.getStockSnapshot(symbol);
-    console.log(`[NORMALIZED] Service Output:`, normalized);
+    const resolved = await marketDataService.resolvePrice(symbol);
+    console.log(`[RESOLVED] Service Output:`, resolved);
 
     // Validation Check
-    if (normalized.price <= 100) {
-        console.error(`[CRITICAL] Price Inconsistency: Normalized price ${normalized.price} is too low!`);
+    if (resolved.pricePaise <= 100) {
+        console.error(`[CRITICAL] Quote inconsistency: Resolved pricePaise ${resolved.pricePaise} is too low!`);
     } else {
-        console.log(`[OK] Price validation passed.`);
+        console.log(`[OK] Quote validation passed.`);
     }
   } catch (err) {
     console.error(`[ERROR] Market Trace Failed:`, err.message);

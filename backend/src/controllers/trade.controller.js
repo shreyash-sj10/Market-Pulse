@@ -10,11 +10,12 @@ const logger = require("../lib/logger");
 const buyTrade = async (req, res, next) => {
   const startTime = Date.now();
   try {
+    const clientRequestId = req.headers["idempotency-key"];
     const { trade, updatedBalance } = await tradeService.executeBuyTrade(req.user, {
       ...req.body,
-      idempotencyKey: req.headers["idempotency-key"],
+      requestId: clientRequestId,
       token: req.headers["pre-trade-token"] || req.body.preTradeToken,
-      requestId: req.requestId
+      traceRequestId: req.requestId
     });
 
     logger.info({
@@ -51,11 +52,12 @@ const buyTrade = async (req, res, next) => {
 const sellTrade = async (req, res, next) => {
   const startTime = Date.now();
   try {
+    const clientRequestId = req.headers["idempotency-key"];
     const { trade, updatedBalance } = await tradeService.executeSellTrade(req.user, {
       ...req.body,
-      idempotencyKey: req.headers["idempotency-key"],
+      requestId: clientRequestId,
       token: req.headers["pre-trade-token"] || req.body.preTradeToken,
-      requestId: req.requestId
+      traceRequestId: req.requestId
     });
 
     logger.info({

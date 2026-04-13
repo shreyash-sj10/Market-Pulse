@@ -2,6 +2,7 @@ const Trade = require("../models/trade.model");
 const { mapToClosedTrades } = require("../domain/closedTrade.mapper");
 const { normalizeTrade } = require("../domain/trade.contract");
 const { analyzeReflection } = require("../engines/reflection.engine");
+const { deriveReflectionState } = require("../utils/systemState");
 
 /**
  * GET /api/journal/summary
@@ -14,15 +15,18 @@ exports.getJournalSummary = async (req, res, next) => {
     const normalized = trades.map(t => normalizeTrade(t));
     const closed = mapToClosedTrades(normalized);
 
+    const reflections = closed.map((ct) => analyzeReflection(ct));
+    const state = deriveReflectionState({ closedTrades: closed, reflections });
+
     // 1. Structured Trade Cards (Plan vs Actual)
-    const cards = closed.map(ct => {
-      const reflection = analyzeReflection(ct);
+    const cards = closed.map((ct, index) => {
+      const reflection = reflections[index];
       return {
         symbol: ct.symbol,
         outcome: reflection.verdict,
         pnlPaise: ct.pnlPaise,
         pnlPct: ct.pnlPct,
-        openedAt: ct.openedAt,
+        openedAt: ct.entryTime,
         closedAt: ct.exitTime,
         plan: {
           entry: ct.entryPricePaise,
@@ -57,7 +61,9 @@ exports.getJournalSummary = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
+      state,
       data: {
+        state,
         totalClosed: cards.length,
         frequentPatterns,
         cards

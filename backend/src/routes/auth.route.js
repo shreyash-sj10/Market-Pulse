@@ -10,11 +10,13 @@ const authLimiter = rateLimit({
   message: { success: false, message: "Too many requests. Please try again in 15 minutes." },
 });
 
-const { register, login, refresh } = require("../controllers/auth.controller");
+const { register, login, refresh, logout } = require("../controllers/auth.controller");
+const protect = require("../middlewares/auth.middleware");
 const { authSchema } = require("../validations/auth.schema");
 const { validateData } = require("../validations/trade.schema");
 
 router.post("/register", authLimiter, validateData(authSchema), register);
 router.post("/login", authLimiter, validateData(authSchema), login);
 router.post("/refresh", refresh);
+router.post("/logout", protect, logout);
 module.exports = router;
