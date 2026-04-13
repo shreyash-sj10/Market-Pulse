@@ -135,12 +135,14 @@ const getPortfolioSummary = async (req, res, next) => {
       },
     });
 
+    const availableBalance = user.balance - (user.reservedBalancePaise || 0);
+
     const response = {
       success: true,
       state: summaryState,
       data: {
         state: summaryState,
-        balance: user.balance,
+        balance: availableBalance,
         totalInvested: user.totalInvested || 0,
         realizedPnL: user.realizedPnL || 0,
         unrealizedPnL: Number(unrealizedPnL.toFixed(2)),

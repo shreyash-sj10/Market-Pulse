@@ -12,6 +12,7 @@ jest.mock("../../src/models/trade.model", () => ({
 
 jest.mock("../../src/models/executionLock.model", () => ({
   create: jest.fn().mockResolvedValue({}),
+  findOne: jest.fn().mockResolvedValue(null),
   findOneAndUpdate: jest.fn().mockResolvedValue({}),
   deleteOne: jest.fn().mockResolvedValue({}),
 }));

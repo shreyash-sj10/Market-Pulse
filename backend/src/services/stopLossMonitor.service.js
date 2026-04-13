@@ -84,6 +84,18 @@ class StopLossMonitor {
           let exitReason = "";
           let strategyType = "";
 
+          const pendingSells = await Trade.find({
+            user: user._id,
+            symbol,
+            type: "SELL",
+            status: "PENDING"
+          });
+
+          const pendingSellQuantity = pendingSells.reduce((sum, trade) => sum + (trade.quantity || 0), 0);
+          const availableQuantity = data.quantity - pendingSellQuantity;
+
+          if (availableQuantity <= 0) continue;
+
           // Check Stop Loss
           if (stopLossPaise && stopLossPaise > 0 && currentQuotePaise <= stopLossPaise) {
             triggerHit = true;
@@ -104,7 +116,7 @@ class StopLossMonitor {
               const authority = await issueDecisionToken({
                 symbol,
                 pricePaise: currentQuotePaise,
-                quantity: data.quantity,
+                quantity: availableQuantity,
                 stopLossPaise: null,
                 targetPricePaise: null,
                 verdict: "SELL",
@@ -113,7 +125,7 @@ class StopLossMonitor {
 
               await tradeService.executeSellTrade(user, {
                 symbol,
-                quantity: data.quantity,
+                quantity: availableQuantity,
                 pricePaise: currentQuotePaise,
                 token: authority.token,
                 requestId: `${user._id}:${symbol}:${Date.now()}`,

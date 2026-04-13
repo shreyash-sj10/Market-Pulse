@@ -18,6 +18,24 @@ const tradeSchema = new mongoose.Schema(
       enum: ["BUY", "SELL"],
       required: true,
     },
+    status: {
+      type: String,
+      enum: ["PROCESSING", "EXECUTED", "PENDING", "CLOSED", "COMPLETE", "EXECUTED_PENDING_REFLECTION"],
+      default: "EXECUTED",
+    },
+    reflectionStatus: {
+      type: String,
+      enum: ["PENDING", "DONE"],
+      default: null,
+    },
+    queuedAt: {
+      type: Date,
+      default: null,
+    },
+    executionTime: {
+      type: Date,
+      default: null,
+    },
     quantity: {
       type: Number,
       required: true,

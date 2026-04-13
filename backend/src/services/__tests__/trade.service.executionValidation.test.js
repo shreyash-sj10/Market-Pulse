@@ -18,6 +18,7 @@ jest.mock("../../models/trace.model", () => ({
 
 jest.mock("../../models/executionLock.model", () => ({
   create: jest.fn().mockResolvedValue({}),
+  findOne: jest.fn().mockResolvedValue(null),
   findOneAndUpdate: jest.fn().mockResolvedValue({}),
   deleteOne: jest.fn().mockResolvedValue({}),
 }));

@@ -42,32 +42,57 @@ const buildPayloadHash = ({ symbol, pricePaise, quantity, stopLossPaise, targetP
 };
 
 // ── Issue a new token and persist it to MongoDB ───────────────────────────────
+
+const { createClient } = require("redis");
+let redisClient = null;
+try {
+  redisClient = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
+  redisClient.connect().catch(() => { redisClient = null; });
+} catch(e) {
+  redisClient = null;
+}
+
 const issueDecisionToken = async ({ symbol, pricePaise, quantity, stopLossPaise, targetPricePaise, verdict, userId }) => {
   const token = crypto.randomUUID();
   const payloadHash = buildPayloadHash({ symbol, pricePaise, quantity, stopLossPaise, targetPricePaise });
   const expiresAt = new Date(Date.now() + TOKEN_TTL_MS);
 
+  const data = { token, userId: userId || null, payloadHash, verdict, expiresAt: expiresAt.getTime() };
+  if (redisClient && redisClient.isReady) {
+     try {
+       await redisClient.setEx(`pretrade:${token}`, 120, JSON.stringify(data));
+     } catch(e) { /* fallback */ }
+  }
   await PreTradeToken.create({ token, userId: userId || null, payloadHash, verdict, expiresAt });
 
-  return { token, payloadHash, verdict, expiresAt: expiresAt.getTime() };
+  return data;
 };
 
-// ── Retrieve a record, returning null if not found or expired ─────────────────
-// NOTE: MongoDB TTL index expires documents eventually; we also guard here
-// in case the TTL daemon hasn't run yet.
 const getDecisionRecord = async (token) => {
   if (!token) return null;
+  if (redisClient && redisClient.isReady) {
+     try {
+       const str = await redisClient.get(`pretrade:${token}`);
+       if (str) {
+         const obj = JSON.parse(str);
+         if (obj.expiresAt <= Date.now()) return null;
+         return obj;
+       }
+     } catch(e) {}
+  }
   const record = await PreTradeToken.findOne({ token }).lean();
   if (!record) return null;
   if (record.expiresAt <= new Date()) {
     await PreTradeToken.deleteOne({ token });
     return null;
   }
-  return record; // { token, payloadHash, verdict, expiresAt, userId }
+  return record;
 };
 
-// ── Consume (delete) the token after use to enforce single-use ────────────────
 const consumeDecisionRecord = async (token) => {
+  if (redisClient && redisClient.isReady) {
+     try { await redisClient.del(`pretrade:${token}`); } catch(e){}
+  }
   await PreTradeToken.deleteOne({ token });
 };
 

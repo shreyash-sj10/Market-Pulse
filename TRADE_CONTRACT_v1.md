@@ -13,7 +13,10 @@ Single source of truth for all trade-related data
   targetPricePaise: number,
   pnlPct: number,
   quantity: number,
-  side: "BUY" | "SELL"
+  side: "BUY" | "SELL",
+  status: "EXECUTED" | "PENDING" | "CLOSED",
+  queuedAt: Date | null,
+  executionTime: Date | null
 }
 
 ---

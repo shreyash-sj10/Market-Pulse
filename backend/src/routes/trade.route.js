@@ -92,11 +92,26 @@ const enforceSellReview = (req, res, next) => {
 };
 
 
+const { isMarketOpen } = require("../services/marketHours.service");
+const logger = require("../lib/logger");
+
+const checkMarketClock = (req, res, next) => {
+  if (!isMarketOpen()) {
+    logger.warn({
+      action: "MARKET_CLOSED_EXECUTION",
+      userId: req.user?._id,
+      requestId: req.headers["idempotency-key"],
+      message: "Order placed outside of active market hours. Execution queued."
+    });
+  }
+  next();
+};
+
 router.get("/", protect, getTradeHistory);
 
 // Only allow execution via reviewed flow
-router.post("/buy", protect, tradeLimiter, enforceReview, enforceRequestId, validateTradePayload, enforceBuyReview, buyTrade);
-router.post("/sell", protect, tradeLimiter, enforceReview, enforceRequestId, validateTradePayload, enforceSellReview, sellTrade);
+router.post("/buy", protect, tradeLimiter, enforceReview, enforceRequestId, validateTradePayload, enforceBuyReview, checkMarketClock, buyTrade);
+router.post("/sell", protect, tradeLimiter, enforceReview, enforceRequestId, validateTradePayload, enforceSellReview, checkMarketClock, sellTrade);
 
 
 module.exports = router;

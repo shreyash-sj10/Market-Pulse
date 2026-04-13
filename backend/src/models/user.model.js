@@ -26,6 +26,11 @@ const userSchema = new mongoose.Schema(
       default: 10000000, // ₹100,000.00 (1 Lakh) stored as 10,000,000 paise
       min: 0,
     },
+    reservedBalancePaise: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     totalInvested: {
       type: Number,
       default: 0,
