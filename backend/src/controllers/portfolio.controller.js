@@ -14,6 +14,7 @@ const {
   derivePortfolioSummaryState,
 } = require("../utils/systemState");
 const { SYSTEM_STATE } = require("../constants/systemState");
+const { adaptPortfolio, adaptPositions } = require("../adapters/portfolio.adapter");
 
 // buildClosedTrades has been replaced by src/domain/closedTrade.mapper.js
 
@@ -137,38 +138,37 @@ const getPortfolioSummary = async (req, res, next) => {
 
     const availableBalance = user.balance - (user.reservedBalancePaise || 0);
 
+    const rawResponseData = {
+      state: summaryState,
+      balance: availableBalance,
+      totalInvested: user.totalInvested || 0,
+      realizedPnL: user.realizedPnL || 0,
+      unrealizedPnL: Number(unrealizedPnL.toFixed(2)),
+      netEquity: Number(new Decimal(user.balance).add(currentEquityValue).toFixed(2)),
+      winRate,
+      holdings: holdingsPositions,
+      skillAudit,
+      behaviorInsights: {
+        success: behavior.success,
+        patterns: behavior.patterns || [],
+        dominantMistake: behavior.dominantMistake || "None",
+        mistakeFrequency: behavior.mistakeFrequency || {},
+        journalInsights: { ...journalInsights, ...user.analyticsSnapshot?.journalInsights },
+        riskProfile: behavior.riskProfile,
+        progression: progression.success ? progression : null,
+        recentBehaviors: recentBehaviors.map(t => ({
+          symbol: t.symbol,
+          type: t.type,
+          behavior: t.reasoning || "Analyzing...",
+          timestamp: t.createdAt
+        }))
+      }
+    };
+
     const response = {
       success: true,
       state: summaryState,
-      data: {
-        state: summaryState,
-        balance: availableBalance,
-        totalInvested: user.totalInvested || 0,
-        realizedPnL: user.realizedPnL || 0,
-        unrealizedPnL: Number(unrealizedPnL.toFixed(2)),
-        netEquity: Number(new Decimal(user.balance).add(currentEquityValue).toFixed(2)),
-        winRate,
-        holdings: holdingsPositions,
-        skillAudit,
-        behaviorInsights: {
-          success: behavior.success,
-          patterns: behavior.patterns || [],
-          dominantMistake: behavior.dominantMistake || "None",
-          mistakeFrequency: behavior.mistakeFrequency || {},
-          journalInsights: { ...journalInsights, ...user.analyticsSnapshot?.journalInsights },
-
-          riskProfile: behavior.riskProfile,
-          progression: progression.success ? progression : null,
-
-
-          recentBehaviors: recentBehaviors.map(t => ({
-            symbol: t.symbol,
-            type: t.type,
-            behavior: t.reasoning || "Analyzing...",
-            timestamp: t.createdAt
-          }))
-        }
-      },
+      data: adaptPortfolio(rawResponseData),
       meta: {
         timestamp: new Date().toISOString(),
         version: "3.1.1-fixed-contract"
@@ -212,7 +212,7 @@ const getPositions = async (req, res, next) => {
 
     const holdingSymbols = holdingsDocs.map((holding) => holding.symbol);
     if (holdingSymbols.length === 0) {
-      return res.status(200).json({ success: true, state: SYSTEM_STATE.EMPTY, positions: [] });
+      return res.status(200).json({ success: true, state: SYSTEM_STATE.EMPTY, data: [] });
     }
 
     // Fetch live prices
@@ -253,7 +253,7 @@ const getPositions = async (req, res, next) => {
       positions,
     });
 
-    res.status(200).json({ success: true, state, positions });
+    res.status(200).json({ success: true, state, data: adaptPositions(positions) });
   } catch (error) {
     next(error);
   }

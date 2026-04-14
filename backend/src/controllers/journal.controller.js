@@ -1,8 +1,9 @@
 const Trade = require("../models/trade.model");
 const { mapToClosedTrades } = require("../domain/closedTrade.mapper");
 const { normalizeTrade } = require("../domain/trade.contract");
-const { analyzeReflection } = require("../engines/reflection.engine");
 const { deriveReflectionState } = require("../utils/systemState");
+const { adaptJournal } = require("../adapters/journal.adapter");
+const { analyzeReflection } = require("../engines/reflection.engine");
 
 /**
  * GET /api/journal/summary
@@ -63,10 +64,18 @@ exports.getJournalSummary = async (req, res, next) => {
       success: true,
       state,
       data: {
-        state,
         totalClosed: cards.length,
         frequentPatterns,
-        cards
+        entries: cards.map(c => ({
+            symbol: c.symbol,
+            pnlPaise: c.pnlPaise,
+            pnlPct: c.pnlPct,
+            openedAt: c.openedAt,
+            closedAt: c.closedAt,
+            plan: c.plan,
+            actual: c.actual,
+            learningSurface: adaptJournal(c)
+        }))
       }
     });
   } catch (error) {

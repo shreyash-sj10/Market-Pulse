@@ -2,6 +2,8 @@ const marketDataService = require('../services/marketData.service');
 const Holding = require("../models/holding.model");
 const { toHoldingsObject } = require("../utils/holdingsNormalizer");
 const { deriveIntelligenceState } = require("../utils/systemState");
+const { adaptMarket } = require("../adapters/market.adapter");
+const newsEngine = require('../services/news/news.engine');
 
 const getQuote = async (req, res, next) => {
   try {
@@ -98,6 +100,23 @@ const getIndices = async (req, res, next) => {
   }
 };
 
+const getMarketOverview = async (req, res, next) => {
+  try {
+    const symbols = ['^NSEI', '^BSESN', '^NSEBANK'];
+    const [quotes, newsData] = await Promise.all([
+      marketDataService.getMarketIndices(),
+      newsEngine.getTopNews()
+    ]);
+    
+    res.json({
+      success: true,
+      data: adaptMarket(quotes, newsData)
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getQuote,
   getHistory,
@@ -105,5 +124,6 @@ module.exports = {
   getFundamentals,
   validateSymbol,
   getPortfolioNews,
-  getIndices
+  getIndices,
+  getMarketOverview
 };

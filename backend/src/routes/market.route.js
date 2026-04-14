@@ -6,6 +6,7 @@ const protect = require("../middlewares/auth.middleware");
 
 // ─── NEW MARKET INTELLIGENCE LAYER ───
 router.get('/indices', marketController.getIndices);
+router.get('/overview', marketController.getMarketOverview);
 router.get('/validate', marketController.validateSymbol);
 router.get('/quote', marketController.getQuote);
 router.get('/history', marketController.getHistory);

@@ -7,6 +7,7 @@ const Holding = require("../models/holding.model");
 const preTradeGuard = require('../services/intelligence/preTradeGuard.service');
 const { validateTradePayload } = require("../middlewares/validateTradePayload");
 const { deriveIntelligenceState, deriveDecisionState } = require("../utils/systemState");
+const { adaptPreTrade } = require("../adapters/preTrade.adapter");
 
 /**
  * GET /api/intelligence/news
@@ -188,7 +189,11 @@ router.post('/pre-trade', authMiddleware, validateTradePayload, async (req, res,
       Boolean(riskReport?.authority?.verdict);
     const state = deriveDecisionState({ hasRequiredInputs, isValidated });
 
-    res.json({ success: true, state, data: { ...riskReport, state } });
+    res.json({ 
+      success: true, 
+      state, 
+      data: adaptPreTrade(riskReport) 
+    });
   } catch (error) {
     logger.error({
       action: "PRE_TRADE_AUDIT_FAIL",

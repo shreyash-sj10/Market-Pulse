@@ -3,6 +3,8 @@ const tradeService = require("../services/trade.service");
 const { normalizeTrade } = require("../domain/trade.contract");
 const logger = require("../lib/logger");
 
+const { adaptTrade } = require("../adapters/trade.adapter");
+
 // ================= BUY TRADE =================
 /**
  * POST /trades/buy
@@ -29,8 +31,8 @@ const buyTrade = async (req, res, next) => {
 
     res.status(201).json({
       success: true,
-      trade,
-      balance: updatedBalance,
+      data: adaptTrade(trade),
+      state: "COMPLETE"
     });
   } catch (error) {
     logger.error({
@@ -71,8 +73,8 @@ const sellTrade = async (req, res, next) => {
 
     res.status(201).json({
       success: true,
-      trade,
-      balance: updatedBalance,
+      data: adaptTrade(trade),
+      state: "COMPLETE"
     });
   } catch (error) {
     logger.error({
@@ -103,12 +105,8 @@ const getTradeHistory = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      count: trades.length,
-      total: totalTrades,
-      page,
-      totalPages: Math.ceil(totalTrades / limit),
-      nextCursor: page < Math.ceil(totalTrades / limit) ? page + 1 : null,
-      trades: trades.map((trade) => normalizeTrade(trade)),
+      data: trades.map((trade) => adaptTrade(normalizeTrade(trade))),
+      state: trades.length === 0 ? "EMPTY" : "ACTIVE"
     });
   } catch (error) {
     next(error);
