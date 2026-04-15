@@ -22,22 +22,19 @@ export const AuthProvider = ({ children }) => {
       console.warn("[AuthContext] Corrupted state detected. Resetting.");
       localStorage.removeItem("user");
       localStorage.removeItem("token");
-      localStorage.removeItem("refreshToken");
       return null;
     }
   });
   const [isLoading, setIsLoading] = useState(!!localStorage.getItem("token") && !localStorage.getItem("user"));
 
-  const login = (token, refreshToken, userData) => {
+  const login = (token, userData) => {
     localStorage.setItem("token", token);
-    localStorage.setItem("refreshToken", refreshToken);
     localStorage.setItem("user", JSON.stringify(userData));
     setUser(userData);
   };
 
   const logout = () => {
     localStorage.removeItem("token");
-    localStorage.removeItem("refreshToken");
     localStorage.removeItem("user");
     setUser(null);
   };
@@ -59,6 +56,23 @@ export const AuthProvider = ({ children }) => {
     } else {
       setIsLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    const onStorage = (event) => {
+      if (event.key === "token" && !event.newValue) {
+        setUser(null);
+      }
+      if (event.key === "user" && event.newValue) {
+        try {
+          setUser(JSON.parse(event.newValue));
+        } catch {
+          setUser(null);
+        }
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   return (

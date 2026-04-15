@@ -1,4 +1,5 @@
 import api from "./api";
+import { normalizeResponse } from "../utils/contract.js";
 
 // ─── Symbol Normalisation ─────────────────────────────────────────────────────
 // Our backend handles the .NS/.BO suffixes natively.
@@ -13,7 +14,7 @@ const toApiSymbol = (symbol) => {
 export const getIndianStockDetail = async (symbol) => {
   try {
     const res = await api.get(`/market/stock/${toApiSymbol(symbol)}`);
-    return res.data; // numeric object from our market.service.js
+    return normalizeResponse(res); 
   } catch (error) {
     console.error(`[Frontend API] Detail fetch failed for ${symbol}:`, error.message);
     return null;
@@ -23,7 +24,8 @@ export const getIndianStockDetail = async (symbol) => {
 // ─── Single Stock Price Only ──────────────────────────────────────────────────
 export const getIndianStockPrice = async (symbol) => {
   const detail = await getIndianStockDetail(symbol);
-  return detail?.last_price ?? null;
+  const directPrice = detail?.data?.pricePaise ?? detail?.data?.last_price ?? detail?.last_price;
+  return directPrice ?? null;
 };
 
 // ─── Batch Fetch ─────────────────────────────────────────────────────────────
@@ -33,9 +35,7 @@ export const getIndianStockBatch = async (symbols) => {
   try {
     const apiSymbols = symbols.map(toApiSymbol).join(",");
     const res = await api.get(`/market/batch?symbols=${apiSymbols}`);
-    
-    // The backend returns results in Map format already
-    return res.data;
+    return normalizeResponse(res);
   } catch (error) {
     console.error('[Frontend API] Batch fetch failed:', error.message);
     return {};
@@ -47,7 +47,7 @@ export const searchIndianStocks = async (query) => {
   if (!query) return [];
   try {
     const res = await api.get(`/market/search?q=${query}`);
-    return res.data;
+    return normalizeResponse(res);
   } catch (error) {
     console.error('[Frontend API] Search failed:', error.message);
     return [];

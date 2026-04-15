@@ -24,33 +24,39 @@ const normalizeSymbol = (symbol) => {
 
 // ── Integer coercion (same rules as before) ───────────────────────────────────
 const toInteger = (value) => {
+  if (value === null || value === undefined) return null;
   const num = Number(value);
   if (!Number.isFinite(num)) return null;
   return Math.round(num);
 };
 
-// ── Deterministic payload hash ────────────────────────────────────────────────
-const buildPayloadHash = ({ symbol, pricePaise, quantity, stopLossPaise, targetPricePaise }) => {
+// ── Deterministic payload hash (Canonical Stringify) ──────────────────────────
+const buildPayloadHash = (payload) => {
   const canonical = {
-    symbol: normalizeSymbol(symbol),
-    pricePaise: toInteger(pricePaise),
-    quantity: toInteger(quantity),
-    stopLossPaise: toInteger(stopLossPaise),
-    targetPricePaise: toInteger(targetPricePaise),
+    symbol: normalizeSymbol(payload.symbol),
+    pricePaise: toInteger(payload.pricePaise),
+    quantity: toInteger(payload.quantity),
+    stopLossPaise: toInteger(payload.stopLossPaise),
+    targetPricePaise: toInteger(payload.targetPricePaise),
   };
-  return crypto.createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+  
+  // Strict canonical sorting for determinism (Phase 3)
+  const sortedKeys = Object.keys(canonical).sort();
+  // Filter out undefined, preserve null (Phase 3 enforced by toInteger already, but let's be explicit)
+  const json = JSON.stringify(canonical, sortedKeys);
+  
+  // HMAC signing (Phase 2)
+  return crypto
+    .createHmac("sha256", process.env.JWT_SECRET || "production_secret_fallback")
+    .update(json)
+    .digest("hex");
 };
 
 // ── Issue a new token and persist it to MongoDB ───────────────────────────────
 
-const { createClient } = require("redis");
-let redisClient = null;
-try {
-  redisClient = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
-  redisClient.connect().catch(() => { redisClient = null; });
-} catch(e) {
-  redisClient = null;
-}
+const redisClient = require("../../lib/redisClient");
+const logger = require("../../lib/logger");
+
 
 const issueDecisionToken = async ({ symbol, pricePaise, quantity, stopLossPaise, targetPricePaise, verdict, userId }) => {
   const token = crypto.randomUUID();
@@ -58,9 +64,9 @@ const issueDecisionToken = async ({ symbol, pricePaise, quantity, stopLossPaise,
   const expiresAt = new Date(Date.now() + TOKEN_TTL_MS);
 
   const data = { token, userId: userId || null, payloadHash, verdict, expiresAt: expiresAt.getTime() };
-  if (redisClient && redisClient.isReady) {
+  if (redisClient && redisClient.status === "ready") {
      try {
-       await redisClient.setEx(`pretrade:${token}`, 120, JSON.stringify(data));
+       await redisClient.set(`pretrade:${token}`, JSON.stringify(data), "EX", 120);
      } catch(e) { /* fallback */ }
   }
   await PreTradeToken.create({ token, userId: userId || null, payloadHash, verdict, expiresAt });
@@ -71,7 +77,7 @@ const issueDecisionToken = async ({ symbol, pricePaise, quantity, stopLossPaise,
 const getDecisionRecord = async (token) => {
   if (!token) return null;
   
-  if (redisClient && redisClient.isReady) {
+  if (redisClient && redisClient.status === "ready") {
      try {
        // Atomic Lua script: Get and Delete
        const script = `
@@ -81,7 +87,7 @@ const getDecisionRecord = async (token) => {
          end
          return val
        `;
-       const str = await redisClient.eval(script, { keys: [`pretrade:\${token}`] });
+       const str = await redisClient.eval(script, 1, `pretrade:${token}`);
        if (str) {
          // Silently keep Mongo clean
          PreTradeToken.deleteOne({ token }).catch(()=>{});

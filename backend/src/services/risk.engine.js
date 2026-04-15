@@ -81,7 +81,15 @@ const validatePlan = (plan = {}) => {
 };
 
 const getRiskScore = (plan = {}) => {
-  const validation = validatePlan({ ...plan, minRr: 0 });
+  // Deterministic-only scoring: accept only numeric plan fields.
+  const deterministicPlan = {
+    side: plan.side,
+    pricePaise: plan.pricePaise,
+    stopLossPaise: plan.stopLossPaise,
+    targetPricePaise: plan.targetPricePaise,
+    minRr: 0,
+  };
+  const validation = validatePlan(deterministicPlan);
   if (!validation.isValid || !validation.rr) {
     return LOW_RR_PENALTY;
   }

@@ -40,11 +40,20 @@ const tradeSchema = new mongoose.Schema(
       type: Number,
       required: true,
       min: 1,
+      validate: {
+        validator: Number.isInteger,
+        message: "quantity must be an integer",
+      },
     },
     pricePaise: {
       type: Number,
       required: true,
       min: 0,
+    },
+    priceSource: {
+      type: String,
+      enum: ["REAL", "CACHE", "STALE", "FALLBACK"],
+      default: "REAL",
     },
     totalValuePaise: {
       type: Number,
@@ -208,7 +217,6 @@ const tradeSchema = new mongoose.Schema(
     },
     idempotencyKey: {
       type: String,
-      unique: true,
       sparse: true,
       trim: true,
     },
@@ -219,6 +227,10 @@ const tradeSchema = new mongoose.Schema(
 );
 
 tradeSchema.index({ user: 1, symbol: 1, createdAt: -1 }, { background: true });
+tradeSchema.index(
+  { user: 1, idempotencyKey: 1 },
+  { unique: true, sparse: true, background: true, name: "idx_trade_user_idempotency_uniq" }
+);
 
 const Trade = mongoose.model("Trade", tradeSchema);
 module.exports = Trade;

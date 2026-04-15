@@ -54,7 +54,7 @@ export default function AuthPage() {
         ? await loginUser(payload)
         : await registerUser(payload);
 
-      login(data.token, data.refreshToken, data.user);
+      login(data.token, data.user);
       navigate("/");
     } catch (err) {
       if (err.response?.data?.errors) {

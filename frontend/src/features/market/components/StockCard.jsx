@@ -30,7 +30,7 @@ const StockCard = memo(({ stock, isOwned, onOpenChart }) => {
 
   const handleTrade = (e) => {
     e.stopPropagation();
-    navigate("/trade", { state: { symbol: stock.symbol, type: "BUY" } });
+    navigate("/trade", { state: { symbol: stock.symbol, side: "BUY" } });
   };
 
   const handleOpenChart = (e) => {
@@ -103,7 +103,7 @@ const StockCard = memo(({ stock, isOwned, onOpenChart }) => {
           <div className="mb-6">
             <span className="mb-2 block text-[10px] font-black uppercase tracking-widest text-slate-400">Current Valuation</span>
             <div className="flex items-baseline gap-3">
-              <p className="text-4xl font-black tracking-tighter text-slate-900">{formatINR(stock.price)}</p>
+              <p className="text-4xl font-black tracking-tighter text-slate-900">{formatINR(stock.pricePaise)}</p>
               <div className={`flex items-center gap-1 text-sm font-black ${isUp ? "text-emerald-500" : "text-rose-500"}`}>
                 {isUp ? "+" : ""}
                 {Number(stock.changePercent || 0).toFixed(2)}%

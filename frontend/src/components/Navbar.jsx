@@ -2,10 +2,12 @@ import MarketTickerTape from "./market/MarketTickerTape";
 import { useAuth } from "../features/auth/AuthContext";
 import { LogOut, LayoutDashboard, User } from "lucide-react";
 import { getCurrencyStatus } from "../utils/currency.utils";
+import { useMarketTicker } from "../hooks/useMarket";
 
 export default function Navbar() {
   const { user, logout } = useAuth();
   const currencyStatus = getCurrencyStatus();
+  const { indices, isLoading } = useMarketTicker();
 
   return (
     <header className="fixed top-0 left-0 right-0 h-16 bg-white/70 backdrop-blur-lg border-b border-slate-200/60 z-20 flex items-center justify-between px-6 shadow-sm transition-all">
@@ -22,7 +24,7 @@ export default function Navbar() {
         {/* Global Market Awareness Sliding Strip (Centered) */}
         {user && (
           <div className="flex-grow max-w-2xl overflow-hidden mx-10 hidden md:block border-x border-slate-100">
-            <MarketTickerTape />
+            <MarketTickerTape indices={indices} isLoading={isLoading} />
           </div>
         )}
       </div>

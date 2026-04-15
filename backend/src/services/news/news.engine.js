@@ -192,4 +192,9 @@ const generateUnavailableSignal = (symbol, reason, sector = classificationEngine
   relevance: "MACRO"
 });
 
-module.exports = { getProcessedNews, getPortfolioNews };
+const getTopNews = async () => {
+  // Broad market context defaulted to Nifty 50 index
+  return getProcessedNews("^NSEI");
+};
+
+module.exports = { getProcessedNews, getPortfolioNews, getTopNews };

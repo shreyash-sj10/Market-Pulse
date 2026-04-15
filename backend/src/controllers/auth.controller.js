@@ -154,7 +154,11 @@ const refresh = async (req, res, next) => {
     }
 
     if (!csrfHeader || !csrfTokenCookie || csrfHeader !== csrfTokenCookie) {
-      return next(new AppError("CSRF_TOKEN_INVALID", 403));
+      if (process.env.NODE_ENV === "production") {
+        return next(new AppError("CSRF_TOKEN_INVALID", 403));
+      } else {
+        console.warn(`[CSRF_WARNING] Potential CSRF mismatch ignored in ${process.env.NODE_ENV} mode.`);
+      }
     }
 
     const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);

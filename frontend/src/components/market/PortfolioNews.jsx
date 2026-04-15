@@ -1,22 +1,7 @@
-import React from 'react';
-import { useQuery } from '@tanstack/react-query';
-import axios from 'axios';
-import { Newspaper, TrendingUp, TrendingDown, Clock, ExternalLink, ShieldAlert } from "lucide-react";
+import React from "react";
+import { ShieldAlert } from "lucide-react";
 
-const fetchPortfolioNews = async () => {
-  const token = localStorage.getItem('token');
-  const res = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/market/news/portfolio`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  return res.data;
-};
-
-const PortfolioNews = () => {
-  const { data, isLoading } = useQuery({
-    queryKey: ["portfolioNews"],
-    queryFn: fetchPortfolioNews,
-    refetchInterval: 600000 // 10 minutes cache aligned
-  });
+const PortfolioNews = ({ data, isLoading }) => {
 
   if (isLoading) {
     return (

@@ -1,61 +1,7 @@
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { getHistoricalPrices } from "../../../services/market.api";
-import { calculateEMA } from "../../../utils/chartHelpers";
-import { calculateRSI } from "../utils/indicators";
 import { Info, Gauge, Zap, Target, AlertTriangle, CheckCircle2, TrendingUp, Sparkles } from "lucide-react";
 import { formatINR } from "../../../utils/currency.utils";
 
-export default function TradeInsight({ symbol, trade }) {
-  const { data: rawPrices, isLoading } = useQuery({
-    queryKey: ["price-history", symbol],
-    queryFn: () => getHistoricalPrices(symbol.toUpperCase()),
-    enabled: !!symbol,
-    staleTime: 1000 * 60 * 5,
-  });
-
-  const insight = useMemo(() => {
-    if (!rawPrices?.data || rawPrices.data.length === 0 || !trade) return null;
-
-    // 1. Calculate Indicators
-    let data = calculateEMA(rawPrices.data, 20);
-    data = calculateRSI(data, 14);
-
-    // 2. Map trade to nearest date point
-    // We assume the trade date from createdAt (YYYY-MM-DD or most recent point)
-    const tradeDate = trade.createdAt ? new Date(trade.createdAt).toISOString().split("T")[0] : null;
-    const point = tradeDate
-      ? data.find(d => d.date === tradeDate) || data[data.length - 1]
-      : data[data.length - 1];
-
-    if (!point) return null;
-
-    const rsiVal = point.rsi;
-    const emaVal = point.ema;
-    const priceVal = trade.pricePaise || point.price;
-    const risk = trade.analysis?.riskScore || 0;
-
-    // 3. Generate RSI Descriptions
-    let rsiText = "neutral momentum";
-    if (rsiVal > 70) rsiText = "overbought conditions";
-    else if (rsiVal < 30) rsiText = "oversold conditions";
-
-    // 4. Generate EMA Description
-    let emaText = "hovering near trend";
-    if (priceVal > emaVal * 1.01) emaText = "above the 20-day trend line (bullish zone)";
-    else if (priceVal < emaVal * 0.99) emaText = "below the 20-day trend line (bearish zone)";
-
-    // 5. Final Synthesis
-    const typeLabel = trade.type === "BUY" ? "bought" : "sold";
-
-    return {
-      text: `Market Context: You ${typeLabel} when the asset was in ${rsiText} (RSI: ${rsiVal?.toFixed(1) || 'N/A'}) and the execution price was ${emaText}.`,
-      contextColor: risk > 70 ? "text-rose-600" : "text-emerald-600",
-      rsi: rsiVal,
-      ema: emaVal
-    };
-  }, [rawPrices, trade]);
-
+export default function TradeInsight({ trade, insight, isLoading }) {
   if (isLoading) return (
     <div className="mt-4 p-4 bg-slate-50 border border-slate-100 rounded-xl animate-pulse">
       <div className="h-3 w-32 bg-slate-200 rounded mb-2" />
@@ -145,6 +91,12 @@ export default function TradeInsight({ symbol, trade }) {
             <p className="text-[13px] font-medium text-slate-700 leading-relaxed max-w-[240px]">
               {insight.text}
             </p>
+            {trade.priceSource === "FALLBACK" && (
+              <div className="mt-3 flex items-center gap-2 text-[10px] font-black uppercase text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200">
+                <AlertTriangle size={12} />
+                <span>⚠ Price may be outdated</span>
+              </div>
+            )}
           </div>
         </div>
       </div>

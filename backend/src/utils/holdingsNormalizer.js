@@ -7,7 +7,7 @@ const toHoldingsObject = (holdings) => {
       const key = String(item.symbol).toUpperCase().trim();
       acc[key] = {
         quantity: Number(item.quantity) || 0,
-        avgCost: Number(item.avgCost ?? item.avgPricePaise) || 0,
+        avgCostPaise: Number(item.avgCost ?? item.avgCostPaise ?? item.avgPricePaise) || 0,
         stopLossPaise: Number(item.stopLossPaise) || null,
         targetPricePaise: Number(item.targetPricePaise) || null,
       };
@@ -22,7 +22,7 @@ const toHoldingsArray = (holdings) => {
   return Object.entries(holdingsObject).map(([safeSymbol, data]) => ({
     symbol: safeSymbol.includes("_") ? safeSymbol.replace(/_/g, ".") : safeSymbol,
     quantity: Number(data?.quantity) || 0,
-    avgPrice: Math.round(Number(data?.avgCost) || 0),
+    avgPricePaise: Math.round(Number(data?.avgCostPaise) || 0),
     stopLossPaise: Number(data?.stopLossPaise) || null,
     targetPricePaise: Number(data?.targetPricePaise) || null,
   }));

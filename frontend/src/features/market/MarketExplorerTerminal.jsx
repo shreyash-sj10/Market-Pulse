@@ -1,6 +1,5 @@
-import { useDeferredValue, useMemo, useState, startTransition, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { getExplorerData } from "../../services/market.api";
+import { useState } from "react";
+import { ErrorState } from "../../components/common/ExperienceStates";
 import {
   Search,
   Activity,
@@ -14,53 +13,19 @@ import {
 import StockCard from "./components/StockCard";
 import { useNavigate } from "react-router-dom";
 import PriceChart from "../trades/components/PriceChart";
+import { useMarketExplorer, useMarketHistory } from "../../hooks/useMarket";
 
 const MarketExplorer = () => {
-  const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("ALL");
-  const [capFilter, setCapFilter] = useState("ALL");
-  const [chartSymbol, setChartSymbol] = useState("");
+  const [activeTimeframe, setActiveTimeframe] = useState("1M");
   const navigate = useNavigate();
-  const deferredSearch = useDeferredValue(search);
+  const marketExplorer = useMarketExplorer();
+  const { state, actions, data, query } = marketExplorer;
+  const { search, filter, capFilter, displayLimit, chartSymbol } = state;
+  const { filteredStocks, visibleStocks, explorerMeta } = data;
+  const { isLoading, isFetching, isError } = query;
+  const chartHistory = useMarketHistory(chartSymbol, activeTimeframe);
 
-  const { data: explorerResponse, isLoading, isFetching, refetch } = useQuery({
-    queryKey: ["explorer"],
-    queryFn: () => getExplorerData(500, 0, ""),
-    refetchInterval: 60000,
-  });
-
-  const allStocks = explorerResponse?.stocks || [];
-  const explorerMeta = explorerResponse?.meta || { isSynthetic: false, isFallback: false };
-  const [displayLimit, setDisplayLimit] = useState(24);
-
-  const filteredStocks = useMemo(() => {
-    return allStocks.filter(s => {
-      const matchesSearch = s.symbol.toLowerCase().includes(deferredSearch.toLowerCase());
-      
-      // Market Trend/Gainers filter
-      let matchesFilter = true;
-      if (filter === "GAINERS") matchesFilter = s.changePercent > 0;
-      else if (filter === "LOSERS") matchesFilter = s.changePercent < 0;
-
-      // Market Cap filter
-      let matchesCap = true;
-      const cr = (s.marketCap || 0) / 10000000;
-      if (capFilter === "LARGE") matchesCap = cr >= 20000;
-      else if (capFilter === "MID") matchesCap = cr >= 5000 && cr < 20000;
-      else if (capFilter === "SMALL") matchesCap = cr < 5000;
-
-      return matchesSearch && matchesFilter && matchesCap;
-    });
-  }, [allStocks, deferredSearch, filter, capFilter]);
-
-  // Reset limit on search or filter change
-  useEffect(() => {
-    setDisplayLimit(24);
-  }, [deferredSearch, filter, capFilter]);
-
-  const visibleStocks = useMemo(() => {
-    return filteredStocks.slice(0, displayLimit);
-  }, [filteredStocks, displayLimit]);
+  if (isError) return <ErrorState onRetry={() => actions.refresh()} />;
 
   return (
     <div className="app-page px-2 pt-4">
@@ -87,7 +52,7 @@ const MarketExplorer = () => {
                   type="text"
                   placeholder="Search symbol..."
                   value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                  onChange={(e) => actions.setSearch(e.target.value)}
                   className="w-full md:w-[360px] bg-slate-50 border border-slate-200 rounded-2xl py-3 pl-11 pr-4 text-sm font-semibold text-slate-900 outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 transition-all font-mono"
                 />
               </div>
@@ -98,7 +63,7 @@ const MarketExplorer = () => {
                   {["ALL", "GAINERS", "LOSERS"].map((id) => (
                     <button
                       key={id}
-                      onClick={() => setFilter(id)}
+                      onClick={() => actions.setFilter(id)}
                       className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
                         filter === id ? "bg-white text-indigo-600 shadow-sm" : "text-slate-400 hover:text-slate-600"
                       }`}
@@ -114,7 +79,7 @@ const MarketExplorer = () => {
                   {["ALL", "LARGE", "MID", "SMALL"].map((id) => (
                     <button
                       key={id}
-                      onClick={() => setCapFilter(id)}
+                      onClick={() => actions.setCapFilter(id)}
                       className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
                         capFilter === id 
                           ? id === "LARGE" ? "bg-indigo-600 text-white shadow-sm" : id === "MID" ? "bg-emerald-600 text-white shadow-sm" : id === "SMALL" ? "bg-amber-600 text-white shadow-sm" : "bg-white text-slate-900 shadow-sm"
@@ -127,7 +92,7 @@ const MarketExplorer = () => {
                 </div>
 
                 <button
-                  onClick={() => refetch()}
+                  onClick={() => actions.refresh()}
                   className="ml-auto px-3 py-2 rounded-xl border border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300 transition-colors bg-white shadow-sm"
                   title="Refresh universe prices"
                 >
@@ -181,7 +146,7 @@ const MarketExplorer = () => {
                   <StockCard
                     key={stock.fullSymbol || `${stock.symbol}-${index}`}
                     stock={stock}
-                    onOpenChart={() => setChartSymbol(stock.symbol)}
+                    onOpenChart={() => actions.openChart(stock.symbol)}
                   />
                 ))}
               </div>
@@ -189,7 +154,7 @@ const MarketExplorer = () => {
               {displayLimit < filteredStocks.length && (
                 <div className="mt-8 flex justify-center pb-8 sticky bottom-0 pointer-events-none">
                   <button
-                    onClick={() => setDisplayLimit(prev => prev + 24)}
+                    onClick={() => actions.setDisplayLimit(displayLimit + 24)}
                     className="pointer-events-auto px-10 py-4 bg-slate-900 border border-slate-800 shadow-2xl rounded-2xl hover:bg-slate-800 transition-all group overflow-hidden relative"
                   >
                     <div className="absolute inset-0 bg-gradient-to-r from-indigo-600/20 to-violet-600/20 opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -209,7 +174,7 @@ const MarketExplorer = () => {
           <button
             aria-label="Close chart modal"
             className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
-            onClick={() => setChartSymbol("")}
+            onClick={() => actions.closeChart()}
           />
 
           <div className="relative w-full max-w-[1280px] rounded-[2.5rem] border border-slate-200 bg-white shadow-2xl overflow-hidden animate-modal-enter">
@@ -225,7 +190,7 @@ const MarketExplorer = () => {
               </div>
 
               <button
-                onClick={() => setChartSymbol("")}
+                onClick={() => actions.closeChart()}
                 className="p-2 rounded-xl text-slate-400 hover:text-slate-900 hover:bg-slate-200 transition-all border border-transparent hover:border-slate-300"
                 aria-label="Close"
               >
@@ -234,12 +199,19 @@ const MarketExplorer = () => {
             </div>
 
             <div className="h-[70vh] min-h-[500px]">
-              <PriceChart symbol={chartSymbol} />
+              <PriceChart
+                symbol={chartSymbol}
+                activeTimeframe={activeTimeframe}
+                onTimeframeChange={setActiveTimeframe}
+                chartData={chartHistory.chartData}
+                isLoading={chartHistory.isLoading}
+                error={chartHistory.error}
+              />
             </div>
 
             <div className="flex items-center justify-end gap-3 px-8 py-5 border-t border-slate-100 bg-white">
               <button
-                onClick={() => setChartSymbol("")}
+                onClick={() => actions.closeChart()}
                 className="px-6 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-[11px] font-black uppercase tracking-widest hover:bg-slate-50 transition-colors"
               >
                 Close View
@@ -247,8 +219,8 @@ const MarketExplorer = () => {
               <button
                 onClick={() => {
                   const symbol = chartSymbol;
-                  setChartSymbol("");
-                  navigate(`/trade?symbol=${symbol}&type=BUY`);
+                  actions.closeChart();
+                  navigate(`/trade?symbol=${symbol}&side=BUY`);
                 }}
                 className="px-6 py-2.5 rounded-xl bg-indigo-600 text-white text-[11px] font-black uppercase tracking-widest hover:bg-indigo-500 transition-all shadow-lg shadow-indigo-200"
               >

@@ -13,6 +13,7 @@ const buyTradePayloadSchema = z.object({
     .int("targetPricePaise must be an integer"),
   quantity: z
     .number({ required_error: "quantity is required" })
+    .int("quantity must be an integer")
     .positive("quantity must be greater than 0"),
   side: z.literal("BUY"),
   userThinking: z.string().trim().min(1).optional(),
@@ -27,6 +28,7 @@ const sellTradePayloadSchema = z.object({
     .int("pricePaise must be an integer"),
   quantity: z
     .number({ required_error: "quantity is required" })
+    .int("quantity must be an integer")
     .positive("quantity must be greater than 0"),
   side: z.literal("SELL"),
   userThinking: z.string().trim().min(1).optional(),
@@ -66,25 +68,6 @@ const validateTradePayload = (req, res, next) => {
   }
 
   const payload = parsed.data;
-  if (payload.side === "BUY") {
-    if (payload.stopLossPaise >= payload.pricePaise) {
-      return fail(
-        res,
-        "INVALID_STOPLOSS",
-        "For BUY trades, stopLossPaise must be less than pricePaise.",
-        { stopLossPaise: payload.stopLossPaise, pricePaise: payload.pricePaise }
-      );
-    }
-    if (payload.targetPricePaise <= payload.pricePaise) {
-      return fail(
-        res,
-        "INVALID_TARGET",
-        "For BUY trades, targetPricePaise must be greater than pricePaise.",
-        { targetPricePaise: payload.targetPricePaise, pricePaise: payload.pricePaise }
-      );
-    }
-  }
-
   if (req.path === "/buy" && payload.side !== "BUY") {
     return fail(res, "INVALID_SIDE", "Route /buy requires side=BUY.", { side: payload.side });
   }

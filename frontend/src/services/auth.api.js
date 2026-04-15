@@ -1,16 +1,17 @@
 import api from "./api.js";
+import { normalizeResponse } from "../utils/contract.js";
 
 export const loginUser = async ({ email, password }) => {
   const response = await api.post("/auth/login", { email, password });
-  return response.data;
+  return normalizeResponse(response);
 };
 
-export const registerUser = async ({ email, password }) => {
-  const response = await api.post("/auth/register", { email, password });
-  return response.data;
+export const registerUser = async ({ name, email, password }) => {
+  const response = await api.post("/auth/register", { name, email, password });
+  return normalizeResponse(response);
 };
 
 export const getMe = async () => {
   const response = await api.get("/users/me");
-  return response.data;
+  return normalizeResponse(response);
 };

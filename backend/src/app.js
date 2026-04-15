@@ -17,11 +17,23 @@ app.use(
 const morgan = require("morgan");
 const logger = require("./utils/logger");
 
+const { isRedisAvailable } = require("./infra/redisHealth");
+
 app.use("/api", (req, res, next) => {
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.set("Pragma", "no-cache");
   res.set("Expires", "0");
   res.set("Surrogate-Control", "no-store");
+
+  // Part 7: Global system mode visibility
+  const originalJson = res.json;
+  res.json = function(data) {
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      data.degraded = !isRedisAvailable();
+    }
+    return originalJson.call(this, data);
+  };
+
   next();
 });
 
@@ -48,14 +60,5 @@ app.use("/api/metrics", require("./routes/metrics.route"));
 // Error middleware (ALWAYS LAST)
 const errorHandler = require("./middlewares/error.middleware");
 app.use(errorHandler);
-
-// Start background workers
-const { startOutboxWorker } = require("./workers/outbox.worker");
-const { startSweeper } = require("./services/sweeper.service");
-
-if (process.env.NODE_ENV !== "test") {
-  startOutboxWorker();
-  startSweeper();
-}
 
 module.exports = app;

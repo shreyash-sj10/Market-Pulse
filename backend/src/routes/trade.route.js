@@ -9,7 +9,6 @@ const {
 } = require("../controllers/trade.controller");
 
 const rateLimit = require("express-rate-limit");
-const { validatePlan } = require("../services/risk.engine");
 const { validateTradePayload } = require("../middlewares/validateTradePayload");
 
 const tradeLimiter = rateLimit({
@@ -43,7 +42,7 @@ const enforceRequestId = (req, res, next) => {
 
 const enforceBuyReview = (req, res, next) => {
   const preTradeToken = req.headers["pre-trade-token"] || req.body.preTradeToken;
-  const { pricePaise, stopLossPaise, targetPricePaise } = req.body;
+  const { stopLossPaise, targetPricePaise } = req.body;
 
   if (!stopLossPaise || !targetPricePaise) {
     return res.status(403).json({
@@ -56,20 +55,6 @@ const enforceBuyReview = (req, res, next) => {
     return res.status(403).json({
       success: false,
       message: "PRE_TRADE_REQUIRED: Institutional trades must include a valid preTradeToken."
-    });
-  }
-
-  // Risk/Reward Enforcement (Pre-Controller)
-  const planValidation = validatePlan({
-    side: "BUY",
-    pricePaise,
-    stopLossPaise,
-    targetPricePaise,
-  });
-  if (!planValidation.isValid) {
-    return res.status(403).json({
-      success: false,
-      message: `${planValidation.errorCode}: Buy plan failed institutional risk constraints.`
     });
   }
 

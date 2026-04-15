@@ -23,22 +23,22 @@ const userSchema = new mongoose.Schema(
     },
     balance: {
       type: Number,
-      default: 10000000, // ₹100,000.00 (1 Lakh) stored as 10,000,000 paise
+      default: 10000000, 
       min: 0,
-    },
+    }, // ALWAYS STORED IN PAISE - DO NOT divide by 100 here
     reservedBalancePaise: {
       type: Number,
       default: 0,
       min: 0,
-    },
+    }, // ALWAYS STORED IN PAISE - DO NOT divide by 100 here
     totalInvested: {
       type: Number,
       default: 0,
-    },
+    }, // ALWAYS STORED IN PAISE - DO NOT divide by 100 here
     realizedPnL: {
       type: Number,
       default: 0,
-    },
+    }, // ALWAYS STORED IN PAISE - DO NOT divide by 100 here
     refreshToken: {
       type: String,
       select: false,

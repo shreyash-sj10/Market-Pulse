@@ -12,7 +12,6 @@ jest.mock("../../src/services/marketData.service");
 jest.mock("../../src/services/aiExplanation.service");
 jest.setTimeout(30000);
 const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/trading_platform_test";
-const runIfDb = process.env.REQUIRE_DB_TESTS === "1" ? describe : describe.skip;
 
 const FORBIDDEN_KEYS = new Set(["price", "stopLoss", "targetPrice", "rrRatio", "pnlPercentage"]);
 const REQUIRED_PAISE_KEYS = new Set(["pricePaise", "stopLossPaise", "targetPricePaise"]);
@@ -32,7 +31,7 @@ const scanKeys = (value, path = "root", found = []) => {
   return found;
 };
 
-runIfDb("contract enforcement", () => {
+describe("contract enforcement", () => {
   let authToken;
   let testUser;
 

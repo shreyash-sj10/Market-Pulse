@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const rateLimit = require("express-rate-limit");
 const newsEngine = require('../services/news/news.engine');
 const authMiddleware = require('../middlewares/auth.middleware');
 const { toHoldingsObject } = require('../utils/holdingsNormalizer');
@@ -8,6 +9,14 @@ const preTradeGuard = require('../services/intelligence/preTradeGuard.service');
 const { validateTradePayload } = require("../middlewares/validateTradePayload");
 const { deriveIntelligenceState, deriveDecisionState } = require("../utils/systemState");
 const { adaptPreTrade } = require("../adapters/preTrade.adapter");
+
+const intelligenceLimiter = rateLimit({
+  windowMs: Number(process.env.INTELLIGENCE_RATE_LIMIT_WINDOW_MS || 60 * 1000),
+  max: Number(process.env.INTELLIGENCE_RATE_LIMIT_MAX || 30),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Rate limit exceeded for intelligence endpoints." },
+});
 
 /**
  * GET /api/intelligence/news
@@ -55,7 +64,7 @@ const refreshBasketIntelligence = async (category, basket, holdings) => {
 /**
  * GET /api/intelligence/news
  */
-router.get('/news', authMiddleware, async (req, res, next) => {
+router.get('/news', authMiddleware, intelligenceLimiter, async (req, res, next) => {
   try {
     const category = "MARKET_FEED";
     const basket = ['^NSEI', '^BSESN', 'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS'];
@@ -88,7 +97,7 @@ router.get('/news', authMiddleware, async (req, res, next) => {
 /**
  * GET /api/intelligence/portfolio
  */
-router.get('/portfolio', authMiddleware, async (req, res, next) => {
+router.get('/portfolio', authMiddleware, intelligenceLimiter, async (req, res, next) => {
   try {
     const category = "PORTFOLIO_FEED";
     const holdingDocs = await Holding.find({ userId: req.user._id });
@@ -119,7 +128,7 @@ router.get('/portfolio', authMiddleware, async (req, res, next) => {
 /**
  * GET /api/intelligence/global
  */
-router.get('/global', authMiddleware, async (req, res, next) => {
+router.get('/global', authMiddleware, intelligenceLimiter, async (req, res, next) => {
   try {
     const category = "GLOBAL_FEED";
     const globalBasket = ['CL=F', 'GC=F', '^DJI', '^GSPC', 'BTC-USD'];
@@ -148,7 +157,7 @@ router.get('/global', authMiddleware, async (req, res, next) => {
 
 
 const timelineService = require('../services/intelligence/timeline.service');
-router.get('/timeline', authMiddleware, async (req, res, next) => {
+router.get('/timeline', authMiddleware, intelligenceLimiter, async (req, res, next) => {
   try {
     const timeline = await timelineService.getTimelineMap(req.user._id);
     const signals = timeline || [];
@@ -161,7 +170,7 @@ router.get('/timeline', authMiddleware, async (req, res, next) => {
 
 const logger = require("../lib/logger");
 
-router.post('/pre-trade', authMiddleware, validateTradePayload, async (req, res, next) => {
+router.post('/pre-trade', authMiddleware, intelligenceLimiter, validateTradePayload, async (req, res, next) => {
   const startTime = Date.now();
   try {
     const riskReport = await preTradeGuard.checkTradeRisk(req.body, req.user);
@@ -209,7 +218,7 @@ router.post('/pre-trade', authMiddleware, validateTradePayload, async (req, res,
 
 
 const adaptiveEngine = require('../services/intelligence/adaptiveEngine.service');
-router.get('/profile', authMiddleware, async (req, res, next) => {
+router.get('/profile', authMiddleware, intelligenceLimiter, async (req, res, next) => {
   try {
     const profile = await adaptiveEngine.getAdaptiveProfile(req.user._id);
     res.json({ success: true, data: profile });
@@ -219,7 +228,7 @@ router.get('/profile', authMiddleware, async (req, res, next) => {
 });
 
 const judgmentEngine = require('../services/intelligence/judgmentEngine.service');
-router.post('/judge-trade', authMiddleware, async (req, res, next) => {
+router.post('/judge-trade', authMiddleware, intelligenceLimiter, async (req, res, next) => {
   try {
     const judgment = await judgmentEngine.generateJudgment(req.body, req.user);
     res.json({ success: true, data: judgment });

@@ -1,4 +1,5 @@
-import api from "./api";
+import api from "./api.js";
+import { normalizeResponse } from "../utils/contract.js";
 
 /**
  * INTELLIGENCE API
@@ -7,10 +8,11 @@ import api from "./api";
 
 export const getMarketIntelligence = async () => {
   try {
-    const res = await api.get("/intelligence/news");
-    return res.data;
+    const response = await api.get("/intelligence/news");
+    return normalizeResponse(response);
   } catch (error) {
     return {
+      success: false,
       state: "PARTIAL",
       data: { state: "PARTIAL", status: "UNAVAILABLE", reason: "NO_MARKET_SIGNALS", signals: [] },
     };
@@ -19,10 +21,11 @@ export const getMarketIntelligence = async () => {
 
 export const getPortfolioIntelligence = async () => {
   try {
-    const res = await api.get("/intelligence/portfolio");
-    return res.data;
+    const response = await api.get("/intelligence/portfolio");
+    return normalizeResponse(response);
   } catch (error) {
     return {
+      success: false,
       state: "PARTIAL",
       data: { state: "PARTIAL", status: "UNAVAILABLE", reason: "NO_MARKET_SIGNALS", signals: [] },
     };
@@ -31,10 +34,11 @@ export const getPortfolioIntelligence = async () => {
 
 export const getGlobalIntelligence = async () => {
   try {
-    const res = await api.get("/intelligence/global");
-    return res.data;
+    const response = await api.get("/intelligence/global");
+    return normalizeResponse(response);
   } catch (error) {
     return {
+      success: false,
       state: "PARTIAL",
       data: { state: "PARTIAL", status: "UNAVAILABLE", reason: "NO_MARKET_SIGNALS", signals: [] },
     };
@@ -42,26 +46,21 @@ export const getGlobalIntelligence = async () => {
 };
 
 export const getPreTradeGuard = async (tradeRequest) => {
-  try {
-    const res = await api.post("/intelligence/pre-trade", tradeRequest);
-    return res.data.data;
-  } catch (error) {
-    console.error("[IntelAPI] Pre-trade interceptor failed:", error.message);
-    throw error;
-  }
+  const response = await api.post("/intelligence/pre-trade", tradeRequest);
+  return normalizeResponse(response);
 };
 
 export const getAdaptiveProfile = async () => {
-  try {
-    const res = await api.get("/intelligence/profile");
-    return res.data.data;
-  } catch (error) {
-    console.error("[IntelAPI] Failed to fetch Adaptive Profile:", error.message);
-    return null;
-  }
+  const response = await api.get("/intelligence/profile");
+  return normalizeResponse(response);
 };
-export const getIntelligenceTimeline = () =>
-  api.get("/intelligence/timeline").then(res => res.data).catch(() => ({ data: [] }));
 
-export const submitTradeJudgment = (tradeData) =>
-  api.post("/intelligence/judge-trade", tradeData).then(res => res.data);
+export const getIntelligenceTimeline = async () => {
+  const response = await api.get("/intelligence/timeline");
+  return normalizeResponse(response);
+};
+
+export const submitTradeJudgment = async (tradeData) => {
+  const response = await api.post("/intelligence/judge-trade", tradeData);
+  return normalizeResponse(response);
+};

@@ -37,10 +37,11 @@ const normalizeTrade = (rawTrade) => {
     null;
 
   return {
-    id: toId(raw._id || raw.id),
+    tradeId: toId(raw._id || raw.id),
     userId: toId(raw.userId || raw.user),
     symbol: raw.symbol || null,
     type,
+    side: type,
     status: raw.status || "EXECUTED",
     reflectionStatus: raw.reflectionStatus || (raw.type === "SELL" && raw.status === "EXECUTED_PENDING_REFLECTION" ? "PENDING" : (raw.type === "SELL" ? "DONE" : null)),
     queuedAt: raw.queuedAt || null,
@@ -51,13 +52,14 @@ const normalizeTrade = (rawTrade) => {
     stopLossPaise,
     targetPricePaise,
     rr,
-    intent: raw.intent || raw.parsedIntent?.strategy || raw.rawIntent || null,
-    reasoning: raw.reasoning || raw.userThinking || raw.reason || null,
+    intent: raw.entryPlan?.intent || raw.intent || raw.parsedIntent?.strategy || raw.rawIntent || null,
+    reasoning: raw.entryPlan?.reasoning || raw.reasoning || raw.userThinking || raw.reason || null,
     decision: {
       verdict: decisionVerdict,
       score: decisionScore,
       pillars: raw.intelligenceTimeline?.preTrade?.pillars || raw.decision?.pillars || {},
     },
+    priceSource: raw.priceSource || null,
     openedAt: raw.openedAt || raw.entryTrade?.createdAt || (type === "BUY" ? raw.createdAt : null) || null,
     closedAt: raw.closedAt || (type === "SELL" ? raw.createdAt : null) || null,
     pnlPaise: toNullableNumber(raw.pnlPaise),
@@ -70,6 +72,7 @@ const normalizeTrade = (rawTrade) => {
     entryPlan: raw.entryPlan || null,
     decisionSnapshot: raw.decisionSnapshot || null,
     learningOutcome: raw.learningOutcome || null,
+    trace: raw.trace || null,
     createdAt: raw.createdAt || null,
 
   };

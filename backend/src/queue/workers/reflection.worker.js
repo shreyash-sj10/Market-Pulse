@@ -1,6 +1,7 @@
 const { Worker } = require("bullmq");
 const { connection } = require("../queue");
 const { processTradeClosedEvent } = require("../../services/reflectionWorker.service");
+const Outbox = require("../../models/outbox.model");
 const logger = require("../../lib/logger");
 
 const reflectionWorker = new Worker(
@@ -9,6 +10,20 @@ const reflectionWorker = new Worker(
     logger.info(`[BullMQ] Starting job ${job.id} | name: ${job.name} | attempt: ${job.attemptsMade + 1}`);
     if (job.name === "TRADE_CLOSED") {
       await processTradeClosedEvent(job.data);
+      if (job.data?.outboxJobId) {
+        await Outbox.updateOne(
+          { _id: job.data.outboxJobId, status: "PROCESSING" },
+          {
+            $set: {
+              status: "COMPLETED",
+              completedAt: new Date(),
+              processingStartedAt: null,
+              lastError: null,
+            },
+          }
+        );
+      }
+      logger.info("Reflection job processed", { tradeId: job.data.tradeId });
     }
   },
   { 

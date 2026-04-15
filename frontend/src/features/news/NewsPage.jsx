@@ -1,67 +1,20 @@
-import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { getMarketIntelligence, getPortfolioIntelligence, getGlobalIntelligence } from "../../services/intelligence.api";
 import SignalNode from "./components/SignalNode";
 import ConsensusPanel from "./components/ConsensusPanel";
 import { TrendingUp, Newspaper, Sparkles, Globe, Briefcase, Zap, Activity, Info, ShieldCheck, Clock, Layers, Filter, Terminal, ArrowRight } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useMarketIntelligence } from "../../hooks/useMarket";
 
 /**
  * MARKET INTELLIGENCE ENGINE — DECISION MODE
  * Optimized for trader reasoning and high-fidelity decisions.
  */
 export default function NewsPage() {
-  const { data: marketResp, isLoading: marketLoading } = useQuery({
-    queryKey: ["intel-market"],
-    queryFn: getMarketIntelligence,
-    staleTime: 1000 * 60 * 5,
-  });
-
-  const { data: portResp, isLoading: portLoading } = useQuery({
-    queryKey: ["intel-portfolio"],
-    queryFn: getPortfolioIntelligence,
-    staleTime: 1000 * 60 * 5,
-  });
-
-  const { data: globalResp, isLoading: globalLoading } = useQuery({
-    queryKey: ["intel-global"],
-    queryFn: getGlobalIntelligence,
-    staleTime: 1000 * 60 * 5,
-  });
-
-  const isSyncing = marketLoading || portLoading || globalLoading;
-
-  // 1. PORTFOLIO INTELLIGENCE (TOP PRIORITY)
-  const portfolioSignals = useMemo(() => {
-    return (portResp?.data?.signals || []).sort((a, b) => (b.confidence ?? -1) - (a.confidence ?? -1));
-  }, [portResp]);
-
-  // 2. SECTOR DECISION ENGINE
-  const sectorIntelligence = useMemo(() => {
-    const allSignals = [...(marketResp?.data?.signals || []), ...(portResp?.data?.signals || [])];
-    const groups = {};
-    allSignals.forEach(n => {
-      const s = n.sector || "GENERAL";
-      if (!groups[s]) groups[s] = { consensus: null, signals: [] };
-      if (n.isConsensus) groups[s].consensus = n;
-      else groups[s].signals.push(n);
-    });
-    return groups;
-  }, [marketResp, portResp]);
-
-  // 3. GLOBAL SUMMARY ENGINE (MANDATORY)
-  const globalSummary = useMemo(() => {
-    const signals = globalResp?.data?.signals || [];
-    if (!signals.length) return null;
-
-    const drivers = signals.slice(0, 5).map(s => s.event);
-    const bullish = signals.filter(s => s.impact === "BULLISH").length;
-    const bearish = signals.filter(s => s.impact === "BEARISH").length;
-    const hasDirectional = bullish > 0 || bearish > 0;
-    const bias = hasDirectional ? (bullish > bearish ? "BULLISH" : bearish > bullish ? "BEARISH" : "MIXED") : "UNAVAILABLE";
-
-    return { drivers, bias, signalCount: signals.length };
-  }, [globalResp]);
+  const {
+    isSyncing,
+    unavailableIntel,
+    portfolioSignals,
+    sectorIntelligence,
+    globalSummary,
+  } = useMarketIntelligence();
 
   if (isSyncing) {
     return (
@@ -75,11 +28,6 @@ export default function NewsPage() {
       </div>
     );
   }
-
-  const unavailableIntel =
-    marketResp?.data?.status === "UNAVAILABLE" ||
-    portResp?.data?.status === "UNAVAILABLE" ||
-    globalResp?.data?.status === "UNAVAILABLE";
 
   return (
     <div className="app-page px-6 pt-8 pb-40 max-w-[1800px] mx-auto overflow-hidden relative bg-slate-950 text-slate-300 font-mono">

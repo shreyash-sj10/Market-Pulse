@@ -107,7 +107,7 @@ const getPortfolioSummary = async (req, res, next) => {
     const holdingsPositions = holdingsDocs.map((holding) => ({
       symbol: holding.symbol,
       quantity: Number(holding.quantity) || 0,
-      avgPrice: Math.round(Number(holding.avgPricePaise) || 0),
+      avgPricePaise: Math.round(Number(holding.avgPricePaise) || 0),
       stopLossPaise: null,
       targetPricePaise: null,
     }));

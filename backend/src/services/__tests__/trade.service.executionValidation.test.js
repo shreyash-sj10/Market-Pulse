@@ -3,10 +3,13 @@ jest.mock("../../models/user.model", () => ({
 }));
 
 jest.mock("../../models/trade.model", () => {
+  const findSession = jest.fn().mockResolvedValue([]);
+  const find = jest.fn().mockReturnValue({ session: findSession });
   const leanContent = jest.fn();
   const sortContent = jest.fn().mockReturnValue({ lean: leanContent });
   return {
     create: jest.fn(),
+    find,
     findOne: jest.fn().mockReturnValue({ sort: sortContent }),
     countDocuments: jest.fn(),
   };
@@ -25,6 +28,7 @@ jest.mock("../../models/executionLock.model", () => ({
 
 jest.mock("../../services/marketData.service", () => ({
   validateSymbol: jest.fn().mockResolvedValue({ isValid: true }),
+  resolvePrice: jest.fn().mockResolvedValue({ pricePaise: 10000, source: "CACHE", isStale: false }),
 }));
 
 jest.mock("../../services/aiExplanation.service", () => ({
@@ -75,6 +79,7 @@ describe("executeBuyTrade plan enforcement", () => {
 
   it("blocks BUY when reviewed payload is modified", async () => {
     preTradeAuthorityStore.getDecisionRecord.mockReturnValue({
+      userId: "user-1",
       payloadHash: "reviewed-hash",
       verdict: "BUY",
       expiresAt: Date.now() + 60000,
@@ -102,6 +107,7 @@ describe("executeBuyTrade plan enforcement", () => {
 
   it("blocks BUY when pre-trade verdict is WAIT/AVOID", async () => {
     preTradeAuthorityStore.getDecisionRecord.mockReturnValue({
+      userId: "user-1",
       payloadHash: "same-hash",
       verdict: "WAIT",
       expiresAt: Date.now() + 60000,
@@ -146,6 +152,7 @@ describe("executeSellTrade execution enforcement", () => {
 
   it("blocks SELL when reviewed payload is modified", async () => {
     preTradeAuthorityStore.getDecisionRecord.mockReturnValue({
+      userId: "user-1",
       payloadHash: "reviewed-hash",
       verdict: "WAIT",
       expiresAt: Date.now() + 60000,
@@ -167,5 +174,29 @@ describe("executeSellTrade execution enforcement", () => {
     ).rejects.toMatchObject({ message: "PAYLOAD_MISMATCH", statusCode: 400 });
 
     expect(User.findById).not.toHaveBeenCalled();
+  });
+
+  it("blocks token replay when token user does not match authenticated user", async () => {
+    preTradeAuthorityStore.getDecisionRecord.mockReturnValue({
+      userId: "other-user",
+      payloadHash: "same-hash",
+      verdict: "BUY",
+      expiresAt: Date.now() + 60000,
+    });
+    preTradeAuthorityStore.buildPayloadHash.mockReturnValue("same-hash");
+
+    await expect(
+      executeSellTrade(
+        { _id: "user-1" },
+        {
+          symbol: "TCS",
+          type: "SELL",
+          quantity: 1,
+          pricePaise: 10000,
+          token: "sell-tok-2",
+          requestId: "sell-idem-3",
+        }
+      )
+    ).rejects.toMatchObject({ message: "TOKEN_USER_MISMATCH", statusCode: 403 });
   });
 });

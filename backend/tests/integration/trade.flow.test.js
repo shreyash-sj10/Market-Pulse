@@ -19,9 +19,8 @@ const { randomUUID } = require("crypto");
 
 require("dotenv").config();
 const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/trading_platform_test";
-const runIfDb = process.env.REQUIRE_DB_TESTS === "1" ? describe : describe.skip;
 
-runIfDb("Institutional Trade Integrity Suite (Full Hardening Audit)", () => {
+describe("Institutional Trade Integrity Suite (Full Hardening Audit)", () => {
     let userToken;
     let userId;
 

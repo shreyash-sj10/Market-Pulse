@@ -7,7 +7,21 @@ const { SYSTEM_CONFIG } = require("../config/system.config");
 const cache = new Map();
 const CACHE_TTL = SYSTEM_CONFIG.marketData.quoteCacheTtlMs;
 
-const toPaise = (val) => Math.round((val || 0) * 100);
+const { toPaise, enforcePaise} = require('../utils/paise');
+
+// Phase 7: Rate Limit Guard (Respect 5 calls/min for external sources)
+const throttleDelay = 12000; // 12s per call ensures < 5 per min
+let lastExternalCallTime = 0;
+
+const respectRateLimit = async () => {
+  const now = Date.now();
+  const waitTime = lastExternalCallTime + throttleDelay - now;
+  if (waitTime > 0) {
+    console.log(`[RateLimit] Throttling external request for ${waitTime}ms...`);
+    await new Promise(res => setTimeout(res, waitTime));
+  }
+  lastExternalCallTime = Date.now();
+};
 
 const symbolHash = (symbol = "") => {
   let h = 0;
@@ -68,7 +82,7 @@ const normalizeQuote = (raw) => {
   return {
     symbol: (raw.symbol || "").split('.')[0],
     fullSymbol: raw.symbol,
-    pricePaise: toPaise(raw.regularMarketPrice),
+    pricePaise: enforcePaise(toPaise(raw.regularMarketPrice), "pricePaise"),
     changePercent: raw.regularMarketChangePercent || raw.changePercent || 0,
     volume: raw.regularMarketVolume || raw.volume || 0,
     marketCap: raw.marketCap || null,
@@ -85,8 +99,10 @@ const normalizeQuote = (raw) => {
  */
 const validateQuote = (quote) => {
   if (!quote || !quote.symbol) return false;
-  // Reject absurdly low prices for Nifty stocks (Paise check: pricePaise <= 100 means Rupees <= 1)
-  if (typeof quote.pricePaise !== 'number' || quote.pricePaise <= 100) return false;
+  // Reject non-integers (Floating point leakage detected)
+  if (!Number.isInteger(quote.pricePaise)) return false;
+  // Reject absurdly low prices
+  if (quote.pricePaise <= 100) return false;
   if (!quote.lastUpdate) return false;
   return true;
 };
@@ -101,6 +117,7 @@ const getStockSnapshot = async (symbol) => {
   }
 
   try {
+    await respectRateLimit();
     const raw = await yahooFinance.quote(apiSymbol);
     const quote = normalizeQuote(raw);
 
@@ -124,20 +141,42 @@ const getStockSnapshot = async (symbol) => {
 const resolvePrice = async (symbol) => {
   const apiSymbol = normalizeSymbol(symbol);
   const cached = cache.get(apiSymbol);
-  if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
+  const hasCachedQuote = Boolean(
+    cached?.data &&
+    Number.isInteger(cached.data.pricePaise) &&
+    cached.data.pricePaise > 100
+  );
+  if (hasCachedQuote && (Date.now() - cached.timestamp) < CACHE_TTL) {
     return {
       pricePaise: cached.data.pricePaise,
       source: "CACHE",
       isFallback: Boolean(cached.data.isFallback),
+      isStale: false,
     };
   }
 
-  const quote = await getStockSnapshot(symbol);
-  return {
-    pricePaise: quote.pricePaise,
-    source: quote.isFallback ? "FALLBACK" : "REAL",
-    isFallback: Boolean(quote.isFallback),
-  };
+  try {
+    const quote = await getStockSnapshot(symbol);
+    return {
+      pricePaise: quote.pricePaise,
+      source: quote.isFallback ? "FALLBACK" : "REAL",
+      isFallback: Boolean(quote.isFallback),
+      isStale: false,
+    };
+  } catch (error) {
+    // Strict fallback chain: CACHE -> STALE -> REJECT
+    if (hasCachedQuote) {
+      return {
+        pricePaise: cached.data.pricePaise,
+        source: "STALE",
+        isFallback: true,
+        isStale: true,
+      };
+    }
+
+    if (error instanceof AppError) throw error;
+    throw new AppError("MARKET_DATA_UNAVAILABLE", 503);
+  }
 };
 
 const resolvePrices = async (symbols = []) => {
@@ -300,10 +339,10 @@ const getHistorical = async (symbol, period = "1mo") => {
       .map(q => ({
         date: q.date instanceof Date ? q.date.toISOString().split('T')[0] : q.date,
         timestamp: q.date instanceof Date ? q.date.getTime() : new Date(q.date).getTime(),
-        open: toPaise(q.open),
-        high: toPaise(q.high),
-        low: toPaise(q.low),
-        close: toPaise(q.close),
+        openPaise: toPaise(q.open),
+        highPaise: toPaise(q.high),
+        lowPaise: toPaise(q.low),
+        closePaise: toPaise(q.close),
         volume: q.volume || 0
       }))
       .sort((a, b) => a.timestamp - b.timestamp);
@@ -370,7 +409,7 @@ const getMarketIndices = async () => {
     return quotes.map(q => ({
       symbol: q.symbol === '^NSEI' ? 'NIFTY 50' : q.symbol === '^BSESN' ? 'SENSEX' : 'BANK NIFTY',
       pricePaise: toPaise(q.regularMarketPrice),
-      change: toPaise(q.regularMarketChange),
+      changePaise: toPaise(q.regularMarketChange),
       changePercent: q.regularMarketChangePercent,
       currency: 'INR',
       source: "REAL",

@@ -30,14 +30,14 @@ exports.getJournalSummary = async (req, res, next) => {
         openedAt: ct.entryTime,
         closedAt: ct.exitTime,
         plan: {
-          entry: ct.entryPricePaise,
-          sl: ct.stopLossPaise || ct.entryPlan?.stopLossPaise,
-          target: ct.targetPricePaise || ct.entryPlan?.targetPricePaise,
+          entryPaise: ct.entryPricePaise,
+          slPaise: ct.stopLossPaise || ct.entryPlan?.stopLossPaise,
+          targetPaise: ct.targetPricePaise || ct.entryPlan?.targetPricePaise,
           rr: ct.rr || ct.entryPlan?.rr
         },
         actual: {
-          entry: ct.entryPricePaise,
-          exit: ct.exitPricePaise
+          entryPaise: ct.entryPricePaise,
+          exitPaise: ct.exitPricePaise
         },
         insight: {
           what: reflection.executionPattern,

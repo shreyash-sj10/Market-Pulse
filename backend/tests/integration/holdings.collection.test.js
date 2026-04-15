@@ -31,7 +31,6 @@ const tradeService = require("../../src/services/trade.service");
 const { issueDecisionToken, __testables } = require("../../src/services/intelligence/preTradeAuthority.store");
 jest.setTimeout(60000);
 const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/trading_platform_test";
-const runIfDb = process.env.REQUIRE_DB_TESTS === "1" ? describe : describe.skip;
 
 const buyPayload = (overrides = {}) => ({
   symbol: "HOLD_TEST",
@@ -82,7 +81,7 @@ const issueSellToken = async (payload, userId) => {
   return r.token;
 };
 
-runIfDb("Holdings collection integrity", () => {
+describe("Holdings collection integrity", () => {
   let user;
 
   beforeAll(async () => {

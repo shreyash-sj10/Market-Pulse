@@ -30,21 +30,19 @@ export const initCurrency = async () => {
 export const fromPaise = (paise) => (paise || 0) / 100;
 export const toPaise = (rupees) => Math.round((parseFloat(rupees) || 0) * 100);
 
+/**
+ * PROTOCOL ENFORCEMENT: ALL_INTERNAL_VALUES = INTEGER_PAISE
+ * This function is the ONLY place where division by 100 occurs for display.
+ */
 export const formatINR = (paise) => {
-  if (paise === undefined || paise === null || isNaN(paise)) {
-    return new Intl.NumberFormat("en-IN", {
-      style: "currency",
-      currency: "INR",
-      maximumFractionDigits: 2,
-    }).format(0);
-  }
+  const val = Number(paise);
+  if (!Number.isFinite(val)) return "₹0.00";
 
-  const amount = paise / 100;
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: "INR",
     maximumFractionDigits: 2,
-  }).format(amount);
+  }).format(val / 100);
 };
 
 export const getExchangeRate = () => {

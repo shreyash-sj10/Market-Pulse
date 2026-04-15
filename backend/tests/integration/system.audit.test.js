@@ -14,9 +14,9 @@ jest.mock("../../src/services/marketData.service");
 jest.mock("../../src/services/aiExplanation.service");
 jest.setTimeout(30000);
 const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/trading_platform_test";
-const runIfDb = process.env.REQUIRE_DB_TESTS === "1" ? describe : describe.skip;
+ 
 
-runIfDb("SYSTEM AUDIT — PHASE 1 (TRUTH + ENFORCEMENT)", () => {
+describe("SYSTEM AUDIT — PHASE 1 (TRUTH + ENFORCEMENT)", () => {
   let testUser;
   let authToken;
 

@@ -5,7 +5,6 @@ const app = require("../../src/app");
 const User = require("../../src/models/user.model");
 jest.setTimeout(30000);
 const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/trading_platform_test";
-const runIfDb = process.env.REQUIRE_DB_TESTS === "1" ? describe : describe.skip;
 
 const extractCookie = (setCookie = [], key) => {
   const row = setCookie.find((c) => c.startsWith(`${key}=`));
@@ -13,7 +12,7 @@ const extractCookie = (setCookie = [], key) => {
   return row.split(";")[0];
 };
 
-runIfDb("Auth Security Hardening", () => {
+describe("Auth Security Hardening", () => {
   const email = "auth-security@pulse.local";
   const password = "securepass";
 

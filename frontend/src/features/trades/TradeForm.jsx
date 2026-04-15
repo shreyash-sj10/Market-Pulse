@@ -1,18 +1,11 @@
-import { useState, useEffect } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence } from "framer-motion";
 import { formatINR } from "../../utils/currency.utils";
-import toast from "react-hot-toast";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  validateSymbol,
-} from "../../services/market.api";
-import { executeTrade } from "../../services/trade.api";
-import { getPreTradeGuard, getAdaptiveProfile } from "../../services/intelligence.api";
 import SelectionPulse from "./components/SelectionPulse";
 import DecisionPanel from "./components/DecisionPanel";
 import ExecutionPersona from "./components/ExecutionPersona";
 import TradeInsight from "./components/TradeInsight";
+import { useTradeFlow } from "../../hooks/useTradeFlow";
 import {
   Search,
   Activity,
@@ -28,112 +21,40 @@ import {
 export default function TradeForm() {
   const location = useLocation();
   const [searchParams] = useSearchParams();
-  const queryClient = useQueryClient();
   const querySymbol = (searchParams.get("symbol") || "").toUpperCase();
   const initialSymbol = (location.state?.symbol || querySymbol || "").toUpperCase();
-  const tradeType = "BUY";
-
-  // ── STATE: Core Logic ────────────────────────────────────────────────────
-  const [symbol, setSymbol] = useState(initialSymbol);
-  const [quantity, setQuantity] = useState("1");
-  const [priceRupees, setPriceRupees] = useState(""); 
-  const [stopLoss, setStopLoss] = useState("");
-  const [targetPrice, setTargetPrice] = useState("");
-  const [userThinking, setUserThinking] = useState("");
-  const [tradeIntent, setTradeIntent] = useState("TREND_FOLLOWING");
-
-  // ── STATE: Intelligence & Flow ───────────────────────────────────────────
-  const [step, setStep] = useState(1); 
-  const [isExecuting, setIsExecuting] = useState(false);
-  const [showDecisionPanel, setShowDecisionPanel] = useState(false);
-  const [decisionSnapshot, setDecisionSnapshot] = useState(null);
-  const [result, setResult] = useState(null);
-
-  // ── QUERIES ──────────────────────────────────────────────────────────────
-  const { data: validation, isLoading: isValidating } = useQuery({
-    queryKey: ["validate", symbol],
-    queryFn: () => validateSymbol(symbol),
-    enabled: symbol.length >= 2,
-    staleTime: 60000,
-  });
-
-  const { data: persona } = useQuery({
-    queryKey: ["adaptive-profile"],
-    queryFn: getAdaptiveProfile,
-  });
-
-  // Auto-fill price on symbol validation
-  useEffect(() => {
-    if (validation?.isValid && validation.data?.price && !priceRupees) {
-      setPriceRupees((validation.data.price / 100).toString());
-    }
-  }, [validation]);
-
-  // ── CALCULATIONS ─────────────────────────────────────────────────────────
-  const canProceed = symbol && quantity > 0 && priceRupees > 0 && stopLoss > 0 && targetPrice > 0;
-
-  // ── HANDLERS ──────────────────────────────────────────────────────────────
-  const [executionMetadata, setExecutionMetadata] = useState({ token: null, idempotencyKey: null });
-
-  const handleReview = async () => {
-    if (!canProceed) return toast.error("Deployment plan incomplete. Enforce Risk/Reward integrity.");
-
-    const toastId = toast.loading("Synthesizing Institutional Decision Layers...");
-    try {
-      const response = await getPreTradeGuard({
-        symbol,
-        quantity: parseInt(quantity),
-        pricePaise: Math.round(parseFloat(priceRupees) * 100),
-        stopLossPaise: Math.round(parseFloat(stopLoss) * 100),
-        targetPricePaise: Math.round(parseFloat(targetPrice) * 100),
-        type: tradeType,
-        userThinking
-      });
-      
-      setDecisionSnapshot({ ...response.snapshot, state: response.state });
-      setExecutionMetadata(prev => ({ ...prev, token: response.token }));
-      setStep(2); // Progress to Phase 2: Intelligence Review
-      setShowDecisionPanel(true);
-      toast.dismiss(toastId);
-    } catch (err) {
-      toast.error("Decision engine timeout. Check local synchronization.");
-      toast.dismiss(toastId);
-    }
-  };
-
-  const finalizeTrade = async () => {
-    setIsExecuting(true);
-    setShowDecisionPanel(false);
-    const toastId = toast.loading("Executing Atomic Protocol...");
-    const idempotencyKey = crypto.randomUUID();
-
-    try {
-      const res = await executeTrade({
-        symbol,
-        type: tradeType,
-        quantity: parseInt(quantity),
-        pricePaise: Math.round(parseFloat(priceRupees) * 100),
-        stopLossPaise: Math.round(parseFloat(stopLoss) * 100),
-        targetPricePaise: Math.round(parseFloat(targetPrice) * 100),
-        userThinking,
-        intent: tradeIntent,
-        reason: userThinking,
-        decisionContext: decisionSnapshot,
-        idempotencyKey,
-        preTradeToken: executionMetadata.token
-      });
-
-      setResult(res.trade);
-      setStep(3); // Progress to Phase 3: Success
-      toast.success("Trade Plan Authorized and Executed.", { id: toastId });
-      queryClient.invalidateQueries(["portfolio"]);
-      queryClient.invalidateQueries(["positions"]);
-    } catch (err) {
-      toast.error(err.response?.data?.message || "Execution Engine Error", { id: toastId });
-    } finally {
-      setIsExecuting(false);
-    }
-  };
+  const { form, flow, validation, persona, insight } = useTradeFlow({ initialSymbol });
+  const {
+    symbol,
+    quantity,
+    priceRupees,
+    stopLoss,
+    targetPrice,
+    userThinking,
+    tradeIntent,
+    setSymbol,
+    setQuantity,
+    setPriceRupees,
+    setStopLoss,
+    setTargetPrice,
+    setUserThinking,
+    setTradeIntent,
+  } = form;
+  const {
+    step,
+    showDecisionPanel,
+    decisionSnapshot,
+    result,
+    isExecuting,
+    canProceed,
+    capitalCommitmentPaise,
+    closeDecisionPanel,
+    handleReview,
+    finalizeTrade,
+    resetTrade,
+  } = flow;
+  const isValidating = validation.isLoading;
+  const personaData = persona.data;
 
 
   if (step === 3 && result) {
@@ -147,14 +68,28 @@ export default function TradeForm() {
                <CheckCircle2 size={40} className="text-white" />
             </div>
             <h2 className="text-4xl font-black text-slate-900 tracking-tight mb-4">Trade Plan Executed.</h2>
-            <p className="text-slate-500 font-bold max-w-md mx-auto">Atomic confirmation received. The holding has been synchronized with your master ledger and a Decision Snapshot has been archived.</p>
+            <p className="text-slate-500 font-bold max-w-md mx-auto">Atomic confirmation received. The record is now flowing through the asynchronous intelligence pipeline for behavioral reflection.</p>
             
-            <div className="mt-12 grid grid-cols-2 md:grid-cols-4 gap-4 max-w-2xl mx-auto">
+            <div className="mt-6 flex flex-wrap justify-center gap-3">
+              {[
+                { label: "Portfolio", status: "✔ updated", color: "text-emerald-600" },
+                { label: "Journal", status: "⏳ pending", color: "text-amber-600" },
+                { label: "Profile", status: "⏳ updating", color: "text-indigo-600" },
+                { label: "Trace", status: "✔ recorded", color: "text-slate-600" }
+              ].map(item => (
+                <div key={item.label} className="flex items-center gap-1.5 px-4 py-1.5 bg-white border border-slate-100 rounded-full shadow-sm">
+                  <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">{item.label}</span>
+                  <span className={`text-[8px] font-black ${item.color}`}>{item.status}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-10 grid grid-cols-2 md:grid-cols-4 gap-4 max-w-2xl mx-auto">
                {[
                  { label: "Fill Price", value: formatINR(result.pricePaise) },
                  { label: "Stop Loss", value: formatINR(result.stopLossPaise) },
                  { label: "Target", value: formatINR(result.targetPricePaise) },
-                 { label: "Commitment", value: formatINR(result.totalValuePaise) }
+                 { label: "Quantity", value: result.quantity }
                ].map(item => (
                  <div key={item.label} className="p-4 bg-white rounded-2xl border border-slate-100">
                     <span className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">{item.label}</span>
@@ -164,13 +99,13 @@ export default function TradeForm() {
             </div>
 
             <button 
-              onClick={() => { setStep(1); setSymbol(""); setPriceRupees(""); setStopLoss(""); setTargetPrice(""); setResult(null); }}
+              onClick={resetTrade}
               className="mt-12 px-8 py-4 bg-slate-900 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest hover:bg-slate-800 transition-all shadow-xl shadow-slate-200"
             >
               Deploy New Order Plan
             </button>
          </div>
-         <TradeInsight symbol={symbol} trade={result} />
+         <TradeInsight trade={result} insight={insight.data} isLoading={insight.isLoading} />
       </div>
     );
   }
@@ -283,7 +218,7 @@ export default function TradeForm() {
                 </div>
                 <div>
                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em] mb-1 block">Capital Commitment</span>
-                   <h3 className="text-3xl font-black text-white tracking-tighter">{formatINR((parseFloat(quantity) || 0) * (parseFloat(priceRupees) || 0) * 100)}</h3>
+                   <h3 className="text-3xl font-black text-white tracking-tighter">{formatINR(capitalCommitmentPaise)}</h3>
                 </div>
                 <div className="flex items-center gap-6">
                    <div className="text-right">
@@ -348,7 +283,7 @@ export default function TradeForm() {
         </div>
 
         <div className="lg:col-span-4 space-y-8">
-           <ExecutionPersona persona={persona} />
+           <ExecutionPersona persona={personaData} />
            <SelectionPulse step={step} />
         </div>
       </div>
@@ -358,7 +293,7 @@ export default function TradeForm() {
           <DecisionPanel 
             snapshot={decisionSnapshot} 
             onConfirm={finalizeTrade}
-            onClose={() => setShowDecisionPanel(false)}
+            onClose={closeDecisionPanel}
             isExecuting={isExecuting}
           />
         )}

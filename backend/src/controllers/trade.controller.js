@@ -101,7 +101,8 @@ const getTradeHistory = async (req, res, next) => {
     const trades = await Trade.find({ user: req.user._id })
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limit);
+      .limit(limit)
+      .lean();
 
     res.status(200).json({
       success: true,

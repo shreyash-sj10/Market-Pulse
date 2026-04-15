@@ -6,40 +6,29 @@ const healthCheck = (req, res) => {
   res.status(200).json({ status: "OK" });
 };
 
-const readinessCheck = async (req, res) => {
-  const services = { db: "UP", redis: "UP", queue: "UP" };
-  let isReady = true;
-  let errorMsg = null;
+const { isRedisAvailable } = require("../infra/redisHealth");
 
+const readinessCheck = async (req, res) => {
+  const services = { db: "UP", redis: isRedisAvailable() ? "UP" : "DOWN" };
+  
   try {
     if (mongoose.connection.readyState !== 1) {
       services.db = "DOWN";
-      isReady = false;
-      throw new Error("DB_NOT_CONNECTED");
+      return res.status(503).json({ status: "NOT_READY", services, error: "DB_DOWN" });
     }
 
-    if (connection.status !== "ready") {
-      services.redis = "DOWN";
-      services.queue = "DOWN";
-      isReady = false;
-      throw new Error("REDIS_NOT_READY");
+    if (!isRedisAvailable()) {
+      return res.status(200).json({ 
+        status: "DEGRADED", 
+        services, 
+        message: "Background processing limited" 
+      });
     }
+
+    return res.status(200).json({ status: "READY", services });
   } catch(err) {
-    logger.error(`[HealthCheck] Readiness failed: \${err.message}`);
-    errorMsg = err.message;
-  }
-
-  if (isReady) {
-    return res.status(200).json({
-      status: "READY",
-      services
-    });
-  } else {
-    return res.status(503).json({
-      status: "NOT_READY",
-      services,
-      error: errorMsg
-    });
+    logger.error(`[HealthCheck] Readiness failed: ${err.message}`);
+    return res.status(503).json({ status: "ERROR", error: err.message });
   }
 };
 

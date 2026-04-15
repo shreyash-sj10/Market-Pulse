@@ -81,11 +81,6 @@ const evaluateEntryDecision = (input = {}) => {
     reasons.push("MARKET_CONSENSUS_AVOID");
   }
 
-  if (marketContext.strategyValid === false) {
-    baseRiskImpact += cfg.strategyInvalidPenalty;
-    reasons.push("STRATEGY_INVALID");
-  }
-
   if (behaviorFlags.includes("REVENGE_TRADING_RISK")) {
     baseRiskImpact += cfg.revengeFlagPenalty;
     reasons.push("REVENGE_TRADING_RISK");

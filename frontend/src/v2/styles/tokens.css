@@ -1,0 +1,64 @@
+:root {
+  --v2-bg-base: rgb(10 14 24);
+  --v2-bg-section: rgb(16 22 35);
+  --v2-bg-card: rgb(22 30 48);
+  --v2-bg-elevated: rgb(28 38 58);
+
+  --v2-accent-primary: rgb(71 132 255);
+  --v2-accent-soft: rgb(112 170 255);
+  --v2-accent-focus: rgb(142 194 255);
+
+  --v2-state-success: rgb(42 176 113);
+  --v2-state-success-bg: rgb(20 52 40);
+  --v2-state-warning: rgb(228 164 58);
+  --v2-state-warning-bg: rgb(62 48 20);
+  --v2-state-error: rgb(222 89 89);
+  --v2-state-error-bg: rgb(66 26 30);
+  --v2-state-degraded: rgb(165 142 255);
+  --v2-state-degraded-bg: rgb(43 36 76);
+
+  --v2-text-primary: rgb(236 241 252);
+  --v2-text-secondary: rgb(189 200 222);
+  --v2-text-muted: rgb(145 157 182);
+  --v2-text-disabled: rgb(110 121 145);
+
+  --v2-border-subtle: rgb(64 76 104);
+  --v2-border-strong: rgb(101 118 156);
+}
+
+body {
+  background: var(--v2-bg-base);
+  color: var(--v2-text-primary);
+}
+
+.v2-bg-base {
+  background: var(--v2-bg-base);
+}
+
+.v2-bg-section {
+  background: var(--v2-bg-section);
+}
+
+.v2-bg-card {
+  background: var(--v2-bg-card);
+}
+
+.v2-bg-elevated {
+  background: var(--v2-bg-elevated);
+}
+
+.v2-text-primary {
+  color: var(--v2-text-primary);
+}
+
+.v2-text-secondary {
+  color: var(--v2-text-secondary);
+}
+
+.v2-text-muted {
+  color: var(--v2-text-muted);
+}
+
+.v2-border-subtle {
+  border-color: var(--v2-border-subtle);
+}

@@ -1,7 +1,7 @@
 const adaptTrade = (trade) => {
   if (!trade) return null;
   return {
-    tradeId: trade.id || trade._id || null,
+    tradeId: trade.tradeId || trade.id || trade._id || null,
     symbol: trade.symbol || null,
     side: trade.type || null,
     pricePaise: trade.pricePaise || 0,
@@ -10,7 +10,8 @@ const adaptTrade = (trade) => {
     quantity: trade.quantity || 0,
     pnlPct: trade.pnlPct || 0,
     status: trade.status || "UNKNOWN",
-    decisionSnapshot: trade.decisionSnapshot || null,
+    decisionSnapshot: trade.decisionSnapshot || trade.preTradeSnapshot || null,
+    learningSurface: trade.learningOutcome || trade.reflection || null,
     trace: trade.trace || null,
     ai: trade.ai || null,
   };

@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const EXECUTION_LOCK_TTL_SECONDS = Number(process.env.EXECUTION_LOCK_TTL_SECONDS || 120);
 
 const executionLockSchema = new mongoose.Schema(
   {
@@ -33,8 +34,8 @@ const executionLockSchema = new mongoose.Schema(
   {}
 );
 
-executionLockSchema.index({ requestId: 1 }, { unique: true, name: "requestId_1" });
-executionLockSchema.index({ createdAt: 1 }, { expireAfterSeconds: 120, name: "createdAt_1" });
+executionLockSchema.index({ userId: 1, requestId: 1 }, { unique: true, name: "idx_user_request_uniq" });
+executionLockSchema.index({ createdAt: 1 }, { expireAfterSeconds: EXECUTION_LOCK_TTL_SECONDS, name: "createdAt_1" });
 
 const ExecutionLock = mongoose.model("ExecutionLock", executionLockSchema);
 module.exports = ExecutionLock;

@@ -12,6 +12,7 @@ import TracePage from "./features/trace/TracePage.jsx";
 import SystemDashboard from "./features/system/SystemDashboard.jsx";
 import JournalPage from "./features/trades/JournalPage.jsx";
 import ProfilePage from "./features/profile/ProfilePage.jsx";
+import V2PortfolioPage from "./v2/pages/portfolio/PortfolioPage.jsx";
 
 function App() {
   return (
@@ -30,6 +31,7 @@ function App() {
         >
           <Route path="/" element={<Dashboard />} />
           <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/portfolio" element={<V2PortfolioPage />} />
           <Route path="/trade" element={<TradeForm />} />
           <Route path="/market" element={<MarketExplorer />} />
           <Route path="/news" element={<NewsPage />} />

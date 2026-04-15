@@ -3,9 +3,10 @@ const logger = require("../utils/logger");
 const Trace = require("../models/trace.model");
 const ExecutionLock = require("../models/executionLock.model");
 const Holding = require("../models/holding.model");
+const Trade = require("../models/trade.model");
 
 const TRACE_TTL_SECONDS = 7776000;
-const EXECUTION_LOCK_TTL_SECONDS = 120;
+const EXECUTION_LOCK_TTL_SECONDS = Number(process.env.EXECUTION_LOCK_TTL_SECONDS || 120);
 
 const ensureTraceTtlIndex = async () => {
   const indexes = await Trace.collection.indexes();
@@ -30,7 +31,19 @@ const ensureTraceTtlIndex = async () => {
 const ensureExecutionLockIndexes = async () => {
   const indexes = await ExecutionLock.collection.indexes();
   const legacyIdempotencyIndex = indexes.find((idx) => idx.key && idx.key.idempotencyKey === 1);
-  const requestIdIndex = indexes.find((idx) => idx.key && idx.key.requestId === 1);
+  const requestIdOnlyIndex = indexes.find(
+    (idx) =>
+      idx.key &&
+      idx.key.requestId === 1 &&
+      Object.keys(idx.key).length === 1
+  );
+  const userRequestIndex = indexes.find(
+    (idx) =>
+      idx.key &&
+      idx.key.userId === 1 &&
+      idx.key.requestId === 1 &&
+      Object.keys(idx.key).length === 2
+  );
   const ttlIndex = indexes.find((idx) => idx.key && idx.key.createdAt === 1);
 
   if (legacyIdempotencyIndex?.name) {
@@ -38,14 +51,22 @@ const ensureExecutionLockIndexes = async () => {
     logger.warn(`ExecutionLock legacy index dropped (${legacyIdempotencyIndex.name})`);
   }
 
-  if (!requestIdIndex || requestIdIndex.unique !== true) {
-    if (requestIdIndex?.name) {
-      await ExecutionLock.collection.dropIndex(requestIdIndex.name);
+  if (requestIdOnlyIndex?.name) {
+    await ExecutionLock.collection.dropIndex(requestIdOnlyIndex.name);
+    logger.warn(`ExecutionLock global requestId index dropped (${requestIdOnlyIndex.name})`);
+  }
+
+  if (!userRequestIndex || userRequestIndex.unique !== true) {
+    if (userRequestIndex?.name) {
+      await ExecutionLock.collection.dropIndex(userRequestIndex.name);
     }
-    await ExecutionLock.collection.createIndex({ requestId: 1 }, { unique: true, name: "requestId_1" });
-    logger.info("ExecutionLock unique index created (requestId_1)");
+    await ExecutionLock.collection.createIndex(
+      { userId: 1, requestId: 1 },
+      { unique: true, name: "idx_user_request_uniq" }
+    );
+    logger.info("ExecutionLock unique index created (idx_user_request_uniq)");
   } else {
-    logger.info("ExecutionLock unique index verified (requestId_1)");
+    logger.info("ExecutionLock unique index verified (idx_user_request_uniq)");
   }
 
   if (!ttlIndex) {
@@ -75,6 +96,41 @@ const ensureHoldingsIndexes = async () => {
   }
 };
 
+const ensureTradeIdempotencyIndexes = async () => {
+  const indexes = await Trade.collection.indexes();
+  const legacyGlobalIdempotency = indexes.find(
+    (idx) =>
+      idx.key &&
+      idx.key.idempotencyKey === 1 &&
+      Object.keys(idx.key).length === 1
+  );
+  const userScopedIdempotency = indexes.find(
+    (idx) =>
+      idx.key &&
+      idx.key.user === 1 &&
+      idx.key.idempotencyKey === 1 &&
+      Object.keys(idx.key).length === 2
+  );
+
+  if (legacyGlobalIdempotency?.name) {
+    await Trade.collection.dropIndex(legacyGlobalIdempotency.name);
+    logger.warn(`Trade legacy global idempotency index dropped (${legacyGlobalIdempotency.name})`);
+  }
+
+  if (!userScopedIdempotency || userScopedIdempotency.unique !== true) {
+    if (userScopedIdempotency?.name) {
+      await Trade.collection.dropIndex(userScopedIdempotency.name);
+    }
+    await Trade.collection.createIndex(
+      { user: 1, idempotencyKey: 1 },
+      { unique: true, sparse: true, name: "idx_trade_user_idempotency_uniq" }
+    );
+    logger.info("Trade idempotency scoped unique index created (idx_trade_user_idempotency_uniq)");
+  } else {
+    logger.info("Trade idempotency scoped unique index verified (idx_trade_user_idempotency_uniq)");
+  }
+};
+
 const connectDB = async () => {
   const mongoUri = process.env.MONGO_URI;
 
@@ -93,6 +149,7 @@ const connectDB = async () => {
     await ensureTraceTtlIndex();
     await ensureExecutionLockIndexes();
     await ensureHoldingsIndexes();
+    await ensureTradeIdempotencyIndexes();
     logger.info("MongoDB connected successfully");
   } catch (error) {
     console.error("\n" + "=".repeat(50));

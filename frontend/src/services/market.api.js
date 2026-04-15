@@ -2,6 +2,7 @@ import axios from "axios";
 import api from "./api.js";
 import { getIndianStockPrice } from "./indianMarket.api.js";
 import { formatINR, getExchangeRate } from "../utils/currency.utils.js";
+import { normalizeResponse } from "../utils/contract.js";
 
 // Finnhub is used for US stocks and historical sparklines
 const FINNHUB_KEY = import.meta.env.VITE_FINNHUB_API_KEY;
@@ -108,10 +109,9 @@ export const generateSimulatedHistory = (currentPrice, isUSD = false, periods = 
 export const getMarketIndices = async () => {
   try {
     const res = await api.get("/market/indices");
-    return res.data;
+    return normalizeResponse(res);
   } catch (error) {
-    console.warn("[MarketAPI] Backend indices failed, returning empty state.");
-    return [];
+    return { success: false, data: { indices: [] }, degraded: true };
   }
 };
 
@@ -120,7 +120,7 @@ export const validateSymbol = async (symbol) => {
   if (!symbol) return { isValid: false };
   try {
     const res = await api.get(`/market/validate?symbol=${symbol}`);
-    return res.data;
+    return normalizeResponse(res);
   } catch (error) {
     return { isValid: false };
   }
@@ -152,7 +152,7 @@ export const getLivePrice = getStockPriceINR;
 
 // ─── Professional Historical Data (Backend Source) ──────────────────────────
 export const getHistoricalPrices = async (symbol, timeframe = "1mo") => {
-  if (!symbol) return { data: [], isSynthetic: false, isFallback: false };
+  if (!symbol) return { success: false, data: { prices: [] } };
 
   try {
     // Map timeframes to Yahoo-compatible periods
@@ -166,31 +166,12 @@ export const getHistoricalPrices = async (symbol, timeframe = "1mo") => {
 
     const period = periodMap[timeframe] || "1mo";
     const res = await api.get(`/market/history?symbol=${symbol}&period=${period}`);
-
-    if (!res.data || !res.data.success || !res.data.data.prices) {
-      throw new Error("Invalid history response");
-    }
-
-    // Response structure from backend is { success, data: { prices: [...] } }
-    const prices = res.data.data.prices.map(p => ({
-      date: p.date,
-      time: p.date, 
-      open: p.open,
-      high: p.high,
-      low: p.low,
-      close: p.close,
-      volume: p.volume
-    }));
-
-    return {
-      data: prices,
-      isSynthetic: Boolean(res.data.data.isSynthetic),
-      isFallback: Boolean(res.data.data.isFallback),
-      source: res.data.data.source,
-    };
+    return normalizeResponse(res);
   } catch (error) {
-    console.warn("[MarketAPI] History fetch failed:", error.message);
-    return { data: [], isSynthetic: false, isFallback: true };
+    return {
+      success: false,
+      data: { prices: [], isSynthetic: false, isFallback: true, source: "FALLBACK" },
+    };
   }
 };
 
@@ -229,7 +210,7 @@ export const searchSymbols = async (query) => {
 export const getExplorerData = async (limit = 16, offset = 0, query = "") => {
   try {
     const res = await api.get(`/market/explore?limit=${limit}&offset=${offset}&query=${query}`);
-    return res.data;
+    return normalizeResponse(res);
   } catch (error) {
     throw new Error("Market data unavailable");
   }
@@ -238,18 +219,17 @@ export const getExplorerData = async (limit = 16, offset = 0, query = "") => {
 export const getMarketNews = async (symbol = null) => {
   try {
     const res = await api.get(`/market/news${symbol ? `?symbol=${symbol}` : ''}`);
-    return res.data;
+    return normalizeResponse(res);
   } catch (error) {
-    console.warn("[MarketAPI] Backend news failed.", error.message);
-    return { market: [], global: [] };
+    return { success: false, state: "PARTIAL", status: "UNAVAILABLE", signals: [] };
   }
 };
 
 export const getPortfolioNews = async () => {
   try {
     const res = await api.get("/market/news/portfolio");
-    return res.data;
+    return normalizeResponse(res);
   } catch (error) {
-    return { news: [] };
+    return { success: false, state: "PARTIAL", status: "UNAVAILABLE", signals: [] };
   }
 };

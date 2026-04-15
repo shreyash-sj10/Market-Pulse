@@ -1,5 +1,4 @@
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import {
   ComposedChart,
   Line,
@@ -12,14 +11,11 @@ import {
   ReferenceLine,
   Cell,
 } from "recharts";
-import { getHistoricalPrices } from "../../../services/market.api.js";
-import { calculateEMA } from "../../../utils/chartHelpers.js";
-import { calculateRSI, calculateVolumeColors } from "../utils/indicators.js";
 import { formatINR } from "../../../utils/currency.utils.js";
 
 // ─── Candlestick Component ──────────────────────────────────────────────────
 const Candle = (props) => {
-  const { x, y, width, height, low, high, open, close } = props;
+  const { x, y, width, height, open, close } = props;
   const isUp = close >= open;
   const color = isUp ? "#10b981" : "#f43f5e";
   
@@ -43,7 +39,7 @@ const Candle = (props) => {
   );
 };
 
-const CustomTooltip = ({ active, payload, label }) => {
+const CustomTooltip = ({ active, payload }) => {
   if (active && payload && payload.length) {
     const d = payload[0].payload;
     return (
@@ -83,27 +79,16 @@ const CustomTooltip = ({ active, payload, label }) => {
   return null;
 };
 
-export default function PriceChart({ symbol, livePrice, onHover }) {
-  const [activeTimeframe, setActiveTimeframe] = useState("1M");
-  const [hoveredPoint, setHoveredPoint] = useState(null);
-
-  const { data: rawPrices, isLoading, error } = useQuery({
-    queryKey: ["price-history-strict", symbol, activeTimeframe],
-    queryFn: () => getHistoricalPrices(symbol.toUpperCase(), activeTimeframe),
-    enabled: !!symbol,
-    staleTime: 1000 * 60 * 5,
-  });
-
-  const chartData = useMemo(() => {
-    const prices = rawPrices?.data || [];
-    if (!prices.length) return [];
-    
-    let data = calculateEMA(prices, 20);
-    data = calculateRSI(data, 14);
-    data = calculateVolumeColors(data);
-    
-    return data;
-  }, [rawPrices]);
+export default function PriceChart({
+  symbol,
+  activeTimeframe,
+  onTimeframeChange,
+  chartData = [],
+  isLoading = false,
+  error = null,
+  onHover,
+}) {
+  const [, setHoveredPoint] = useState(null);
 
   const latestPoint = chartData[chartData.length - 1];
 
@@ -149,7 +134,7 @@ export default function PriceChart({ symbol, livePrice, onHover }) {
           {["1D", "1W", "1M", "3M", "1Y"].map(tf => (
             <button
               key={tf}
-              onClick={() => setActiveTimeframe(tf)}
+              onClick={() => onTimeframeChange(tf)}
               className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${activeTimeframe === tf ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
             >
               {tf}

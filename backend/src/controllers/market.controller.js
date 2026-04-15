@@ -27,8 +27,6 @@ const getHistory = async (req, res, next) => {
   }
 };
 
-const newsEngine = require('../services/news/news.engine');
-
 const getNews = async (req, res, next) => {
   try {
     const { symbol } = req.query;
@@ -91,29 +89,51 @@ const getPortfolioNews = async (req, res, next) => {
   }
 };
 
-const getIndices = async (req, res, next) => {
+const getIndices = async (req, res) => {
   try {
     const results = await marketDataService.getMarketIndices();
-    res.json(results);
+    const indices = Array.isArray(results) ? results : [];
+    
+    res.json({
+      success: true,
+      data: {
+        indices
+      },
+      degraded: indices.length === 0
+    });
   } catch (error) {
-    next(error);
+    res.json({
+      success: true,
+      data: { indices: [] },
+      degraded: true,
+      error: "fallback_mode"
+    });
   }
 };
 
-const getMarketOverview = async (req, res, next) => {
+const getMarketOverview = async (req, res) => {
   try {
-    const symbols = ['^NSEI', '^BSESN', '^NSEBANK'];
     const [quotes, newsData] = await Promise.all([
       marketDataService.getMarketIndices(),
       newsEngine.getTopNews()
     ]);
     
+    const indices = Array.isArray(quotes) ? quotes : [];
+
     res.json({
       success: true,
-      data: adaptMarket(quotes, newsData)
+      data: {
+        ...adaptMarket(indices, newsData),
+        indices
+      },
+      degraded: indices.length === 0
     });
   } catch (error) {
-    next(error);
+    res.json({
+      success: true,
+      data: { indices: [], market: [], global: [] },
+      degraded: true
+    });
   }
 };
 

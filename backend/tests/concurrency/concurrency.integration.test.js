@@ -4,7 +4,6 @@ const request = require("supertest");
 const jwt = require("jsonwebtoken");
 jest.setTimeout(60000);
 const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/trading_platform_test";
-const runIfDb = process.env.REQUIRE_DB_TESTS === "1" ? describe : describe.skip;
 
 jest.mock("../../src/services/marketData.service", () => ({
   validateSymbol: jest.fn().mockImplementation(
@@ -38,7 +37,7 @@ const { issueDecisionToken, __testables } = require("../../src/services/intellig
 const PreTradeToken = require("../../src/models/preTradeToken.model");
 const app = require("../../src/app");
 
-runIfDb("Concurrency + Full Flow Verification", () => {
+describe("Concurrency + Full Flow Verification", () => {
   let user;
   let authToken;
 

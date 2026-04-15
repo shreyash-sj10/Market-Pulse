@@ -5,6 +5,7 @@ import { AuthProvider } from "./features/auth/AuthContext.jsx";
 import ErrorBoundary from "./components/ErrorBoundary.jsx";
 import App from "./App.jsx";
 import "./index.css";
+import "./v2/styles/tokens.css";
 import { initCurrency } from "./utils/currency.utils";
 
 console.log("[Boot] Initializing Trading Platform (v3)...");

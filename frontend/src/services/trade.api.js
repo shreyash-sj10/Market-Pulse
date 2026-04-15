@@ -1,4 +1,5 @@
 import api from "./api.js";
+import { normalizeResponse } from "../utils/contract.js";
 
 // --- INTEGRITY HEADERS ---
 const getHardenedHeaders = (idempotencyKey, preTradeToken) => ({
@@ -8,13 +9,13 @@ const getHardenedHeaders = (idempotencyKey, preTradeToken) => ({
 
 export const getTradeHistory = async (page = 1, limit = 10) => {
   const response = await api.get(`/trades?page=${page}&limit=${limit}`);
-  return response.data;
+  return normalizeResponse(response);
 };
 
 export const getTrades = ({ pageParam = 1 } = {}) => getTradeHistory(pageParam, 10);
 
 export const buyTrade = async ({
-  type,
+  side,
   symbol,
   quantity,
   pricePaise,
@@ -26,7 +27,7 @@ export const buyTrade = async ({
   preTradeToken,
 }) => {
   const response = await api.post("/trades/buy", {
-    type,
+    side,
     symbol,
     quantity,
     pricePaise,
@@ -37,11 +38,11 @@ export const buyTrade = async ({
   }, {
     headers: getHardenedHeaders(idempotencyKey, preTradeToken)
   });
-  return response.data;
+  return normalizeResponse(response);
 };
 
 export const sellTrade = async ({
-  type,
+  side,
   symbol,
   quantity,
   pricePaise,
@@ -51,7 +52,7 @@ export const sellTrade = async ({
   preTradeToken,
 }) => {
   const response = await api.post("/trades/sell", {
-    type,
+    side,
     symbol,
     quantity,
     pricePaise,
@@ -60,10 +61,10 @@ export const sellTrade = async ({
   }, {
     headers: getHardenedHeaders(idempotencyKey, preTradeToken)
   });
-  return response.data;
+  return normalizeResponse(response);
 };
 
 export const executeTrade = async (params) => {
-  if (params.type === "BUY") return buyTrade(params);
+  if (params.side === "BUY") return buyTrade(params);
   return sellTrade(params);
 };

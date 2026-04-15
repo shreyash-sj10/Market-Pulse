@@ -1,5 +1,16 @@
 const adaptAIResponse = (ai) => {
-  if (!ai) {
+  if (!ai || typeof ai !== "object") {
+    return {
+      status: "UNAVAILABLE",
+      explanation: {
+        summary: "",
+        warnings: [],
+        keyFactors: []
+      }
+    };
+  }
+
+  if (ai.status && ai.status !== "OK") {
     return {
       status: "UNAVAILABLE",
       explanation: {
@@ -11,7 +22,7 @@ const adaptAIResponse = (ai) => {
   }
 
   return {
-    status: ai.status || "OK",
+    status: "OK",
     explanation: {
       summary: ai.explanation?.summary || "",
       warnings: Array.isArray(ai.explanation?.warnings) ? ai.explanation.warnings : [],

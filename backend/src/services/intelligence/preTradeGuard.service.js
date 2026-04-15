@@ -1,8 +1,7 @@
 const newsEngine = require("../news/news.engine");
 const Trade = require("../../models/trade.model");
 const adaptiveEngine = require("./adaptiveEngine.service");
-const { parseUserBias, explainDecision } = require("../aiExplanation.service");
-const { validateStrategy } = require("../strategy.engine");
+const { explainDecision } = require("../aiExplanation.service");
 const { issueDecisionToken } = require("./preTradeAuthority.store");
 const { toHoldingsObject } = require("../../utils/holdingsNormalizer");
 const Holding = require("../../models/holding.model");
@@ -55,28 +54,11 @@ const checkTradeRisk = async (tradeRequest, user) => {
   const consensus = newsResponse.signals?.[0];
   const marketStatus = newsResponse?.status || (consensus ? "VALID" : "UNAVAILABLE");
 
-  // LAYER 2: TRADE SETUP (AI Intent + Strategy Rule)
-  const parsedIntent = await parseUserBias(userThinking);
-  const parsedIntentValid = parsedIntent?.status === "OK";
-  // The strategy logic expects "parsedIntent" to be the AI output. But we need to check if strategy matches intent.
-  // Wait, the validation requires intent format: { strategy: ... } but we unified it to the AIResponse contract!
-  // It is now parsedIntent.explanation.summary (if mapped) or parsedIntent.behavior.tag.
-  // Actually, our Normalizer stores "strategy" into "summary" (normalizeAIOutput maps raw.strategy to summary).
-  const strategyString = parsedIntent?.strategyTag || "UNKNOWN";
-  
-  const strategyAudit = parsedIntentValid
-    ? validateStrategy({ strategy: strategyString, reason: parsedIntent?.behavior?.explanation }, {
-      rsi: Number(consensus?.rsi),
-      trend: consensus?.verdict === "BUY" ? "BULLISH" : "BEARISH",
-      volatility: Number(consensus?.volatility),
-    })
-    : { isValid: false, mismatchReason: "INSUFFICIENT_INTENT_DATA", score: null };
-
-  // LAYER 3: BEHAVIORAL ANALYSIS
+  // LAYER 2: BEHAVIORAL ANALYSIS
   const behavioralFlags = await getBehavioralFlags(user);
   const adaptiveProfile = await adaptiveEngine.getAdaptiveProfile(user._id);
 
-  // LAYER 4: ENTRY ENGINE (Decision ownership)
+  // LAYER 3: ENTRY ENGINE (Decision ownership, deterministic inputs only)
   const entryDecisionBase = evaluateEntryDecision({
     plan: {
       side: type || "BUY",
@@ -87,7 +69,6 @@ const checkTradeRisk = async (tradeRequest, user) => {
     marketContext: {
       status: marketStatus,
       consensusVerdict: consensus?.verdict,
-      strategyValid: strategyAudit.isValid,
     },
     behaviorContext: {
       status: "VALID",
@@ -111,7 +92,6 @@ const checkTradeRisk = async (tradeRequest, user) => {
     marketContext: {
       status: marketStatus,
       consensusVerdict: consensus?.verdict,
-      strategyValid: strategyAudit.isValid,
       adaptedRiskLevel: adapted.adaptedRiskLevel,
     },
     behaviorContext: {
@@ -196,9 +176,9 @@ const checkTradeRisk = async (tradeRequest, user) => {
                : "Data not available. Decision limited due to missing signals."
           },
           volumeSetupStrength: {
-             score: strategyAudit.isValid ? cfg.setupValidScore : cfg.setupInvalidScore,
-             status: strategyAudit.isValid ? "ROBUST" : "FRAGILE",
-             reasoning: strategyAudit.isValid ? "Technical volume profile and setup align with institutional strategy protocols." : strategyAudit.mismatchReason
+             score: null,
+             status: "INFORMATIONAL",
+             reasoning: "Setup analysis is informational only and does not affect deterministic decisioning."
           },
           behavioralRisk: {
              score: 100 - (behavioralFlags.length * cfg.behavioralDisciplinePenaltyPerFlag),
@@ -212,12 +192,12 @@ const checkTradeRisk = async (tradeRequest, user) => {
           }
        },
        setup: {
-          strategy: parsedIntentValid ? parsedIntent.strategy : null,
-          isValid: strategyAudit.isValid,
-          reason: strategyAudit.mismatchReason,
-          confidence: parsedIntentValid ? parsedIntent.confidence : null,
-          status: parsedIntentValid ? "VALID" : "UNAVAILABLE",
-          unavailableReason: parsedIntentValid ? undefined : parsedIntent?.reason,
+          strategy: null,
+          isValid: null,
+          reason: "AI_SETUP_REMOVED_FROM_DECISION_PATH",
+          confidence: null,
+          status: "UNAVAILABLE",
+          unavailableReason: "AI_NON_AUTHORITATIVE_BOUNDARY_ENFORCED",
        },
        behavior: {
           flags: behavioralFlags,
@@ -232,7 +212,7 @@ const checkTradeRisk = async (tradeRequest, user) => {
           status: entryDecision.status || "VALID",
           reason: entryDecision.reason,
        },
-       bias: parsedIntent,
+       bias: null,
        // AI explanation computed async in background after token issuance.
        // Not included in synchronous response — consumers read from cache.
        ai: null
