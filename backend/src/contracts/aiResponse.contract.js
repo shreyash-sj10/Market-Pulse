@@ -1,3 +1,7 @@
+/**
+ * Response-shape builder for AI explanations (DTO assembly).
+ * For inbound validation, see `src/validations/`. For transport transforms, see `src/adapters/`.
+ */
 function buildAIResponse(normalizedData = null, isUnavailable = false) {
   if (isUnavailable || !normalizedData) {
     return {

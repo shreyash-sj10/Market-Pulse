@@ -1,6 +1,6 @@
 const Outbox = require("../models/outbox.model");
 const { tradeQueue } = require("../queue/queue");
-const logger = require("../lib/logger");
+const logger = require("../utils/logger");
 
 const POLL_MS = Number(process.env.OUTBOX_POLL_MS || 5000);
 const BATCH_SIZE = Number(process.env.OUTBOX_BATCH_SIZE || 50);

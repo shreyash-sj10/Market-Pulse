@@ -253,45 +253,85 @@ const getBulkSnapshots = async (symbols = []) => {
 };
 
 /**
- * FETCH EXPLORE DATA (NIFTY 500 SCALING)
+ * Market-cap segment (INR marketCap from quotes). Thresholds are order-of-magnitude for NSE large/mid/small.
  */
-const getExploreData = async (limit = 20, offset = 0, search = "") => {
-const { NIFTY_500 } = require('../constants/nifty500');
+const matchesExploreSegment = (stock, segment) => {
+  const s = String(segment || "all").toLowerCase();
+  if (!s || s === "all") return true;
+  const mc = stock?.marketCap;
+  if (mc == null || !Number.isFinite(mc)) return s === "small";
+  const largeMin = 2e11;
+  const midMin = 5e10;
+  if (s === "large") return mc >= largeMin;
+  if (s === "mid") return mc >= midMin && mc < largeMin;
+  if (s === "small") return mc < midMin;
+  return true;
+};
 
-const MASTER_POOL = NIFTY_500;
+/**
+ * FETCH EXPLORE DATA (NIFTY 500 SCALING)
+ * Oversamples the symbol pool until `limit` valid quotes match segment (fixes short pages / ~49 rows).
+ */
+const getExploreData = async (limit = 64, offset = 0, search = "", segment = "all") => {
+  const { NIFTY_500 } = require('../constants/nifty500');
+  const MASTER_POOL = NIFTY_500;
 
   let symbols = MASTER_POOL;
-
   if (search) {
     const q = search.toUpperCase();
-    symbols = MASTER_POOL.filter(s => s.includes(q));
+    symbols = MASTER_POOL.filter((s) => s.includes(q));
   }
 
-  const paginated = symbols.slice(offset, offset + limit);
-  console.log(`[MarketExplorer] Bulk Loading ${paginated.length} symbols at offset ${offset}`);
+  const BATCH = 28;
+  const MAX_SCAN = 900;
+  const collected = [];
+  let scanIdx = offset;
+  let scanned = 0;
 
-  const final = await getBulkSnapshots(paginated);
+  while (collected.length < limit && scanIdx < symbols.length && scanned < MAX_SCAN) {
+    const slice = symbols.slice(scanIdx, scanIdx + BATCH);
+    scanIdx += slice.length;
+    scanned += slice.length;
+    if (!slice.length) break;
 
-  // GUARANTEE NON-EMPTY STATE EVEN IN OFFLINE/PROVIDER FAILURES
-  if (final.length === 0) {
+    const batch = await getBulkSnapshots(slice);
+    for (const st of batch) {
+      if (matchesExploreSegment(st, segment)) {
+        collected.push(st);
+        if (collected.length >= limit) break;
+      }
+    }
+  }
+
+  const poolEnd = scanIdx;
+  const hasMore = poolEnd < symbols.length;
+
+  if (collected.length === 0) {
+    const seed = symbols.slice(offset, offset + Math.min(limit, BATCH));
     if (!search && offset === 0) {
       console.warn("[MarketExplorer] Live provider unavailable, serving deterministic synthetic universe.");
     }
-    const stocks = paginated.map((s, idx) => buildSyntheticQuote(normalizeSymbol(s), idx));
+    const stocks = seed.map((s, idx) => buildSyntheticQuote(normalizeSymbol(s), idx))
+      .filter((st) => matchesExploreSegment(st, segment))
+      .slice(0, limit);
     return {
-      stocks,
+      stocks: stocks.length ? stocks : seed.map((s, idx) => buildSyntheticQuote(normalizeSymbol(s), idx)).slice(0, limit),
       meta: {
         isSynthetic: true,
         isFallback: true,
+        poolEnd: Math.min(poolEnd, symbols.length),
+        hasMore: false,
       },
     };
   }
 
   return {
-    stocks: final,
+    stocks: collected,
     meta: {
-      isSynthetic: final.some((item) => item.isSynthetic === true),
-      isFallback: final.some((item) => item.isFallback === true),
+      isSynthetic: collected.some((item) => item.isSynthetic === true),
+      isFallback: collected.some((item) => item.isFallback === true),
+      poolEnd,
+      hasMore,
     },
   };
 };
@@ -371,7 +411,9 @@ const getHistorical = async (symbol, period = "1mo") => {
 const getFundamentals = async (symbol) => {
   const apiSymbol = normalizeSymbol(symbol);
   try {
-    const result = await yahooFinance.quoteSummary(apiSymbol, { modules: ["summaryDetail", "defaultKeyStatistics"] });
+    const result = await yahooFinance.quoteSummary(apiSymbol, {
+      modules: ["summaryDetail", "defaultKeyStatistics", "financialData"],
+    });
     return result;
   } catch (error) {
     return null;
@@ -423,6 +465,51 @@ const getMarketIndices = async () => {
 };
 
 /**
+ * GET FULL TICKER DATA (Indian indices + global commodities/indices)
+ * Bypasses the INR currency filter — raw Yahoo batch call, same pattern as getMarketIndices.
+ */
+const TICKER_SYMBOLS = ['^NSEI', '^BSESN', '^NSEBANK', 'GC=F', 'SI=F', 'CL=F', '^IXIC'];
+const TICKER_LABELS  = {
+  '^NSEI':   'NIFTY 50',
+  '^BSESN':  'SENSEX',
+  '^NSEBANK':'BANK NIFTY',
+  'GC=F':    'GOLD',
+  'SI=F':    'SILVER',
+  'CL=F':    'OIL (WTI)',
+  '^IXIC':   'NASDAQ',
+};
+
+const getTickerData = async () => {
+  try {
+    const raw = await yahooFinance.quote(TICKER_SYMBOLS);
+    const arr = Array.isArray(raw) ? raw : [raw];
+    return arr
+      .filter(q => q && q.regularMarketPrice != null)
+      .map(q => ({
+        symbol:        q.symbol,
+        label:         TICKER_LABELS[q.symbol] || q.symbol,
+        price:         q.regularMarketPrice,
+        changePercent: q.regularMarketChangePercent || 0,
+        currency:      q.currency || 'USD',
+        source:        'REAL',
+        isFallback:    false,
+      }));
+  } catch (error) {
+    console.error('[MarketDataService] Ticker fail:', error.message);
+    // Deterministic synthetic fallback so the UI never shows empty
+    return TICKER_SYMBOLS.map((sym) => ({
+      symbol:        sym,
+      label:         TICKER_LABELS[sym] || sym,
+      price:         0,
+      changePercent: 0,
+      currency:      sym.startsWith('^NSE') || sym === '^BSESN' ? 'INR' : 'USD',
+      source:        'FALLBACK',
+      isFallback:    true,
+    }));
+  }
+};
+
+/**
  * GET LIVE PRICES (Bulk)
  */
 const getLivePrices = async (symbols = []) => {
@@ -439,5 +526,6 @@ module.exports = {
   getHistorical,
   getFundamentals,
   validateSymbol,
-  getMarketIndices
+  getMarketIndices,
+  getTickerData,
 };

@@ -1,47 +1,66 @@
 import { NavLink } from "react-router-dom";
+import { useAuth } from "../../../features/auth/AuthContext.jsx";
+import { ROUTES } from "../../routing/routes";
+import {
+  LayoutDashboard,
+  BarChart2,
+  Briefcase,
+  BookOpen,
+  User,
+  Activity,
+} from "lucide-react";
 
-const routes = [
-  { key: "home", label: "Home", to: "/" },
-  { key: "markets", label: "Markets", to: "/markets" },
-  { key: "portfolio", label: "Portfolio", to: "/portfolio" },
-  { key: "journal", label: "Journal", to: "/journal" },
-  { key: "profile", label: "Profile", to: "/profile" },
-  { key: "trace", label: "Trace", to: "/trace" },
+const NAV_ITEMS = [
+  { key: "home",      label: "Home",      to: ROUTES.dashboard, icon: LayoutDashboard },
+  { key: "markets",   label: "Markets",   to: ROUTES.markets,   icon: BarChart2 },
+  { key: "portfolio", label: "Portfolio", to: ROUTES.portfolio, icon: Briefcase },
+  { key: "journal",   label: "Journal",   to: ROUTES.journal,   icon: BookOpen },
+  { key: "profile",   label: "Profile",   to: ROUTES.profile,   icon: User },
+  { key: "trace",     label: "Trace",     to: ROUTES.trace,     icon: Activity },
 ];
 
 export default function Sidebar() {
+  const { user } = useAuth();
+
+  const displayName  = user?.name ?? user?.email?.split("@")[0] ?? "Operator";
+  const initials     = displayName.slice(0, 2).toUpperCase();
+  const isConnected  = !!user;
+  const statusLabel  = isConnected ? "Connected" : "Offline";
+  const appVersion   = import.meta.env.VITE_APP_VERSION ?? "v2";
+
   return (
-    <aside
-      style={{
-        background: "var(--v2-bg-section)",
-        borderRight: "1px solid var(--v2-border-subtle)",
-        display: "flex",
-        flexDirection: "column",
-        gap: "0.5rem",
-        minHeight: "100vh",
-        padding: "1rem",
-        width: "240px",
-      }}
-    >
-      {routes.map((route) => (
-        <NavLink
-          key={route.key}
-          to={route.to}
-          style={({ isActive }) => ({
-            background: isActive ? "var(--v2-bg-elevated)" : "transparent",
-            border: "1px solid var(--v2-border-subtle)",
-            borderRadius: "0.5rem",
-            color: "var(--v2-text-primary)",
-            display: "block",
-            fontSize: "0.875rem",
-            fontWeight: 600,
-            padding: "0.65rem 0.85rem",
-            textDecoration: "none",
-          })}
-        >
-          {route.label}
-        </NavLink>
-      ))}
+    <aside className="sidebar">
+      <div className="sidebar__brand">
+        <div className="sidebar__logo">NOESIS</div>
+        <div className="sidebar__tagline">Terminal {appVersion}</div>
+      </div>
+
+      <nav className="sidebar-nav" aria-label="Main navigation">
+        {NAV_ITEMS.map(({ key, label, to, icon: Icon }) => (
+          <NavLink
+            key={key}
+            to={to}
+            className={({ isActive }) =>
+              isActive ? "sidebar-link is-active" : "sidebar-link"
+            }
+          >
+            <Icon className="sidebar-link__icon" size={16} />
+            <span className="sidebar-link__label">{label}</span>
+          </NavLink>
+        ))}
+      </nav>
+
+      <div className="sidebar__user">
+        <div className="sidebar__avatar" aria-hidden="true">
+          {initials}
+        </div>
+        <div className="sidebar__user-info">
+          <div className="sidebar__user-name">{displayName}</div>
+          <div className="sidebar__user-status" style={{ color: isConnected ? "var(--v2-state-success)" : "var(--v2-text-muted)" }}>
+            {statusLabel}
+          </div>
+        </div>
+      </div>
     </aside>
   );
 }

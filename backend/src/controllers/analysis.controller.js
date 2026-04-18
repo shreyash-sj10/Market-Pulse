@@ -23,7 +23,7 @@ const getAnalysisSummary = async (req, res, next) => {
     const hasValidSnapshot = user.analyticsSnapshot && (Date.now() - new Date(user.analyticsSnapshot.lastUpdated).getTime() < SNAPSHOT_VALID_WINDOW);
     
     if (hasValidSnapshot) {
-      const logger = require("../lib/logger");
+      const logger = require("../utils/logger");
       logger.info("Deep analysis snapshot hit", { 
         action: "ANALYTICS_SNAPSHOT_HIT", 
         userId: user._id, 

@@ -4,7 +4,7 @@
  * Circuit state shared across all instances via Redis INCR + TTL.
  */
 const IORedis = require("ioredis");
-const logger = require("../lib/logger");
+const logger = require("../utils/logger");
 
 const redis = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
   maxRetriesPerRequest: 1,

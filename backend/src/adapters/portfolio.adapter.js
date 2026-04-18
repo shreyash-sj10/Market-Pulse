@@ -22,8 +22,9 @@ const adaptPortfolio = (portfolio) => {
     totalPnlPct,
     balancePaise,
     unrealizedPnLPaise: portfolio.unrealizedPnL || 0,
-    realizedPnLPaise: portfolio.realizedPnL || 0,
-    totalInvestedPaise: investedPaise
+    realizedPnLPaise:   portfolio.realizedPnL   || 0,
+    totalInvestedPaise: investedPaise,
+    winRate:            portfolio.winRate        || 0,
   };
 };
 

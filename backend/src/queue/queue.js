@@ -1,6 +1,6 @@
 const { Queue } = require("bullmq");
-const logger = require("../lib/logger");
-const redisClient = require("../lib/redisClient");
+const logger = require("../utils/logger");
+const redisClient = require("../utils/redisClient");
 const { isRedisAvailable } = require("../infra/redisHealth");
 
 /**

@@ -1,4 +1,7 @@
 const Decimal = require("decimal.js");
+const logger = require("../utils/logger");
+
+const tradeKey = (t) => (t && (t.tradeId || t.id)) || "";
 
 /**
  * Computes reward-to-risk ratio from plan prices.
@@ -40,7 +43,13 @@ exports.mapToClosedTrades = (trades) => {
       const buyStack = holdingsPool[symbol] || [];
 
       if (buyStack.length === 0 && sellQty > 0) {
-        throw new Error(`STATE_CORRUPTION_DETECTED: Orphan SELL detected for ${symbol}. No matching entry trades.`);
+        logger.warn({
+          action: "CLOSED_MAPPER_ORPHAN_SELL_SKIPPED",
+          symbol,
+          sellQty,
+          hint: "SELL has no prior BUY in this slice — often partial history, pending guardian sell, or symbol mismatch.",
+        });
+        return;
       }
 
       while (sellQty > 0 && buyStack.length > 0) {
@@ -48,7 +57,8 @@ exports.mapToClosedTrades = (trades) => {
         const matchedQty = Math.min(sellQty, firstBuy.quantity);
 
         if (matchedQty <= 0) {
-          throw new Error(`STATE_CORRUPTION_DETECTED: Invalid matched quantity (0 or less) for ${symbol}.`);
+          logger.warn({ action: "CLOSED_MAPPER_ZERO_MATCH", symbol });
+          break;
         }
 
         const entryVal = new Decimal(matchedQty).mul(firstBuy.pricePaise);
@@ -63,8 +73,10 @@ exports.mapToClosedTrades = (trades) => {
         const entryTime = new Date(firstBuy.openedAt || firstBuy.createdAt).getTime();
         const exitTime = new Date(trade.closedAt || trade.createdAt).getTime();
 
+        const buyKey = tradeKey(firstBuy);
+        const sellKey = tradeKey(trade);
         closedTrades.push({
-          id: `ct-${firstBuy.id}-${trade.id}`.substring(0, 64),
+          id: `ct-${buyKey}-${sellKey}`.substring(0, 64),
           symbol,
           entryPricePaise: firstBuy.pricePaise,
           exitPricePaise: trade.pricePaise,
@@ -81,8 +93,8 @@ exports.mapToClosedTrades = (trades) => {
           targetPricePaise: firstBuy.targetPricePaise,
           entryTime,
           exitTime,
-          entryTradeId: firstBuy.id,
-          exitTradeId: trade.id,
+          entryTradeId: buyKey,
+          exitTradeId: sellKey,
           decisionSnapshot: {
              entry: firstBuy.decision || firstBuy.decisionSnapshot || {},
              exit: trade.decision || trade.decisionSnapshot || {}
@@ -100,7 +112,11 @@ exports.mapToClosedTrades = (trades) => {
       }
 
       if (sellQty > 0) {
-        throw new Error(`STATE_CORRUPTION_DETECTED: Unfilled SELL quantity (${sellQty}) for ${symbol} with empty buy stack.`);
+        logger.warn({
+          action: "CLOSED_MAPPER_UNFILLED_SELL",
+          symbol,
+          remainingQty: sellQty,
+        });
       }
     }
 

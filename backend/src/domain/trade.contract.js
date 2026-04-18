@@ -1,3 +1,7 @@
+/**
+ * Domain normalization for persisted trades (not a JSON-schema contract).
+ * Risk/RR helpers delegate to `services/risk.engine.js`.
+ */
 const VALID_TRADE_TYPES = new Set(["BUY", "SELL"]);
 const { toNullableNumber, calculateRR } = require("../services/risk.engine");
 

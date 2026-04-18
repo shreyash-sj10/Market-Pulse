@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "./AuthContext.jsx";
-import { loginUser, registerUser } from "../../services/auth.api.js";
+import { loginUser, registerUser } from "../../v2/api/auth.api.js";
 import { Activity, ArrowRight, TrendingUp } from "lucide-react";
 
 export default function AuthPage() {
@@ -18,7 +18,7 @@ export default function AuthPage() {
   // ── AUTO-REDIRECT IF ALREADY AUTHENTICATED ──
   useEffect(() => {
     if (user) {
-      navigate("/");
+      navigate("/dashboard");
     }
   }, [user, navigate]);
 
@@ -55,7 +55,7 @@ export default function AuthPage() {
         : await registerUser(payload);
 
       login(data.token, data.user);
-      navigate("/");
+      navigate("/dashboard");
     } catch (err) {
       if (err.response?.data?.errors) {
         const fieldErrors = err.response.data.errors.map(e => e.message).join(". ");

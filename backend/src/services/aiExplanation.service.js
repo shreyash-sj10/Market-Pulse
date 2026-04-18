@@ -16,7 +16,7 @@ const { getCachedAI, setCachedAI, isCircuitOpen, recordAIFailure, recordAISucces
 const { buildDecisionContext, buildNewsContext } = require("../utils/aiContextBuilder");
 const { VOCAB } = require("../constants/systemVocabulary");
 const crypto = require("crypto");
-const logger = require("../lib/logger");
+const logger = require("../utils/logger");
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 

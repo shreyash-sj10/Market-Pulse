@@ -91,22 +91,27 @@ const getPortfolioNews = async (req, res, next) => {
 
 const getIndices = async (req, res) => {
   try {
-    const results = await marketDataService.getMarketIndices();
-    const indices = Array.isArray(results) ? results : [];
-    
+    const [indices, ticker] = await Promise.all([
+      marketDataService.getMarketIndices(),
+      marketDataService.getTickerData(),
+    ]);
+    const safeIndices = Array.isArray(indices) ? indices : [];
+    const safeTicker  = Array.isArray(ticker)  ? ticker  : [];
+
     res.json({
       success: true,
       data: {
-        indices
+        indices: safeIndices,
+        ticker:  safeTicker,
       },
-      degraded: indices.length === 0
+      degraded: safeIndices.length === 0,
     });
   } catch (error) {
     res.json({
       success: true,
-      data: { indices: [] },
+      data: { indices: [], ticker: [] },
       degraded: true,
-      error: "fallback_mode"
+      error: "fallback_mode",
     });
   }
 };

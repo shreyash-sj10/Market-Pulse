@@ -11,8 +11,10 @@
     "test:watch": "jest --watchAll",
     "test:coverage": "jest --coverage --runInBand --forceExit tests/unit src/middlewares/__tests__ src/services/__tests__",
     "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
     "migrate:strict": "node scripts/strictMigration.js",
-    "migrate:holdings": "node scripts/migrateHoldingsToCollection.js"
+    "migrate:holdings": "node scripts/migrateHoldingsToCollection.js",
+    "seed:portfolio": "node scripts/seedPortfolioDemo.js"
   },
   "jest": {
     "testEnvironment": "node",

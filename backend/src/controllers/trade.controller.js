@@ -1,7 +1,7 @@
 const Trade = require("../models/trade.model");
 const tradeService = require("../services/trade.service");
 const { normalizeTrade } = require("../domain/trade.contract");
-const logger = require("../lib/logger");
+const logger = require("../utils/logger");
 
 const { adaptTrade } = require("../adapters/trade.adapter");
 

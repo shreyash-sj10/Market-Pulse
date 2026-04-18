@@ -54,8 +54,8 @@ const buildPayloadHash = (payload) => {
 
 // ── Issue a new token and persist it to MongoDB ───────────────────────────────
 
-const redisClient = require("../../lib/redisClient");
-const logger = require("../../lib/logger");
+const redisClient = require("../../utils/redisClient");
+const logger = require("../../utils/logger");
 
 
 const issueDecisionToken = async ({ symbol, pricePaise, quantity, stopLossPaise, targetPricePaise, verdict, userId }) => {

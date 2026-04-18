@@ -30,6 +30,9 @@ export function buildDecision(input: BuildDecisionInput): Decision {
   const fallback = Boolean(input.fallback);
   const aiUnavailable = Boolean(input.aiUnavailable);
 
+  // Boundary:
+  // >=70 ACT (inclusive)
+  // <70 NOT ACT
   if (!input.allowed) {
     return { action: "BLOCK", confidence: riskScore, reason: "Blocked: trading not allowed." };
   }
@@ -38,7 +41,15 @@ export function buildDecision(input: BuildDecisionInput): Decision {
     return { action: "BLOCK", confidence: riskScore, reason: "Blocked: risk score below 50." };
   }
 
-  if (riskScore < 70 || warningFlag || fallback || aiUnavailable) {
+  if (riskScore >= 70 && input.allowed && !warningFlag && !fallback && !aiUnavailable) {
+    return { action: "ACT", confidence: riskScore, reason: "Act: conditions satisfy execution threshold." };
+  }
+
+  if (riskScore >= 50 && riskScore < 70) {
+    return { action: "GUIDE", confidence: riskScore, reason: "Guide: risk score between 50 and 69." };
+  }
+
+  if (warningFlag || fallback || aiUnavailable) {
     if (warningFlag) {
       return { action: "GUIDE", confidence: riskScore, reason: "Guide: warnings require review." };
     }
@@ -51,8 +62,8 @@ export function buildDecision(input: BuildDecisionInput): Decision {
       return { action: "GUIDE", confidence: riskScore, reason: "Guide: AI unavailable." };
     }
 
-    return { action: "GUIDE", confidence: riskScore, reason: "Guide: risk score between 50 and 69." };
+    return { action: "GUIDE", confidence: riskScore, reason: "Guide: fallback guard active." };
   }
 
-  return { action: "ACT", confidence: riskScore, reason: "Act: conditions satisfy execution threshold." };
+  return { action: "GUIDE", confidence: riskScore, reason: "Guide: manual review required." };
 }

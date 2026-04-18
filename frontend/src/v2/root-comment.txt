@@ -1,0 +1,4 @@
+V2 (/src/v2) is production system.
+Legacy code excluded from audit rules.
+
+Audit scope: /src/v2 only.

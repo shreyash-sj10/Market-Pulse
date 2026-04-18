@@ -11,7 +11,7 @@ const {
 } = require("../../engines/entry.engine");
 const { isValidStatus } = require("../../constants/intelligenceStatus");
 const { SYSTEM_CONFIG } = require("../../config/system.config");
-const logger = require("../../lib/logger");
+const logger = require("../../utils/logger");
 
 /**
  * PRE-TRADE DECISION SNAPSHOT ENGINE

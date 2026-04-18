@@ -1,46 +1,41 @@
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Outlet, Navigate } from "react-router-dom";
 import AuthPage from "./features/auth/AuthPage.jsx";
-import Dashboard from "./features/dashboard/Dashboard.jsx";
-import TradeForm from "./features/trades/TradeForm.jsx";
-import MarketExplorer from "./features/market/MarketExplorerTerminal.jsx";
-import NewsPage from "./features/news/NewsPage.jsx";
 import ProtectedRoute from "./features/auth/ProtectedRoute.jsx";
-import Layout from "./app/Layout.jsx";
-import ErrorBoundary from "./components/ErrorBoundary.jsx";
+import TradeFlowNavigateBinder from "./components/TradeFlowNavigateBinder.jsx";
+import { ROUTES } from "./v2/routing/routes";
 
-import TracePage from "./features/trace/TracePage.jsx";
-import SystemDashboard from "./features/system/SystemDashboard.jsx";
-import JournalPage from "./features/trades/JournalPage.jsx";
-import ProfilePage from "./features/profile/ProfilePage.jsx";
-import V2PortfolioPage from "./v2/pages/portfolio/PortfolioPage.jsx";
+import V2PortfolioPage from "./v2/pages/portfolio/PortfolioPage";
+import V2MarketsPage from "./v2/pages/markets/MarketsPage";
+import V2HomePage from "./v2/pages/home/HomePage";
+import V2JournalPage from "./v2/pages/journal/JournalPage";
+import V2ProfilePage from "./v2/pages/profile/ProfilePage";
+import V2TracePage from "./v2/pages/trace/TracePage";
 
 function App() {
   return (
-    <ErrorBoundary>
+    <>
+      <TradeFlowNavigateBinder />
       <Routes>
-        <Route path="/login" element={<AuthPage />} />
-        <Route path="/register" element={<AuthPage />} />
+        <Route path={ROUTES.login}    element={<AuthPage />} />
+        <Route path={ROUTES.register} element={<AuthPage />} />
 
-        {/* Protected Global App Shell */}
         <Route
           element={
             <ProtectedRoute>
-              <Layout />
+              <Outlet />
             </ProtectedRoute>
           }
         >
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/profile" element={<ProfilePage />} />
-          <Route path="/portfolio" element={<V2PortfolioPage />} />
-          <Route path="/trade" element={<TradeForm />} />
-          <Route path="/market" element={<MarketExplorer />} />
-          <Route path="/news" element={<NewsPage />} />
-          <Route path="/journal" element={<JournalPage />} />
-          <Route path="/trace" element={<TracePage />} />
-          <Route path="/system" element={<SystemDashboard />} />
+          <Route path="/" element={<Navigate to={ROUTES.dashboard} replace />} />
+          <Route path={ROUTES.dashboard} element={<V2HomePage />} />
+          <Route path={ROUTES.markets}   element={<V2MarketsPage />} />
+          <Route path={ROUTES.portfolio} element={<V2PortfolioPage />} />
+          <Route path={ROUTES.journal}   element={<V2JournalPage />} />
+          <Route path={ROUTES.profile}   element={<V2ProfilePage />} />
+          <Route path={ROUTES.trace}     element={<V2TracePage />} />
         </Route>
       </Routes>
-    </ErrorBoundary>
+    </>
   );
 }
 

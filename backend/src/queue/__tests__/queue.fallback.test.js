@@ -4,14 +4,14 @@ jest.mock("bullmq", () => ({
   })),
 }));
 
-jest.mock("../../lib/redisClient", () => null);
+jest.mock("../../utils/redisClient", () => null);
 jest.mock("../../infra/redisHealth", () => ({
   isRedisAvailable: jest.fn(() => false),
 }));
 jest.mock("../../services/reflectionWorker.service", () => ({
   processTradeClosedEvent: jest.fn().mockResolvedValue(undefined),
 }));
-jest.mock("../../lib/logger", () => ({
+jest.mock("../../utils/logger", () => ({
   info: jest.fn(),
   warn: jest.fn(),
   error: jest.fn(),

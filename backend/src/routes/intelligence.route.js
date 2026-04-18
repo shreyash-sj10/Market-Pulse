@@ -168,7 +168,7 @@ router.get('/timeline', authMiddleware, intelligenceLimiter, async (req, res, ne
   }
 });
 
-const logger = require("../lib/logger");
+const logger = require("../utils/logger");
 
 router.post('/pre-trade', authMiddleware, intelligenceLimiter, validateTradePayload, async (req, res, next) => {
   const startTime = Date.now();

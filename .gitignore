@@ -1,8 +1,20 @@
-# Logs
-backend/logs/
-*.log
-
-# Optional (good practice)
+# Dependencies & build output
 node_modules/
-.env
 dist/
+frontend/dist/
+backend/logs/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs & local dev noise
+logs/
+*.log
+scratch/
+artifacts/
+
+# OS / editor
+.DS_Store
+Thumbs.db

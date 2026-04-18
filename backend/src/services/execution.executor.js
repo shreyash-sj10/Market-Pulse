@@ -2,7 +2,7 @@ const Trade = require("../models/trade.model");
 const tradeService = require("./trade.service");
 const marketDataService = require("./marketData.service");
 const { isMarketOpen } = require("./marketHours.service");
-const logger = require("../lib/logger");
+const logger = require("../utils/logger");
 
 const EXECUTOR_INTERVAL_MS = 60 * 1000; // */1 * * * * equivalent
 const EXECUTOR_BATCH_LIMIT = 200;

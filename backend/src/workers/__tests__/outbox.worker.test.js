@@ -11,7 +11,7 @@ jest.mock("../../queue/queue", () => ({
   },
 }));
 
-jest.mock("../../lib/logger", () => ({
+jest.mock("../../utils/logger", () => ({
   info: jest.fn(),
   warn: jest.fn(),
   error: jest.fn(),
@@ -19,7 +19,7 @@ jest.mock("../../lib/logger", () => ({
 
 const Outbox = require("../../models/outbox.model");
 const { tradeQueue } = require("../../queue/queue");
-const logger = require("../../lib/logger");
+const logger = require("../../utils/logger");
 const { processOutbox } = require("../outbox.worker");
 
 describe("outbox.worker reliability", () => {

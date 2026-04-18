@@ -1,28 +1,13 @@
 import Sidebar from "../Sidebar/Sidebar.jsx";
 import Topbar from "../Topbar/Topbar.jsx";
 
-export default function AppLayout({ title, children }) {
+export default function AppLayout({ children }) {
   return (
-    <div
-      style={{
-        background: "var(--v2-bg-base)",
-        color: "var(--v2-text-primary)",
-        display: "flex",
-        minHeight: "100vh",
-      }}
-    >
+    <div className="app-container">
       <Sidebar />
-
-      <main style={{ display: "flex", flex: 1, flexDirection: "column" }}>
-        <Topbar title={title} />
-        <section
-          style={{
-            flex: 1,
-            padding: "1.5rem",
-          }}
-        >
-          {children}
-        </section>
+      <main className="main-content">
+        <Topbar />
+        <section className="page">{children}</section>
       </main>
     </div>
   );

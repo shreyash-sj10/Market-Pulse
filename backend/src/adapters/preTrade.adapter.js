@@ -30,15 +30,29 @@ const adaptPreTrade = (preTradeResponse) => {
   const allowedVerdict = authority?.verdict || snapshot?.risk?.verdict;
   const allowed = Boolean(allowedVerdict && allowedVerdict !== "WAIT" && allowedVerdict !== "AVOID" && allowedVerdict !== "BLOCK");
 
+  const authToken = authority?.token || token || null;
+  const authExpires = authority?.expiresAt ?? preTradeResponse.expiresAt ?? null;
+  const authVerdict = authority?.verdict ?? snapshot?.risk?.verdict ?? null;
+
   return {
     allowed,
-    token: authority?.token || token || null,
-    snapshot: {
+    token: authToken,
+    expiresAt: authExpires,
+    /** Required by execution + NOESIS panel (must not be stripped). */
+    authority: {
+      token: authToken,
+      expiresAt: authExpires,
+      verdict: authVerdict,
+    },
+    /** Full engine snapshot (risk, pillars, behavior, market) — UI + trade gating depend on this shape. */
+    snapshot,
+    ai: adaptAIResponse(snapshot?.ai),
+    /** Convenience rollups for lighter clients; not a substitute for `snapshot`. */
+    summary: {
       riskScore,
       warnings,
       signals,
     },
-    ai: adaptAIResponse(snapshot?.ai)
   };
 };
 

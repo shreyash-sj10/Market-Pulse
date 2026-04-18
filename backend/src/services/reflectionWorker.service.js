@@ -1,4 +1,4 @@
-const eventBus = require("../lib/eventBus");
+const eventBus = require("../utils/eventBus");
 const Trade = require("../models/trade.model");
 const User = require("../models/user.model");
 const { analyzeReflection } = require("../engines/reflection.engine");
@@ -12,7 +12,7 @@ const { generateReflectionSummary, translateBehavior } = require("./aiExplanatio
 const { generateLesson } = require("./lessonGenerator");
 const { generatePatternInsight } = require("./patternInsight.service");
 const { translateTags } = require("../utils/behaviorTranslator");
-const logger = require("../lib/logger");
+const logger = require("../utils/logger");
 
 const processTradeClosedEvent = async ({ tradeId, userId }) => {
   const _start = Date.now();

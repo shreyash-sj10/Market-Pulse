@@ -1,7 +1,7 @@
 const Trade = require("../models/trade.model");
 const User = require("../models/user.model");
 const { runInTransaction } = require("../utils/transaction");
-const logger = require("../lib/logger");
+const logger = require("../utils/logger");
 
 const SWEEP_INTERVAL_MS = 30 * 1000;
 const PENDING_EXPIRY_MS = Number(process.env.PENDING_ORDER_EXPIRY_MS || 24 * 60 * 60 * 1000);

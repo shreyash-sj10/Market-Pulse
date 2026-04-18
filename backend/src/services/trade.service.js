@@ -26,8 +26,8 @@ const { analyzeProgression } = require("./progression.engine");
 const { calculateSkillScore } = require("./skill.engine");
 const { SYSTEM_CONFIG } = require("../config/system.config");
 const { isValidStatus } = require("../constants/intelligenceStatus");
-const logger = require("../lib/logger");
-const eventBus = require("../lib/eventBus");
+const logger = require("../utils/logger");
+const eventBus = require("../utils/eventBus");
 const { isMarketOpen } = require("./marketHours.service");
 const { tradeQueue } = require("../queue/queue");
 
@@ -72,7 +72,7 @@ const cleanupStaleReservations = async (userId, session) => {
     const user = await User.findById(userId).session(session);
     for (const trade of staleTrades) {
       user.reservedBalancePaise -= trade.totalValuePaise;
-      trade.status = "FAILED_TIMEOUT";
+      trade.status = "FAILED";
       await trade.save({ session });
     }
     if (user.reservedBalancePaise < 0) user.reservedBalancePaise = 0;

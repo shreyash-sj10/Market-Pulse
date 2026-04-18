@@ -15,6 +15,22 @@ const {
 } = require("../utils/systemState");
 const { SYSTEM_STATE } = require("../constants/systemState");
 const { adaptPortfolio, adaptPositions } = require("../adapters/portfolio.adapter");
+const logger = require("../utils/logger");
+
+/** Never fail portfolio HTTP because Yahoo throttled; MTM falls back to avg cost. */
+async function safeLivePrices(symbols) {
+  if (!symbols.length) return {};
+  try {
+    return await getLivePrices(symbols);
+  } catch (err) {
+    logger.warn({
+      action: "PORTFOLIO_LIVE_PRICES_FALLBACK",
+      message: err?.message || String(err),
+      symbolCount: symbols.length,
+    });
+    return {};
+  }
+}
 
 // buildClosedTrades has been replaced by src/domain/closedTrade.mapper.js
 
@@ -30,7 +46,7 @@ const getPortfolioSummary = async (req, res, next) => {
 
     // 1. Get Live Prices
     const holdingSymbols = holdingsDocs.map((h) => h.symbol);
-    const livePrices = await getLivePrices(holdingSymbols);
+    const livePrices = await safeLivePrices(holdingSymbols);
 
     // 2. Compute MTM
     let unrealizedPnL = new Decimal(0);
@@ -57,7 +73,6 @@ const getPortfolioSummary = async (req, res, next) => {
     let journalInsights = { topMistake: "NONE", frequency: 0, last10Summary: { winRate: 0, avgPnL: 0 }, timePatterns: "INSUFFICIENT_DATA", disciplineTrend: "STABLE" };
 
     if (hasValidSnapshot) {
-       const logger = require("../lib/logger");
        logger.info("Portfolio snapshot analysis fulfilled from cache", { 
          action: "PORTFOLIO_SNAPSHOT_HIT", 
          userId: user._id, 
@@ -78,24 +93,35 @@ const getPortfolioSummary = async (req, res, next) => {
        const top5 = await Trade.find({ user: userId }).sort({ createdAt: -1 }).limit(5);
        recentBehaviors = top5.map(t => normalizeTrade(t));
     } else {
-       const analysisTrades = await Trade.find({ user: userId }).sort({ createdAt: -1 }).limit(100);
-       const normalizedTrades = analysisTrades.map((trade) => normalizeTrade(trade));
-       const closedTrades = mapToClosedTrades(normalizedTrades);
-       const reflectionResults = closedTrades.map(ct => analyzeReflection(ct));
-       behavior = analyzeBehavior(closedTrades);
-       progression = analyzeProgression(closedTrades);
-       skillAudit = calculateSkillScore(closedTrades, reflectionResults, behavior, progression);
-       
-       const { calculateJournalInsights } = require("../engines/journalInsights.engine");
-       journalInsights = calculateJournalInsights(closedTrades);
-       recentBehaviors = normalizedTrades.slice(0, 5);
-       
-       const logger = require("../lib/logger");
-       logger.info("Live portfolio analytics recalibration complete", {
+      try {
+        const analysisTrades = await Trade.find({ user: userId }).sort({ createdAt: -1 }).limit(100);
+        const normalizedTrades = analysisTrades.map((trade) => normalizeTrade(trade));
+        const closedTrades = mapToClosedTrades(normalizedTrades);
+        const reflectionResults = closedTrades.map((ct) => analyzeReflection(ct));
+        behavior = analyzeBehavior(closedTrades);
+        progression = analyzeProgression(closedTrades);
+        skillAudit = calculateSkillScore(closedTrades, reflectionResults, behavior, progression);
+
+        const { calculateJournalInsights } = require("../engines/journalInsights.engine");
+        journalInsights = calculateJournalInsights(closedTrades);
+        recentBehaviors = normalizedTrades.slice(0, 5);
+
+        logger.info("Live portfolio analytics recalibration complete", {
           action: "PORTFOLIO_COMPUTE",
           userId: user._id,
-          tradeCount: analysisTrades.length
-       });
+          tradeCount: analysisTrades.length,
+        });
+      } catch (e) {
+        logger.warn({
+          action: "PORTFOLIO_ANALYTICS_FALLBACK",
+          userId,
+          message: e?.message || String(e),
+        });
+        skillAudit = { score: 50, trend: "STABLE", breakdown: { discipline: 50 } };
+        behavior = { success: false, patterns: [], disciplineScore: 50, dominantMistake: "None", mistakeFrequency: {}, riskProfile: null };
+        progression = { success: false, trend: "STABLE", changes: [], narrative: "Analytics skipped — trade history could not be processed." };
+        recentBehaviors = [];
+      }
     }
 
 
@@ -215,8 +241,8 @@ const getPositions = async (req, res, next) => {
       return res.status(200).json({ success: true, state: SYSTEM_STATE.EMPTY, data: [] });
     }
 
-    // Fetch live prices
-    const livePrices = await getLivePrices(holdingSymbols);
+    // Fetch live prices (non-fatal: empty map → cost-basis MTM in map below)
+    const livePrices = await safeLivePrices(holdingSymbols);
 
     const positions = holdingsDocs.map((data) => {
       const symbol = data.symbol;

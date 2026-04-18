@@ -2,7 +2,7 @@ const { Worker } = require("bullmq");
 const { connection } = require("../queue");
 const { processTradeClosedEvent } = require("../../services/reflectionWorker.service");
 const Outbox = require("../../models/outbox.model");
-const logger = require("../../lib/logger");
+const logger = require("../../utils/logger");
 
 const reflectionWorker = new Worker(
   "tradeQueue",

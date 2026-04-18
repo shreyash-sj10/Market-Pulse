@@ -2,7 +2,7 @@ const Trade = require("../models/trade.model");
 const User = require("../models/user.model");
 const marketService = require("./marketData.service");
 const tradeService = require("./trade.service");
-const logger = require("../lib/logger");
+const logger = require("../utils/logger");
 const { issueDecisionToken } = require("./intelligence/preTradeAuthority.store");
 const { isMarketOpen } = require("./marketHours.service");
 

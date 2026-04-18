@@ -12,7 +12,7 @@
  */
 const Trade = require("../../models/trade.model");
 const { SYSTEM_CONFIG } = require("../../config/system.config");
-const logger = require("../../lib/logger");
+const logger = require("../../utils/logger");
 
 const cfg = SYSTEM_CONFIG.behavior;
 const intel = SYSTEM_CONFIG.intelligence.preTrade;

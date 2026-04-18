@@ -26,10 +26,11 @@ router.get('/news/portfolio', protect, marketReadLimiter, marketController.getPo
 // ─── LEGACY / SYSTEM ROUTES ───
 router.get('/explore', marketReadLimiter, async (req, res, next) => {
   try {
-    const limit = parseInt(req.query.limit) || 16;
-    const offset = parseInt(req.query.offset) || 0;
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 64, 1), 120);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
     const search = req.query.query || "";
-    const result = await marketDataService.getExploreData(limit, offset, search);
+    const segment = String(req.query.segment || "all").toLowerCase();
+    const result = await marketDataService.getExploreData(limit, offset, search, segment);
     res.json({ success: true, ...result });
   } catch (error) {
     next(error);

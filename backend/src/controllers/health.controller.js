@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 const { connection } = require("../queue/queue");
-const logger = require("../lib/logger");
+const logger = require("../utils/logger");
 
 const healthCheck = (req, res) => {
   res.status(200).json({ status: "OK" });

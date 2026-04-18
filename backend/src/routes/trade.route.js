@@ -78,7 +78,7 @@ const enforceSellReview = (req, res, next) => {
 
 
 const { isMarketOpen } = require("../services/marketHours.service");
-const logger = require("../lib/logger");
+const logger = require("../utils/logger");
 
 const checkMarketClock = (req, res, next) => {
   if (!isMarketOpen()) {
