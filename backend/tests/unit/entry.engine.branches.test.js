@@ -56,3 +56,86 @@ describe("entry.engine branch coverage", () => {
     expect(() => mapDecisionVerdictToAuthorityVerdict("UNKNOWN")).toThrow("ENTRY_ENGINE_DEPENDENCY_CONFUSION");
   });
 });
+
+describe("entry.engine uncovered branch scenarios", () => {
+  const loadEvaluateEntryDecision = ({ analyzeBehaviorResult, squareoffMinutesIst = 930 }) => {
+    jest.resetModules();
+    jest.doMock("../../src/services/behavior.engine", () => ({
+      analyzeBehavior: jest.fn(() => analyzeBehaviorResult),
+    }));
+    jest.doMock("../../src/services/marketHours.service", () => ({
+      getSquareoffMinutesIst: jest.fn(() => squareoffMinutesIst),
+    }));
+    return require("../../src/engines/entry.engine").evaluateEntryDecision;
+  };
+
+  it("applies SELL default setup, no-market penalty, behavior penalties and intraday FOMO window", () => {
+    const evaluateEntryDecisionWithMocks = loadEvaluateEntryDecision({
+      analyzeBehaviorResult: { success: true, disciplineScore: 90 },
+      squareoffMinutesIst: 930,
+    });
+
+    const result = evaluateEntryDecisionWithMocks({
+      plan: { side: "SELL", productType: "INTRADAY" },
+      marketContext: { status: "UNAVAILABLE", consensusVerdict: "BUY" },
+      behaviorContext: {
+        status: "VALID",
+        flags: ["FOMO_ENTRY", "PANIC_EXIT", "CHASING_PRICE"],
+        closedTrades: [{ pnlPaise: 100 }],
+      },
+      entryTime: "2026-01-01T09:40:00.000Z",
+    });
+
+    expect(result.weightedEntry.setupScore).toBe(70);
+    expect(result.weightedEntry.marketScore).toBe(60);
+    expect(result.reasons).toEqual(
+      expect.arrayContaining([
+        "MARKET_DATA_UNAVAILABLE",
+        "FOMO_ENTRY",
+        "PANIC_EXIT_HISTORY",
+        "CHASING_PRICE",
+        "INTRADAY_FOMO_WINDOW",
+      ])
+    );
+  });
+
+  it("uses reduced behavior score when behavior history is insufficient", () => {
+    const evaluateEntryDecisionWithMocks = loadEvaluateEntryDecision({
+      analyzeBehaviorResult: { success: false, reason: "INSUFFICIENT_BEHAVIOR_HISTORY" },
+    });
+
+    const result = evaluateEntryDecisionWithMocks({
+      plan: { side: "SELL", productType: "DELIVERY" },
+      marketContext: { status: "VALID", consensusVerdict: "BUY" },
+      behaviorContext: { status: "VALID", flags: [], closedTrades: [{ pnlPaise: 10 }] },
+    });
+
+    expect(result.weightedEntry.behaviorScore).toBe(70);
+  });
+
+  it("blocks revenge trading with AVOID consensus without duplicating reasons", () => {
+    const previousVetoFloor = process.env.ENTRY_BEHAVIOR_VETO_FLOOR;
+    try {
+      process.env.ENTRY_BEHAVIOR_VETO_FLOOR = "10";
+      const evaluateEntryDecisionWithMocks = loadEvaluateEntryDecision({
+        analyzeBehaviorResult: { success: true, disciplineScore: 90 },
+      });
+
+      const result = evaluateEntryDecisionWithMocks({
+        plan: { side: "SELL", productType: "DELIVERY" },
+        marketContext: { status: "VALID", consensusVerdict: "AVOID" },
+        behaviorContext: {
+          status: "VALID",
+          flags: ["REVENGE_TRADING_RISK"],
+          closedTrades: [{ pnlPaise: -100 }],
+        },
+      });
+
+      expect(result.verdict).toBe("BLOCK");
+      expect(result.reasons.filter((reason) => reason === "REVENGE_TRADING_RISK")).toHaveLength(1);
+    } finally {
+      if (previousVetoFloor == null) delete process.env.ENTRY_BEHAVIOR_VETO_FLOOR;
+      else process.env.ENTRY_BEHAVIOR_VETO_FLOOR = previousVetoFloor;
+    }
+  });
+});

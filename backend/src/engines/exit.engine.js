@@ -7,7 +7,7 @@ const PANIC_EXIT_THRESHOLD_MS = Number(process.env.PANIC_EXIT_THRESHOLD_MS || 10
  *
  * exitType enum (canonical):
  *   PANIC          — exit within PANIC_EXIT_THRESHOLD_MS of entry (fear-driven, time-gated)
- *   STOP_LOSS_HIT  — exit price at or below stopLossPaise (disciplined loss)
+ *   STOP_LOSS_HIT  — exit price at stopLossPaise (disciplined loss)
  *   TARGET_HIT     — exit price at or above targetPricePaise (disciplined profit, alias NORMAL)
  *   EARLY_EXIT     — exit before plan target/stop was reached (early cut on loss, early profit take)
  *   LATE_EXIT      — exit beyond plan target/stop (overhold on profit, held losers past stop)
@@ -52,7 +52,7 @@ const evaluateExit = (input = {}) => {
   let deviationScore = 100;
   const notes = [];
 
-  if (stopLossPaise && exitPricePaise <= stopLossPaise) {
+  if (stopLossPaise && exitPricePaise === stopLossPaise) {
     exitType = "STOP_LOSS_HIT";
     deviationScore = 100;
     notes.push("STOPPED_OUT");
