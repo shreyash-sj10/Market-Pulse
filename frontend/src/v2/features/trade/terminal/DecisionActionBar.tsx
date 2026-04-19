@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 export type GateChecklistItem = {
   id: string;
   ok: boolean;
@@ -11,6 +13,8 @@ export type DecisionActionBarProps = {
   onPrimary: () => void;
   onCancel: () => void;
   checklist?: GateChecklistItem[];
+  /** Shown above the checklist / buttons (e.g. execution consequences). */
+  preActions?: ReactNode;
 };
 
 export default function DecisionActionBar({
@@ -20,9 +24,11 @@ export default function DecisionActionBar({
   onPrimary,
   onCancel,
   checklist,
+  preActions,
 }: DecisionActionBarProps) {
   return (
     <div className="trade-terminal-action-gate">
+      {preActions ? <div className="trade-terminal-action-gate__pre">{preActions}</div> : null}
       {checklist && checklist.length > 0 ? (
         <ul className="trade-terminal-gate-checklist" aria-label="Execution prerequisites">
           {checklist.map((row) => (

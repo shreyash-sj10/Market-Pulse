@@ -29,35 +29,35 @@ export function buildDecisionReasonBullets(decision: Decision, stock: MarketStoc
 
   let trend: string;
   if (stock.trend === "BULLISH" && stock.changePercent > 0.5) {
-    trend = "Uptrend with positive session drift — tape favors continuation.";
+    trend = "Trend continuation — bullish drift on the session.";
   } else if (stock.trend === "BEARISH" && stock.changePercent < -0.5) {
-    trend = "Downtrend with negative session drift — tape favors defense.";
+    trend = "Defensive tape — bearish drift with negative session change.";
   } else if (stock.trend === "SIDEWAYS") {
-    trend = "Range-bound structure — no clean directional edge from trend alone.";
+    trend = "Range-bound — no clean directional edge from trend alone.";
   } else {
-    trend = "Trend and session change are misaligned — edge is mixed.";
+    trend = "Trend and session change misaligned — mixed edge.";
   }
 
   let volume: string;
   if (vt === "high") {
-    volume = "Turnover is elevated — flow supports the current tape read.";
+    volume = "Volume support — elevated turnover vs typical flow.";
   } else if (vt === "moderate") {
-    volume = "Participation is moderate — confirmation is partial, not exhaustive.";
+    volume = "Moderate participation — partial confirmation only.";
   } else {
-    volume = "Flow is light — moves lack strong volume confirmation.";
+    volume = "Light flow — weak volume confirmation on moves.";
   }
 
   let risk: string;
   if (stock.isFallback || stock.isSynthetic) {
-    risk = "Quote path is degraded — size and lean on degraded-data guardrails.";
+    risk = "Degraded quotes — treat signals as best-effort.";
   } else if (stock.trend === "BEARISH") {
-    risk = "Bearish structural bias — prioritize risk and invalidation levels.";
+    risk = "Structural bearish lean — watch invalidation.";
   } else if (stock.changePercent < -1.5) {
-    risk = "Sharp session drawdown — stress on entry timing and stops.";
+    risk = "Sharp session draw — timing and stops matter.";
   } else if (decision.action === "BLOCK") {
-    risk = "Rule engine flags elevated caution — execution constraints apply.";
+    risk = "Engine caution — review constraints.";
   } else {
-    risk = "No acute rule-engine risk flags beyond standard tape discipline.";
+    risk = "No risk flags — standard tape discipline.";
   }
 
   return { trend, volume, risk };

@@ -18,7 +18,7 @@ exports.getJournalSummary = async (req, res, next) => {
     // users. 500 trades covers all realistic journal use-cases while bounding
     // memory and response time. Sort ascending so FIFO pairing (BUY→SELL) works
     // correctly on the most recent window.
-    const [trades, pendingRows] = await Promise.all([
+    const [trades, pendingRows, entryBuyTrades] = await Promise.all([
       Trade.find({ user: userId }).sort({ createdAt: 1 }).limit(500).lean(),
       Trade.find({
         user: userId,
@@ -29,7 +29,34 @@ exports.getJournalSummary = async (req, res, next) => {
           "symbol type quantity pricePaise totalValuePaise status createdAt _id reason userThinking manualTags preTradeEmotion",
         )
         .lean(),
+      Trade.find({
+        user: userId,
+        type: "BUY",
+        status: { $in: ["EXECUTED", "EXECUTED_PENDING_REFLECTION", "COMPLETE", "PENDING_EXECUTION"] },
+      })
+        .sort({ createdAt: -1 })
+        .limit(100)
+        .select(
+          "symbol quantity pricePaise stopLossPaise targetPricePaise userThinking preTradeEmotion decisionSnapshot createdAt status executionTime _id",
+        )
+        .lean(),
     ]);
+
+    const entryLogs = entryBuyTrades.map((t) => ({
+      tradeId: String(t._id),
+      kind: "ENTRY_OPEN",
+      symbol: t.symbol,
+      quantity: t.quantity,
+      entryPricePaise: t.pricePaise,
+      stopLossPaise: t.stopLossPaise ?? null,
+      targetPricePaise: t.targetPricePaise ?? null,
+      thesis: (t.userThinking || "").trim() || null,
+      signalVerdict: t.decisionSnapshot?.pillars?.engine?.action ?? t.decisionSnapshot?.verdict ?? null,
+      signalScore: t.decisionSnapshot?.score ?? null,
+      preTradeEmotion: t.preTradeEmotion ?? null,
+      openedAt: t.executionTime || t.createdAt,
+      executionStatus: t.status,
+    }));
     const normalized = trades.map((t) => normalizeTrade(t));
     let closed;
     try {
@@ -39,11 +66,12 @@ exports.getJournalSummary = async (req, res, next) => {
       return sendSuccess(res, req, {
         success: true,
         state: deriveReflectionState({ closedTrades: [], reflections: [] }),
-        data: { totalClosed: 0, frequentPatterns: [], entries: [], pendingExecutions: [] },
+        data: { totalClosed: 0, frequentPatterns: [], entries: [], pendingExecutions: [], entryLogs },
         meta: {
           journalWarning: "TRADE_HISTORY_COULD_NOT_BE_PAIRED",
-          journalScope: "CLOSED_ROUND_TRIPS",
+          journalScope: "CLOSED_ROUND_TRIPS_PLUS_ENTRY_LOGS",
           pendingExecutionCount: 0,
+          entryLogCount: entryLogs.length,
           systemStateVersion: req.user?.systemStateVersion ?? 0,
         },
       });
@@ -152,15 +180,17 @@ exports.getJournalSummary = async (req, res, next) => {
             preTradeEmotionAtEntry: c.preTradeEmotionAtEntry ?? null,
         })),
         pendingExecutions,
+        entryLogs,
       },
       meta: {
-        journalScope: "CLOSED_ROUND_TRIPS",
+        journalScope: "CLOSED_ROUND_TRIPS_PLUS_ENTRY_LOGS",
         closedEntryCount: cards.length,
         pendingExecutionCount: pendingExecutions.length,
+        entryLogCount: entryLogs.length,
         /** Oldest→newest FIFO window used for pairing (H-06). */
         journalTradeLimit: 500,
         pipelineNote:
-          "entries are closed BUY+SELL pairs; pendingExecutions lists orders not yet executed into holdings.",
+          "entries are closed BUY+SELL pairs; entryLogs are open/executed buy legs; pendingExecutions lists orders not yet executed into holdings.",
         systemStateVersion: req.user?.systemStateVersion ?? 0,
       },
     });

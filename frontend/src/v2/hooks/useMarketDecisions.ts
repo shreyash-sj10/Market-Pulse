@@ -21,6 +21,7 @@ export type MarketRow = BuildDecisionInput & {
   changePct: number;
   /** Full symbol for trade panel / APIs */
   fullSymbol: string;
+  trend: MarketStock["trend"];
 };
 
 function toWarningsList(w?: boolean | string[]): string[] {
@@ -42,6 +43,7 @@ export function buildMarketRowFromExplorerStock(stock: MarketStock): MarketRow {
     symbol: stock.symbol,
     fullSymbol: stock.fullSymbol ?? stock.symbol,
     changePct: changePercent,
+    trend,
     allowed,
     riskScore,
     warnings,
@@ -65,6 +67,7 @@ function buildMarketRowFromApiRecord(
     symbol: String(stock.symbol ?? ""),
     fullSymbol: String(stock.fullSymbol ?? stock.symbol ?? ""),
     changePct: changePercent,
+    trend: trend as MarketStock["trend"],
     allowed,
     riskScore,
     warnings,
@@ -76,14 +79,14 @@ export function tradePanelContextFromMarketRow(row: MarketRow): TradePanelContex
   const decision = buildDecision(row);
   return {
     decision,
-    meta: { changePct: row.changePct },
+    meta: { changePct: row.changePct, trend: row.trend },
     warnings: toWarningsList(row.warnings),
   };
 }
 
 function mapRowToItem(p: MarketRow): DecisionCardProps {
   const decision = buildDecision(p);
-  const meta = { changePct: p.changePct };
+  const meta = { changePct: p.changePct, trend: p.trend };
   const warnings = toWarningsList(p.warnings);
   return {
     title: p.symbol,

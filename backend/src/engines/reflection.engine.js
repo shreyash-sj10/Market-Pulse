@@ -71,12 +71,6 @@ exports.analyzeReflection = (closedTrade) => {
     insight = "Profit target bypassed without plan update suggests greed-based deviation from initial protocol.";
     improvement = "Implement trailing stops if seeking gains beyond initial targets to avoid lucky-outcome bias.";
     tags.push("OVERHOLD", "GREED_PATTERN");
-  } else if (exitAnalysis.notes.includes("HOLDING_LOSERS")) {
-    verdict = "POOR_PROCESS";
-    executionPattern = "HOLDING_LOSERS";
-    insight = "Held position beyond stop loss reflects hope-based bias or loss aversion. Capital at risk.";
-    improvement = "Enforce stop loss automatically; never override the exit protocol for losing positions.";
-    tags.push("HOLDING_LOSER", "HOPE_PATTERN");
   }
 
   return {

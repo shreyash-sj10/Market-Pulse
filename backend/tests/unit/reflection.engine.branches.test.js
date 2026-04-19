@@ -70,4 +70,20 @@ describe("reflection.engine branch coverage", () => {
     expect(result.verdict).toBe("DISCIPLINED_LOSS");
     expect(result.executionPattern).toBe("STOPPED_OUT");
   });
+
+  it("classifies PANIC exits as poor process", () => {
+    const entryTime = 1_720_000_000_000;
+    const exitTime = entryTime + 3 * 60 * 1000;
+    const result = analyzeReflection({
+      entryPricePaise: 10000,
+      exitPricePaise: 9800,
+      stopLossPaise: 9000,
+      targetPricePaise: 12000,
+      entryTime,
+      exitTime,
+    });
+    expect(result.verdict).toBe("POOR_PROCESS");
+    expect(result.executionPattern).toBe("PANIC_EXIT");
+    expect(result.tags).toEqual(expect.arrayContaining(["PANIC_EXIT", "FEAR_PATTERN"]));
+  });
 });

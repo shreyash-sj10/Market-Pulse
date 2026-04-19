@@ -1,5 +1,5 @@
-import { Routes, Route, Outlet, Navigate } from "react-router-dom";
-import AuthPage from "./features/auth/AuthPage.jsx";
+import { Routes, Route, Outlet } from "react-router-dom";
+import AuthPage from "./features/auth/AuthPage.tsx";
 import ProtectedRoute from "./features/auth/ProtectedRoute.jsx";
 import TradeFlowNavigateBinder from "./components/TradeFlowNavigateBinder.jsx";
 import ApiErrorListener from "./v2/components/observability/ApiErrorListener.jsx";
@@ -11,6 +11,8 @@ import V2HomePage from "./v2/pages/home/HomePage";
 import V2JournalPage from "./v2/pages/journal/JournalPage";
 import V2ProfilePage from "./v2/pages/profile/ProfilePage";
 import V2TracePage from "./v2/pages/trace/TracePage";
+import LandingPage from "./v2/pages/landing/LandingPage";
+import CreatorPage from "./v2/pages/creator/CreatorPage";
 
 function App() {
   return (
@@ -18,6 +20,8 @@ function App() {
       <ApiErrorListener />
       <TradeFlowNavigateBinder />
       <Routes>
+        <Route path={ROUTES.landing} element={<LandingPage />} />
+        <Route path={ROUTES.creator} element={<CreatorPage />} />
         <Route path={ROUTES.login}    element={<AuthPage />} />
         <Route path={ROUTES.register} element={<AuthPage />} />
 
@@ -28,7 +32,6 @@ function App() {
             </ProtectedRoute>
           }
         >
-          <Route path="/" element={<Navigate to={ROUTES.dashboard} replace />} />
           <Route path={ROUTES.dashboard} element={<V2HomePage />} />
           <Route path={ROUTES.markets}   element={<V2MarketsPage />} />
           <Route path={ROUTES.portfolio} element={<V2PortfolioPage />} />

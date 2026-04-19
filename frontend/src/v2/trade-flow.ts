@@ -4,7 +4,11 @@ import type { DecisionMeta } from "./components/decision/DecisionCard";
 import { queryClient } from "../queryClient";
 import { queryKeys } from "./queryKeys";
 
-export type TradePanelContext = { decision: Decision; meta?: DecisionMeta; warnings: string[] };
+export type TradePanelContext = {
+  decision: Decision;
+  meta?: DecisionMeta;
+  warnings: string[];
+};
 
 type OpenFn = (symbol: string, context: TradePanelContext) => void;
 
@@ -40,10 +44,6 @@ export function confirmTradeAction(_symbol: string): void {
     queryClient.invalidateQueries({ queryKey: ["market", "technicals"] }),
     queryClient.invalidateQueries({ queryKey: queryKeys.aiInsights }),
   ]).then(() => {
-    if (navigateFn) {
-      navigateFn("/portfolio", { replace: false });
-    } else {
-      window.location.href = "/portfolio"; // ROUTES.portfolio — keep string for non-React context
-    }
+    /* Stay on current route — surfaces refresh via query invalidation. */
   });
 }

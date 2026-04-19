@@ -10,7 +10,7 @@ const PANIC_EXIT_THRESHOLD_MS = Number(process.env.PANIC_EXIT_THRESHOLD_MS || 10
  *   STOP_LOSS_HIT  — exit price at or below stopLossPaise (disciplined loss)
  *   TARGET_HIT     — exit price at or above targetPricePaise (disciplined profit, alias NORMAL)
  *   EARLY_EXIT     — exit before plan target/stop was reached (early cut on loss, early profit take)
- *   LATE_EXIT      — exit beyond plan target/stop (overhold on profit, held losers past stop)
+ *   LATE_EXIT      — exit beyond plan target (overhold on profit); exits at/below stop are STOP_LOSS_HIT
  *   NORMAL         — exit at exactly the target price (kept for backward compat; same as TARGET_HIT)
  *
  * deviationScore (0–100): how far the exit deviated from the optimal plan exit point.
@@ -96,14 +96,9 @@ const evaluateExit = (input = {}) => {
     const ratio = fullRisk > 0 ? distanceFromStop / fullRisk : 1;
     deviationScore = Math.max(0, Math.min(100, Math.round((1 - ratio) * 100)));
     notes.push("EARLY_CUT");
-  } else if (isLoss && stopLossPaise && exitPricePaise < stopLossPaise) {
-    exitType = "LATE_EXIT";
-    const distanceBeyondStop = Math.abs(exitPricePaise - stopLossPaise);
-    const fullRisk = Math.abs(entryPricePaise - stopLossPaise);
-    const normalizedOverrun = fullRisk > 0 ? Math.min(1, distanceBeyondStop / fullRisk) : 1;
-    deviationScore = Math.max(0, Math.round((1 - normalizedOverrun) * 100));
-    notes.push("HOLDING_LOSERS");
   }
+  // Exits at or below stop are classified as STOP_LOSS_HIT above; there is no separate
+  // "slipped through stop" path in this deterministic classifier.
 
   return {
     exitType,

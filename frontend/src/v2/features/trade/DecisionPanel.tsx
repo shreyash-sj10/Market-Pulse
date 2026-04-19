@@ -11,13 +11,14 @@ import type { PreTradeResult } from "../../api/trade.api";
 import { fromPaise } from "../../../utils/currency.utils";
 import { queryClient } from "../../../queryClient";
 import { queryKeys } from "../../queryKeys";
-import { useNavigate } from "react-router-dom";
-import { ROUTES } from "../../routing/routes";
 import { TRADE_SUCCESS_SESSION_KEY } from "../../trade-flow";
 import TradePanelOverlay from "./terminal/TradePanelOverlay";
 import TradeHeader from "./terminal/TradeHeader";
 import TradeInputs from "./terminal/TradeInputs";
 import ValidationEngineView from "./terminal/ValidationEngineView";
+import { useSymbolIntelligence } from "../../hooks/useSymbolIntelligence";
+import TradeTerminalSharedIntel from "./terminal/TradeTerminalSharedIntel";
+import ExecutionConsequenceBlock from "./terminal/ExecutionConsequenceBlock";
 import { hasBlockingLocalIssues } from "./terminal/riskLocalGate";
 import ThesisInput from "./terminal/ThesisInput";
 import PreTradeEmotionSelect from "./terminal/PreTradeEmotionSelect";
@@ -46,7 +47,6 @@ type Props = {
 };
 
 export default function DecisionPanel({ open, symbol, context, onClose, backdrop = "default" }: Props) {
-  const navigate = useNavigate();
   const journal = useJournalPage();
   const { summary: portfolio } = usePortfolioSummary();
   const portfolioDecisions = usePortfolioDecisions();
@@ -59,6 +59,8 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
 
   const { quote } = useMarketQuote(open ? symbol : null);
   const livePriceINR = quote ? fromPaise(quote.pricePaise).toFixed(2) : "";
+  const sharedIntel = useSymbolIntelligence(open ? symbol : null);
+  const trendLabel = context?.meta?.trend != null ? String(context.meta.trend) : null;
 
   const [side, setSide] = useState<"BUY" | "SELL">("BUY");
   const [productType, setProductType] = useState<"DELIVERY" | "INTRADAY">("DELIVERY");
@@ -387,6 +389,7 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
         decisionContext: {
           source: "NOESIS_PANEL",
           verdict,
+          marketSignal: decision.action,
           score: preTrade.data?.snapshot?.risk?.score,
           thesis: thinking.trim(),
           behavioralLoop: {
@@ -431,8 +434,7 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
 
       setTimeout(() => {
         onClose();
-        navigate(ROUTES.portfolio);
-      }, 1400);
+      }, 900);
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
@@ -450,7 +452,7 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
   return (
     <TradePanelOverlay open={open} onClose={onClose} backdrop={overlayBackdrop}>
       <div
-        className="trade-terminal"
+        className={`trade-terminal${backdrop === "markets" ? " trade-terminal--dock" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="trade-terminal-title"
@@ -464,12 +466,20 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
           priceDisplay={headerPriceDisplay}
           changePct={changePct}
           signal={decision.action}
-          subline="System-controlled execution — inputs evaluated before release"
+          trendLabel={trendLabel}
+          confidencePct={decision.confidence}
+          subline="Decision terminal — context first, then minimal order inputs"
         />
 
         <div className="trade-terminal__body">
           {phase === "SETUP" && (
             <>
+              <TradeTerminalSharedIntel
+                isLoading={sharedIntel.isLoading}
+                isError={sharedIntel.isError}
+                sentiment={sharedIntel.sentiment}
+                bullets={sharedIntel.bullets}
+              />
               <TradeSystemContext
                 policy={systemPolicy}
                 decision={decision}
@@ -477,6 +487,7 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
                 stressedPositionCount={stressedPositionCount}
                 openPositionCount={openPositionCount}
               />
+              <TradeSystemVerdict verdict={setupJudgment.verdict} explanation={setupJudgment.explanation} />
               <ThesisInput
                 value={thinking}
                 onChange={setThinking}
@@ -507,8 +518,8 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
                 outcome={localGate ? "adjust" : "pending"}
                 message={
                   localGate
-                    ? "System checks failed — fix items in the gate list, then run the risk gate."
-                    : "Real-time checks below. Run the risk gate when the list is clear."
+                    ? "System checks failed — fix items in the gate list, then run ANALYZE RISK."
+                    : "Sizing and bracket checks below. Run ANALYZE RISK when the list is clear."
                 }
                 mode="local"
                 side={side}
@@ -524,7 +535,6 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
                 authorityVerdict={null}
                 analyzing={false}
               />
-              <TradeSystemVerdict verdict={setupJudgment.verdict} explanation={setupJudgment.explanation} />
               <DecisionActionBar
                 phase="setup"
                 primaryLabel={analyzeLabel}
@@ -546,6 +556,12 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
 
           {phase === "REVIEW" && snap && (
             <>
+              <TradeTerminalSharedIntel
+                isLoading={sharedIntel.isLoading}
+                isError={sharedIntel.isError}
+                sentiment={sharedIntel.sentiment}
+                bullets={sharedIntel.bullets}
+              />
               <TradeSystemContext
                 policy={systemPolicy}
                 decision={decision}
@@ -573,7 +589,6 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
                 authorityVerdict={authorityVerdict}
                 analyzing={false}
               />
-              <TradeSystemVerdict verdict={reviewJudgment.verdict} explanation={reviewJudgment.explanation} />
               <p className="trade-terminal-recap">
                 <span className="trade-terminal-recap__sym">{symbol}</span>
                 <span className="trade-terminal-recap__side">{side === "SELL" ? "EXIT" : side}</span>
@@ -591,6 +606,7 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
                   <span className="trade-terminal-mono"> · Mood: {preTradeEmotion}</span>
                 ) : null}
               </p>
+              <TradeSystemVerdict verdict={reviewJudgment.verdict} explanation={reviewJudgment.explanation} />
               <DecisionActionBar
                 phase="review"
                 primaryLabel={executeLabel}
@@ -598,6 +614,7 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
                 onPrimary={handleExecute}
                 onCancel={onClose}
                 checklist={reviewChecklist}
+                preActions={<ExecutionConsequenceBlock />}
               />
             </>
           )}
@@ -605,7 +622,7 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
           {phase === "EXECUTING" && (
             <div className="trade-terminal-center">
               <Loader size={28} className="dp-spinner" aria-hidden />
-              <p className="trade-terminal-center__title">Submitting order</p>
+              <p className="trade-terminal-center__title">Executing trade</p>
               <p className="trade-terminal-center__sub">
                 {side} · {symbol}
               </p>
@@ -615,11 +632,11 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
           {phase === "SUCCESS" && (
             <div className="trade-terminal-center">
               <CheckCircle size={36} className="trade-terminal-center__ok" aria-hidden />
-              <p className="trade-terminal-center__title">Order accepted</p>
+              <p className="trade-terminal-center__title">Trade executed</p>
               <p className="trade-terminal-center__sub">
                 {submissionOutcome === "queued"
                   ? "Order queued for the next market open (09:15 IST). Cash remains reserved until execution or expiry."
-                  : "Portfolio updating · closed journal entries appear after round-trip · skill/tags update when reflection completes"}
+                  : "Portfolio and journal entry log updated · trace recorded · Markets and other tabs refresh automatically"}
               </p>
             </div>
           )}

@@ -27,6 +27,71 @@ const eventBus = require("../utils/eventBus");
 const { isMarketOpen } = require("./marketHours.service");
 const { tradeQueue } = require("../queue/queue");
 
+function attachExecutionDecisionContext(tradeObj, payload, record) {
+  const dc = payload?.decisionContext;
+  if (!dc || typeof dc !== "object" || Array.isArray(dc)) return;
+  const verdict = typeof dc.verdict === "string" ? dc.verdict.slice(0, 64) : undefined;
+  const score = typeof dc.score === "number" && Number.isFinite(dc.score) ? dc.score : undefined;
+  const engineAction =
+    typeof dc.marketSignal === "string" && /^(ACT|GUIDE|BLOCK)$/.test(dc.marketSignal) ? dc.marketSignal : undefined;
+  if (verdict != null || score != null || engineAction) {
+    tradeObj.decisionSnapshot = {
+      verdict: verdict || undefined,
+      score: score ?? undefined,
+      pillars: engineAction ? { engine: { action: engineAction } } : {},
+    };
+  }
+  const reasoning = [];
+  if (typeof dc.thesis === "string" && dc.thesis.trim()) reasoning.push(`Thesis: ${dc.thesis.trim().slice(0, 500)}`);
+  const bl = dc.behavioralLoop;
+  if (bl && typeof bl === "object" && bl.systemVerdict) {
+    reasoning.push(`System posture: ${String(bl.systemVerdict).slice(0, 200)}`);
+  }
+  if (reasoning.length === 0 && !record?.verdict) return;
+  tradeObj.intelligenceTimeline = {
+    preTrade: {
+      riskLevel: record?.verdict || undefined,
+      flags: [],
+      reasoning: reasoning.length ? reasoning : record?.verdict ? [`Authority: ${record.verdict}`] : [],
+    },
+    postTrade: {
+      outcome: undefined,
+      alignment: undefined,
+      observations: [],
+      behavioralFlags: [],
+      insightSummary: undefined,
+    },
+    learningTags: [],
+    trace: [],
+  };
+}
+
+function buildTraceSystemExplain(tradeDoc) {
+  const t = tradeDoc && typeof tradeDoc.toObject === "function" ? tradeDoc.toObject() : tradeDoc;
+  const ruleTriggers =
+    t.type === "SELL"
+      ? ["BALANCE_CHECK", "PRICE_INTEGRITY", "HOLDING_CHECK"]
+      : ["BALANCE_CHECK", "PRICE_INTEGRITY", "RESERVATION_OR_SETTLE"];
+  const intelligenceInputs = [];
+  const eng = t.decisionSnapshot?.pillars?.engine?.action;
+  if (eng) intelligenceInputs.push(`Engine signal: ${eng}`);
+  const pre = t.intelligenceTimeline?.preTrade;
+  if (Array.isArray(pre?.reasoning) && pre.reasoning.length) {
+    intelligenceInputs.push(...pre.reasoning.slice(0, 12).map((x) => String(x)));
+  }
+  if (t.userThinking) intelligenceInputs.push(`Trader thesis: ${String(t.userThinking).slice(0, 400)}`);
+  const dss = t.decisionSnapshot;
+  const decisionReasoning = dss?.verdict
+    ? `Decision context: ${dss.verdict}${dss.score != null ? ` · score ${dss.score}` : ""}.`
+    : "Decision context not attached on this trade row.";
+  return {
+    ruleTriggers,
+    decisionReasoning,
+    intelligenceInputs,
+    chassis: `${t.symbol} ${t.type} qty=${t.quantity} @ ₹${((t.pricePaise || 0) / 100).toFixed(2)}`,
+  };
+}
+
 
 /** Trade schema only allows REAL | CACHE | STALE | FALLBACK — map test/custom providers to REAL. */
 const TRADE_PRICE_SOURCES = new Set(["REAL", "CACHE", "STALE", "FALLBACK"]);
@@ -422,6 +487,8 @@ const placeOrderCoreInSession = async (
         });
       }
 
+      attachExecutionDecisionContext(tradeObj, payload, record);
+
       const [trade] = await Trade.create([tradeObj], { session });
 
       const finalTrade = trade.toObject();
@@ -529,7 +596,8 @@ const executeOrderCoreInSession = async (session, tradeId) => {
         type: "PLAN",
         humanSummary: { decisionSummary: `Entry position established for ${trade.symbol} at ₹${(trade.pricePaise/100).toFixed(2)}.`, riskLevel: "SYSTEM_APPROVED", verdict: "AUTHORIZED", simpleExplanation: "Institutional trade passed all pre-flight risk constraints." },
         stages: { constraint_engine: { rejected: 0, rules_applied: ["BALANCE_CHECK", "PRICE_INTEGRITY"], violations: [] } },
-        metadata: { user: user._id, related_id: trade._id }
+        metadata: { user: user._id, related_id: trade._id },
+        systemExplain: buildTraceSystemExplain(trade),
       }], { session });
 
     } else {
@@ -562,7 +630,8 @@ const executeOrderCoreInSession = async (session, tradeId) => {
         type: "ANALYSIS",
         humanSummary: { decisionSummary: `Liquidation of ${trade.symbol} at ₹${(trade.pricePaise/100).toFixed(2)}.`, behaviorFlags: trade.intelligenceTimeline?.postTrade?.behavioralFlags || [], reflectionSummary: trade.learningOutcome?.insight || "", riskLevel: "MITIGATED", verdict: trade.decisionSnapshot?.verdict || "CLOSED", simpleExplanation: `Position closed.` },
         stages: { constraint_engine: { rejected: 0, rules_applied: ["HOLDING_CHECK"], violations: [] } },
-        metadata: { user: user._id, related_id: trade._id }
+        metadata: { user: user._id, related_id: trade._id },
+        systemExplain: buildTraceSystemExplain(trade),
       }], { session });
     }
 

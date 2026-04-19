@@ -5,6 +5,8 @@ export type DecisionMeta = {
   pnlPct?: number;
   quantity?: number;
   changePct?: number;
+  /** Scanner / tape regime when opening the trade workspace */
+  trend?: string;
   signalTag?: string;
   journalCorrection?: string;
   journalInsight?: string;

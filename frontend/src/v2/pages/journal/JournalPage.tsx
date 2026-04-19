@@ -32,7 +32,12 @@ export default function JournalPage() {
             <span className="journal-learn__state-dot" aria-hidden="true">
               ·
             </span>
-            <span className="journal-learn__state-k">Entries</span>
+            <span className="journal-learn__state-k">Open legs</span>
+            <span className="journal-learn__state-v journal-learn__state-v--mono">{vm.entryOpeningCount}</span>
+            <span className="journal-learn__state-dot" aria-hidden="true">
+              ·
+            </span>
+            <span className="journal-learn__state-k">Closed</span>
             <span className="journal-learn__state-v journal-learn__state-v--mono">{vm.entryCount}</span>
             <span className="journal-learn__state-dot" aria-hidden="true">
               ·
@@ -61,75 +66,109 @@ export default function JournalPage() {
               Go to Markets
             </Link>
           </section>
-        ) : vm.entryCount === 0 ? (
-          <section className="journal-learn__block journal-learn__muted" aria-label="Guidance">
-            <p>
-              Every closed round-trip writes a learning surface. Open Markets, execute, and close with reflection so
-              this page fills with mistakes, corrections, and system response.
-            </p>
-          </section>
         ) : (
           <>
-            {/* SECTION 3 — RECENT ENTRIES */}
-            <section className="journal-learn__block" aria-label="Recent journal entries">
-              <h2 className="journal-learn__h">Recent entries</h2>
-              <ol className="journal-learn__entries">
-                {vm.entries.map((e) => (
-                  <li key={e.id} className="journal-learn__entry">
-                    <p className="journal-learn__entry-line">
-                      <span className="journal-learn__k">Trade</span>
-                      <span className="journal-learn__v journal-learn__trade-val">
-                        <span className="journal-learn__v--mono">{e.tradeSummary}</span>
-                        {e.moodLabel ? (
-                          <span
-                            className="journal-learn__mood-chip"
-                            title="How you felt when you opened this position (self-reported)"
-                          >
-                            {e.moodLabel}
+            {vm.openingEntries.length > 0 ? (
+              <section className="journal-learn__block" aria-label="Entry logs">
+                <h2 className="journal-learn__h">Entry logs (open positions)</h2>
+                <p className="journal-learn__muted journal-learn__lead">
+                  Written on every buy execution — thesis, signal, and status while the leg is open.
+                </p>
+                <ol className="journal-learn__entries">
+                  {vm.openingEntries.map((o) => (
+                    <li key={o.id} className="journal-learn__entry journal-learn__entry--open">
+                      <p className="journal-learn__entry-line">
+                        <span className="journal-learn__k">Open</span>
+                        <span className="journal-learn__v journal-learn__v--mono">{o.title}</span>
+                      </p>
+                      <p className="journal-learn__entry-line">
+                        <span className="journal-learn__k">Status</span>
+                        <span className="journal-learn__v">{o.status}</span>
+                      </p>
+                      <p className="journal-learn__entry-line">
+                        <span className="journal-learn__k">Signal</span>
+                        <span className="journal-learn__v">{o.signal}</span>
+                      </p>
+                      <p className="journal-learn__entry-line">
+                        <span className="journal-learn__k">Thesis</span>
+                        <span className="journal-learn__v">{o.thesis}</span>
+                      </p>
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            ) : null}
+
+            {vm.entryCount === 0 && vm.openingEntries.length === 0 ? (
+              <section className="journal-learn__block journal-learn__muted" aria-label="Guidance">
+                <p>
+                  Execute from Markets to create your first entry log. Closed round-trips still build the learning
+                  surface once you exit with reflection.
+                </p>
+              </section>
+            ) : null}
+
+            {vm.entryCount > 0 ? (
+              <>
+                <section className="journal-learn__block" aria-label="Recent journal entries">
+                  <h2 className="journal-learn__h">Closed round-trips</h2>
+                  <ol className="journal-learn__entries">
+                    {vm.entries.map((e) => (
+                      <li key={e.id} className="journal-learn__entry">
+                        <p className="journal-learn__entry-line">
+                          <span className="journal-learn__k">Trade</span>
+                          <span className="journal-learn__v journal-learn__trade-val">
+                            <span className="journal-learn__v--mono">{e.tradeSummary}</span>
+                            {e.moodLabel ? (
+                              <span
+                                className="journal-learn__mood-chip"
+                                title="How you felt when you opened this position (self-reported)"
+                              >
+                                {e.moodLabel}
+                              </span>
+                            ) : null}
                           </span>
-                        ) : null}
-                      </span>
-                    </p>
-                    <p className="journal-learn__entry-line">
-                      <span className="journal-learn__k">Decision</span>
-                      <span className="journal-learn__v">{e.decision}</span>
-                    </p>
-                    <p className="journal-learn__entry-line">
-                      <span className="journal-learn__k">Outcome</span>
-                      <span className="journal-learn__v">{e.outcome}</span>
-                    </p>
-                    <p className="journal-learn__entry-line">
-                      <span className="journal-learn__k">Mistake</span>
-                      <span className="journal-learn__v">{e.mistake}</span>
-                    </p>
-                    <p className="journal-learn__entry-line">
-                      <span className="journal-learn__k">Correction</span>
-                      <span className="journal-learn__v">{e.correction}</span>
-                    </p>
-                  </li>
-                ))}
-              </ol>
-            </section>
+                        </p>
+                        <p className="journal-learn__entry-line">
+                          <span className="journal-learn__k">Decision</span>
+                          <span className="journal-learn__v">{e.decision}</span>
+                        </p>
+                        <p className="journal-learn__entry-line">
+                          <span className="journal-learn__k">Outcome</span>
+                          <span className="journal-learn__v">{e.outcome}</span>
+                        </p>
+                        <p className="journal-learn__entry-line">
+                          <span className="journal-learn__k">Mistake</span>
+                          <span className="journal-learn__v">{e.mistake}</span>
+                        </p>
+                        <p className="journal-learn__entry-line">
+                          <span className="journal-learn__k">Correction</span>
+                          <span className="journal-learn__v">{e.correction}</span>
+                        </p>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
 
-            {/* SECTION 4 — PATTERN DETECTION */}
-            <section className="journal-learn__block" aria-label="Detected patterns">
-              <h2 className="journal-learn__h">Detected behavioral patterns</h2>
-              <ul className="journal-learn__bullets">
-                {vm.patternLines.map((line) => (
-                  <li key={line}>{line}</li>
-                ))}
-              </ul>
-            </section>
+                <section className="journal-learn__block" aria-label="Detected patterns">
+                  <h2 className="journal-learn__h">Detected behavioral patterns</h2>
+                  <ul className="journal-learn__bullets">
+                    {vm.patternLines.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                </section>
 
-            {/* SECTION 5 — SYSTEM RESPONSE */}
-            <section className="journal-learn__block" aria-label="System response">
-              <h2 className="journal-learn__h">System response</h2>
-              <ul className="journal-learn__rules">
-                {vm.systemResponseLines.map((line) => (
-                  <li key={line}>{line}</li>
-                ))}
-              </ul>
-            </section>
+                <section className="journal-learn__block" aria-label="System response">
+                  <h2 className="journal-learn__h">System response</h2>
+                  <ul className="journal-learn__rules">
+                    {vm.systemResponseLines.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                </section>
+              </>
+            ) : null}
           </>
         )}
 

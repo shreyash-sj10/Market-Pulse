@@ -16,6 +16,11 @@ function formatRoeDisplay(roe: number | null): string {
   return `${pct.toFixed(1)}%`;
 }
 
+function fmtPct(n: number): string {
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${n.toFixed(2)}%`;
+}
+
 export type FundamentalsPanelProps = {
   symbol: string;
   selected: MarketStock;
@@ -36,15 +41,52 @@ export default function FundamentalsPanel({ symbol, selected }: FundamentalsPane
   const epsDisplay =
     isLoading ? "…" : isError ? "—" : fundamentals?.eps != null ? `₹${fundamentals.eps.toFixed(2)}` : "—";
 
+  const sectorDisplay =
+    isLoading ? "…" : fundamentals?.sector?.trim() ? fundamentals.sector.trim() : "—";
+
+  const stockPct = selected.changePercent;
+  const sectorPct = fundamentals?.sectorChangePercent;
+  const showRelative =
+    !isLoading &&
+    !isError &&
+    fundamentals?.sector != null &&
+    sectorPct != null &&
+    Number.isFinite(sectorPct) &&
+    fundamentals.sectorBenchmarkLabel != null;
+
+  const delta = showRelative ? stockPct - sectorPct : null;
+
   return (
     <div className="analysis-col">
       <p className="analysis-col__title">Fundamentals</p>
       <div className="workspace-metric-list">
+        <Row label="Sector" value={sectorDisplay} />
         <Row label="P/E" value={peDisplay} />
         <Row label="ROE" value={roeDisplay} />
         <Row label="Debt / equity" value={debtEqDisplay} />
         <Row label="EPS" value={epsDisplay} />
       </div>
+
+      {showRelative && delta != null ? (
+        <div className="workspace-relative">
+          <p className="workspace-relative__title">Relative performance</p>
+          <p className="workspace-relative__hint">{fundamentals.sectorBenchmarkLabel}</p>
+          <div className="workspace-relative__grid">
+            <span className="workspace-relative__k">Stock</span>
+            <span className={`workspace-relative__v ${stockPct >= 0 ? "workspace-change--up" : "workspace-change--down"}`}>
+              {fmtPct(stockPct)}
+            </span>
+            <span className="workspace-relative__k">Sector</span>
+            <span className={`workspace-relative__v ${sectorPct >= 0 ? "workspace-change--up" : "workspace-change--down"}`}>
+              {fmtPct(sectorPct)}
+            </span>
+            <span className="workspace-relative__k">Δ vs sector</span>
+            <span className={`workspace-relative__v ${delta >= 0 ? "workspace-change--up" : "workspace-change--down"}`}>
+              {fmtPct(delta)}
+            </span>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

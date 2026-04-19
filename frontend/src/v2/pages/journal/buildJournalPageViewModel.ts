@@ -1,4 +1,4 @@
-import type { JournalPageStatus } from "../../hooks/useJournalDecisions";
+import type { JournalEntryOpeningVm, JournalPageStatus } from "../../hooks/useJournalDecisions";
 import type { JournalLogVm, LearningEngineModel } from "./journalIntelligence";
 import { buildProfileBehaviorModel } from "../profile/buildProfileBehaviorModel";
 import { buildProfileEnforcementLines } from "../profile/buildProfileEnforcementLines";
@@ -14,17 +14,27 @@ export type JournalEntryRowVm = {
   correction: string;
 };
 
+export type JournalOpeningRowVm = {
+  id: string;
+  title: string;
+  status: string;
+  signal: string;
+  thesis: string;
+};
+
 export type JournalPageViewModel = {
   loading: boolean;
   isDegraded: boolean;
   isError: boolean;
   journalStatusLabel: string;
   entryCount: number;
+  entryOpeningCount: number;
   learningStateLabel: string;
   /** Single-line summary for section 1 */
   systemStateSummary: string;
   showPrimaryAction: boolean;
   entries: JournalEntryRowVm[];
+  openingEntries: JournalOpeningRowVm[];
   patternLines: string[];
   systemResponseLines: string[];
 };
@@ -64,11 +74,22 @@ function learningStateLabel(n: number): string {
   return "Engaged — anchored on your last closes";
 }
 
+function openingRow(o: JournalEntryOpeningVm): JournalOpeningRowVm {
+  return {
+    id: o.id,
+    title: `${o.symbol} · ${o.dateLabel}`,
+    status: o.executionStatus,
+    signal: o.signalLine,
+    thesis: o.thesisLine,
+  };
+}
+
 function journalStatus(journal: JournalPageStatus): string {
   if (journal.isLoading) return "Syncing";
   if (journal.isDegraded) return "Degraded";
   if (journal.isError) return "Unavailable";
-  if (journal.logs.length === 0) return "Inactive";
+  if (journal.logs.length === 0 && journal.entryOpenings.length === 0) return "Inactive";
+  if (journal.logs.length === 0) return "Recording opens";
   return "Active";
 }
 
@@ -118,8 +139,9 @@ function buildPatternLines(logs: JournalLogVm[], engine: LearningEngineModel): s
 }
 
 export function buildJournalPageViewModel(journal: JournalPageStatus): JournalPageViewModel {
-  const { logs, engine, behavioral, isLoading, isDegraded, isError } = journal;
+  const { logs, engine, behavioral, entryOpenings, isLoading, isDegraded, isError } = journal;
   const entryCount = logs.length;
+  const entryOpeningCount = entryOpenings.length;
   const learnLabel = learningStateLabel(entryCount);
 
   const status = journalStatus(journal);
@@ -128,9 +150,9 @@ export function buildJournalPageViewModel(journal: JournalPageStatus): JournalPa
       ? "Journal syncing — pull latest closes from the server."
       : isError
         ? "Journal unavailable — retry after refresh."
-        : entryCount === 0
+        : entryCount === 0 && entryOpeningCount === 0
           ? "Journal inactive — no entries yet"
-          : `Journal active — ${entryCount} closed surface${entryCount === 1 ? "" : "s"} in window`;
+          : `Journal active — ${entryOpeningCount} open leg${entryOpeningCount === 1 ? "" : "s"} · ${entryCount} closed surface${entryCount === 1 ? "" : "s"}`;
 
   const behaviorModel = entryCount > 0 ? buildProfileBehaviorModel(logs, engine) : null;
   const systemResponseLines =
@@ -151,8 +173,10 @@ export function buildJournalPageViewModel(journal: JournalPageStatus): JournalPa
     entryCount,
     learningStateLabel: learnLabel,
     systemStateSummary,
-    showPrimaryAction: !isLoading && entryCount === 0 && !isError,
+    showPrimaryAction: !isLoading && entryCount === 0 && entryOpeningCount === 0 && !isError,
     entries: logs.map(entryRow),
+    openingEntries: entryOpenings.map(openingRow),
+    entryOpeningCount,
     patternLines,
     systemResponseLines,
   };

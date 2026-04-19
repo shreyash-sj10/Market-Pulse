@@ -5,6 +5,7 @@ const AppError = require('../utils/AppError');
 const { SYSTEM_CONFIG } = require("../config/system.config");
 const { getQuoteCache, setQuoteCache } = require("../utils/marketQuoteCache");
 const { normalizeSymbol } = require("../utils/symbol.utils");
+const { resolveSectorBenchmark } = require("../constants/sectorBenchmark.map");
 const logger = require("../utils/logger");
 
 const { toPaise, enforcePaise} = require('../utils/paise');
@@ -412,15 +413,49 @@ const getHistorical = async (symbol, period = "1mo") => {
 };
 
 /**
- * GET FUNDAMENTALS
+ * GET FUNDAMENTALS (+ sector + sector benchmark session % for relative performance)
  */
 const getFundamentals = async (symbol) => {
   const apiSymbol = normalizeSymbol(symbol);
   try {
     const result = await yahooFinance.quoteSummary(apiSymbol, {
-      modules: ["summaryDetail", "defaultKeyStatistics", "financialData"],
+      modules: ["summaryDetail", "defaultKeyStatistics", "financialData", "summaryProfile"],
     });
-    return result;
+    if (!result || typeof result !== "object") return null;
+
+    const sectorRaw = result.summaryProfile?.sector;
+    const sector = typeof sectorRaw === "string" && sectorRaw.trim() ? sectorRaw.trim() : null;
+    const bench = sector ? resolveSectorBenchmark(sector) : null;
+
+    let sectorChangePercent = null;
+    let benchmarkSymbol = null;
+    let benchmarkLabel = null;
+    if (bench?.symbol) {
+      benchmarkSymbol = bench.symbol;
+      benchmarkLabel = bench.label;
+      try {
+        const q = await yahooFinance.quote(bench.symbol);
+        const p = q?.regularMarketChangePercent;
+        sectorChangePercent = typeof p === "number" && Number.isFinite(p) ? p : null;
+      } catch (e) {
+        logger.warn({
+          event: "SECTOR_BENCHMARK_QUOTE_FAILED",
+          symbol: bench.symbol,
+          message: e?.message || String(e),
+        });
+        sectorChangePercent = null;
+      }
+    }
+
+    return {
+      ...result,
+      sectorContext: {
+        sector,
+        sectorChangePercent,
+        benchmarkSymbol,
+        benchmarkLabel,
+      },
+    };
   } catch (error) {
     return null;
   }

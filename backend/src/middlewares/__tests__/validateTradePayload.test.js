@@ -1,7 +1,7 @@
-const { validateTradePayload } = require("../validateTradePayload");
+const { validateTradePayload, validatePreTradePayload } = require("../validateTradePayload");
 
-const runMiddleware = (body, path = "/buy") => {
-  const req = { body: { ...body }, path };
+const runMiddleware = (body, path = "/buy", headers = {}) => {
+  const req = { body: { ...body }, path, headers };
   const res = {
     status: jest.fn().mockReturnThis(),
     json: jest.fn(),
@@ -189,5 +189,83 @@ describe("validateTradePayload strict canonical enforcement", () => {
         }),
       }),
     );
+  });
+
+  it("copies pre-trade token from header into body when missing", () => {
+    const { preTradeToken: _omit, ...noToken } = validBuyPayload;
+    const { req, next } = runMiddleware(noToken, "/buy", { "pre-trade-token": "hdr-token-xyz" });
+
+    expect(next).toHaveBeenCalled();
+    expect(req.body.preTradeToken).toBe("hdr-token-xyz");
+  });
+
+  it("rejects SELL payload submitted to /buy route", () => {
+    const { res, next } = runMiddleware(validSellPayload, "/buy");
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: false,
+        error: expect.objectContaining({
+          code: "INVALID_SIDE",
+          message: "Route /buy requires side=BUY.",
+        }),
+      })
+    );
+  });
+
+  it("rejects BUY payload submitted to /sell route", () => {
+    const { res, next } = runMiddleware(validBuyPayload, "/sell");
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: false,
+        error: expect.objectContaining({
+          code: "INVALID_SIDE",
+          message: "Route /sell requires side=SELL.",
+        }),
+      })
+    );
+  });
+});
+
+describe("validatePreTradePayload", () => {
+  const runPre = (body) => {
+    const req = { body: { ...body } };
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    const next = jest.fn();
+    validatePreTradePayload(req, res, next);
+    return { req, res, next };
+  };
+
+  it("returns validation issues for invalid pre-trade BUY", () => {
+    const { res, next } = runPre({ side: "BUY", symbol: "X" });
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: false,
+        error: expect.objectContaining({
+          code: "INVALID_TRADE_PAYLOAD",
+          message: "Pre-trade payload validation failed.",
+          details: expect.any(Array),
+        }),
+      })
+    );
+  });
+
+  it("sets body.type from side on success", () => {
+    const { req, next } = runPre({
+      side: "BUY",
+      symbol: "RELIANCE.NS",
+      quantity: 1,
+      pricePaise: 10000,
+      stopLossPaise: 9500,
+      targetPricePaise: 11000,
+    });
+    expect(next).toHaveBeenCalled();
+    expect(req.body.type).toBe("BUY");
   });
 });

@@ -1,19 +1,11 @@
-import { useMemo } from "react";
-import { useMarketNews } from "../../../hooks/useMarketNews";
-import { mapSignalsToIntelligenceItems, type IntelligenceBias } from "../mapIntelligenceItems";
+import { useSymbolIntelligence } from "../../../hooks/useSymbolIntelligence";
+import type { IntelligenceBias } from "../mapIntelligenceItems";
 
 export type IntelligenceTapeContext = {
   trend: string;
   changePercent: number;
   isDegradedTape: boolean;
 };
-
-function biasFromTrend(trend: string): IntelligenceBias {
-  const t = String(trend).toUpperCase();
-  if (t === "BULLISH") return "Bullish";
-  if (t === "BEARISH") return "Bearish";
-  return "Neutral";
-}
 
 function BiasTag({ bias }: { bias: IntelligenceBias }) {
   const cls =
@@ -25,60 +17,47 @@ function BiasTag({ bias }: { bias: IntelligenceBias }) {
   return <span className={cls}>{bias}</span>;
 }
 
-function aggregateBias(items: { bias: IntelligenceBias }[]): IntelligenceBias {
-  const counts = { Bullish: 0, Bearish: 0, Neutral: 0 } as Record<IntelligenceBias, number>;
-  for (const it of items) counts[it.bias] += 1;
-  if (counts.Bullish > counts.Bearish && counts.Bullish >= counts.Neutral) return "Bullish";
-  if (counts.Bearish > counts.Bullish && counts.Bearish >= counts.Neutral) return "Bearish";
-  return "Neutral";
-}
-
 export type IntelligenceBlockProps = {
   symbol: string;
-  tapeContext: IntelligenceTapeContext;
+  /** @deprecated kept for call-site compatibility; news-only UI ignores tape */
+  tapeContext?: IntelligenceTapeContext;
 };
 
-/** News-derived sentiment plus one-line readout; falls back to tape when the feed is empty. */
-export default function IntelligenceBlock({ symbol, tapeContext }: IntelligenceBlockProps) {
-  const { signals, isLoading, isError } = useMarketNews(symbol);
+const NO_NEWS_COPY = "No relevant news impacting this stock";
 
-  const items = useMemo(() => mapSignalsToIntelligenceItems(signals, 3), [signals]);
-
-  const fallback = useMemo(() => {
-    const bias = biasFromTrend(tapeContext.trend);
-    const chg = tapeContext.changePercent;
-    const chgStr = `${chg > 0 ? "+" : ""}${chg.toFixed(2)}%`;
-    const expl = tapeContext.isDegradedTape
-      ? `Quotes are degraded (${chgStr} session). No ranked headlines — lean on tape, engine posture, and risk limits.`
-      : `No ranked headlines in the current window (${chgStr} session). Readout follows live trend and flow only.`;
-    return { bias, expl };
-  }, [tapeContext.trend, tapeContext.changePercent, tapeContext.isDegradedTape]);
+/** News-driven sentiment + 2–3 bullets; no tape fallback when headlines are absent. */
+export default function IntelligenceBlock({ symbol }: IntelligenceBlockProps) {
+  const { bullets, sentiment, isLoading, isError } = useSymbolIntelligence(symbol);
 
   if (isLoading) {
     return <p className="intel-strip__state">Loading intelligence…</p>;
   }
 
-  if (!isError && items.length > 0) {
-    const bias = aggregateBias(items);
-    const expl = items[0].impact.trim() || items[0].headline;
+  if (bullets.length > 0) {
     return (
-      <div className="intel-strip">
+      <div className="intel-strip intel-strip--rich">
         <div className="intel-strip__row">
           <span className="intel-strip__k">Sentiment</span>
-          <BiasTag bias={bias} />
+          <BiasTag bias={sentiment} />
         </div>
-        <p className="intel-strip__expl">{expl}</p>
+        <ul className="intel-bullet-list">
+          {bullets.map((line, i) => (
+            <li key={`${i}-${line.slice(0, 32)}`} className="intel-bullet-list__item">
+              {line}
+            </li>
+          ))}
+        </ul>
       </div>
     );
   }
 
   return (
-    <div className="intel-strip">
+    <div className="intel-strip intel-strip--rich">
       <div className="intel-strip__row">
         <span className="intel-strip__k">Sentiment</span>
-        <BiasTag bias={fallback.bias} />
+        <BiasTag bias={isError ? "Neutral" : sentiment} />
       </div>
-      <p className="intel-strip__expl">{fallback.expl}</p>
+      <p className="intel-strip__empty">{NO_NEWS_COPY}</p>
     </div>
   );
 }

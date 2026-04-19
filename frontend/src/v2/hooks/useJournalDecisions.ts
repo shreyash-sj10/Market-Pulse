@@ -18,10 +18,21 @@ import {
   type LearningEngineModel,
 } from "../pages/journal/journalIntelligence";
 
+/** Buy-side entry logs from `/journal/summary` `entryLogs` (every open / executed leg). */
+export type JournalEntryOpeningVm = {
+  id: string;
+  symbol: string;
+  dateLabel: string;
+  executionStatus: string;
+  signalLine: string;
+  thesisLine: string;
+};
+
 export type JournalPageStatus = {
   logs: JournalLogVm[];
   engine: LearningEngineModel;
   behavioral: BehavioralGuidanceModel;
+  entryOpenings: JournalEntryOpeningVm[];
   isLoading: boolean;
   isError: boolean;
   isDegraded: boolean;
@@ -43,6 +54,37 @@ function getJournalEntries(res: unknown): unknown[] {
   if (nested && Array.isArray(nested.entries)) return nested.entries;
   if (Array.isArray(r.entries)) return r.entries;
   return [];
+}
+
+function getJournalEntryOpenings(res: unknown): JournalEntryOpeningVm[] {
+  if (!res || typeof res !== "object") return [];
+  const r = res as Record<string, unknown>;
+  const nested = r.data as Record<string, unknown> | undefined;
+  const raw = (nested?.entryLogs ?? r.entryLogs) as unknown[] | undefined;
+  if (!Array.isArray(raw)) return [];
+  const out: JournalEntryOpeningVm[] = [];
+  for (const e of raw) {
+    if (!e || typeof e !== "object") continue;
+    const o = e as Record<string, unknown>;
+    const sym = String(o.symbol ?? "").trim();
+    if (!sym) continue;
+    const id = String(o.tradeId ?? sym);
+    const opened = o.openedAt != null ? new Date(String(o.openedAt)).getTime() : 0;
+    const sig = o.signalVerdict != null && String(o.signalVerdict).trim() ? String(o.signalVerdict).trim() : "—";
+    const score =
+      o.signalScore != null && Number.isFinite(Number(o.signalScore)) ? ` · ${Number(o.signalScore)}` : "";
+    const thesisRaw = o.thesis != null ? String(o.thesis).trim() : "";
+    const thesisLine = thesisRaw ? (thesisRaw.length > 140 ? `${thesisRaw.slice(0, 138)}…` : thesisRaw) : "—";
+    out.push({
+      id,
+      symbol: sym,
+      dateLabel: formatJournalDate(opened),
+      executionStatus: String(o.executionStatus ?? "—"),
+      signalLine: `${sig}${score}`,
+      thesisLine,
+    });
+  }
+  return out;
 }
 
 function entrySortTime(entry: Record<string, unknown>): number {
@@ -132,11 +174,14 @@ function mapJournalEntryToRow(entry: Record<string, unknown>): JournalRowSource 
 
 export async function fetchJournalRows(): Promise<{
   rows: JournalRowSource[];
+  entryOpenings: JournalEntryOpeningVm[];
   degraded: boolean;
   fetchFailed: boolean;
 }> {
   try {
     const res = await getJournalSummary();
+    const meta = (res as Record<string, unknown>).meta as Record<string, unknown> | undefined;
+    const degraded = Boolean(meta?.journalWarning);
     const raw = getJournalEntries(res);
     const sorted = [...raw].sort(
       (a, b) => entrySortTime(b as Record<string, unknown>) - entrySortTime(a as Record<string, unknown>),
@@ -145,14 +190,15 @@ export async function fetchJournalRows(): Promise<{
       .map((e) => mapJournalEntryToRow(e as Record<string, unknown>))
       .filter((x): x is JournalRowSource => x !== null);
 
-    return { rows, degraded: false, fetchFailed: false };
+    return { rows, entryOpenings: getJournalEntryOpenings(res), degraded, fetchFailed: false };
   } catch {
-    return { rows: [], degraded: true, fetchFailed: true };
+    return { rows: [], entryOpenings: [], degraded: true, fetchFailed: true };
   }
 }
 
 function buildPageStatus(
   rows: JournalRowSource[],
+  entryOpenings: JournalEntryOpeningVm[],
   degraded: boolean,
   fetchFailed: boolean,
 ): Omit<JournalPageStatus, "isLoading"> {
@@ -161,14 +207,15 @@ function buildPageStatus(
     logs,
     engine: deriveLearningEngine(logs),
     behavioral: deriveBehavioralGuidance(logs),
+    entryOpenings,
     isError: fetchFailed,
     isDegraded: degraded,
   };
 }
 
 async function loadJournal(): Promise<JournalPageStatus> {
-  const { rows, degraded, fetchFailed } = await fetchJournalRows();
-  return { isLoading: false, ...buildPageStatus(rows, degraded, fetchFailed) };
+  const { rows, entryOpenings, degraded, fetchFailed } = await fetchJournalRows();
+  return { isLoading: false, ...buildPageStatus(rows, entryOpenings, degraded, fetchFailed) };
 }
 
 export function useJournalPage(): JournalPageStatus {
@@ -185,13 +232,14 @@ export function useJournalPage(): JournalPageStatus {
       logs: [],
       engine: deriveLearningEngine([]),
       behavioral: deriveBehavioralGuidance([]),
+      entryOpenings: [],
       isLoading: true,
       isError: false,
       isDegraded: false,
     };
   }
 
-  return q.data ?? { isLoading: false, ...buildPageStatus([], true, true) };
+  return q.data ?? { isLoading: false, ...buildPageStatus([], [], true, true) };
 }
 
 /** @deprecated Use useJournalPage — kept name for grep-friendly migration */

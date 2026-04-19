@@ -51,15 +51,6 @@ export default function DecisionWorkspace({
 
   const side = tapeSideLabel(selected.trend);
 
-  const intelTape = useMemo(
-    () => ({
-      trend: selected.trend,
-      changePercent: selected.changePercent,
-      isDegradedTape: Boolean(selected.isFallback || selected.isSynthetic),
-    }),
-    [selected.trend, selected.changePercent, selected.isFallback, selected.isSynthetic],
-  );
-
   return (
     <div className="markets-workspace markets-workspace--flow workspace-terminal">
       <header className="workspace-terminal__header">
@@ -84,10 +75,15 @@ export default function DecisionWorkspace({
         <h2 id="ws-decision-label" className="workspace-terminal__label">
           Decision
         </h2>
-        <div className="workspace-terminal__decision-row">
+        <div className="workspace-terminal__decision-compact">
           <span className={`workspace-decision-tag ${engineActionClass(card.decision.action)}`}>{card.decision.action}</span>
+          <span className="workspace-terminal__decision-arrow" aria-hidden>
+            →
+          </span>
           <span className={`workspace-side-tag ${sideTagClass(side)}`}>{side}</span>
-          <span className="workspace-terminal__confidence">{card.decision.confidence}% confidence</span>
+          <span className="workspace-terminal__confidence workspace-terminal__confidence--inline">
+            Confidence: {card.decision.confidence}%
+          </span>
         </div>
       </section>
 
@@ -115,7 +111,7 @@ export default function DecisionWorkspace({
         <h2 id="ws-intel-label" className="workspace-terminal__label">
           Intelligence
         </h2>
-        <IntelligenceBlock symbol={symKey} tapeContext={intelTape} />
+        <IntelligenceBlock symbol={symKey} />
       </section>
 
       <section className="workspace-terminal__section workspace-terminal__section--grow" aria-labelledby="ws-analysis-label">

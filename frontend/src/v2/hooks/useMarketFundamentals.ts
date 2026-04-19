@@ -12,6 +12,9 @@ export interface Fundamentals {
   eps: number | null;
   debtToEquity: number | null;
   returnOnEquity: number | null;
+  sector: string | null;
+  sectorChangePercent: number | null;
+  sectorBenchmarkLabel: string | null;
 }
 
 function rawNum(v: unknown): number | null {
@@ -36,9 +39,19 @@ function trailingPeFromModules(
 
 async function fetchFundamentals(symbol: string): Promise<Fundamentals> {
   const res = await api.get(`/market/fundamentals?symbol=${encodeURIComponent(symbol)}`);
-  const d = (res.data?.data?.summaryDetail ?? {}) as Record<string, unknown>;
-  const ks = (res.data?.data?.defaultKeyStatistics ?? {}) as Record<string, unknown>;
-  const fd = (res.data?.data?.financialData ?? {}) as Record<string, unknown>;
+  const root = (res.data?.data ?? {}) as Record<string, unknown>;
+  const d = (root.summaryDetail ?? {}) as Record<string, unknown>;
+  const ks = (root.defaultKeyStatistics ?? {}) as Record<string, unknown>;
+  const fd = (root.financialData ?? {}) as Record<string, unknown>;
+  const sc = root.sectorContext as Record<string, unknown> | undefined;
+
+  const sector = typeof sc?.sector === "string" && sc.sector.trim() ? sc.sector.trim() : null;
+  const scp = sc?.sectorChangePercent;
+  const sectorChangePercent =
+    typeof scp === "number" && Number.isFinite(scp) ? scp : null;
+  const sectorBenchmarkLabel =
+    typeof sc?.benchmarkLabel === "string" && sc.benchmarkLabel.trim() ? sc.benchmarkLabel.trim() : null;
+
   return {
     trailingPE: trailingPeFromModules(d, ks),
     forwardPE: rawNum(d.forwardPE),
@@ -50,12 +63,15 @@ async function fetchFundamentals(symbol: string): Promise<Fundamentals> {
     eps: rawNum(ks.trailingEps),
     debtToEquity: rawNum(ks.debtToEquity ?? fd.debtToEquity),
     returnOnEquity: rawNum(ks.returnOnEquity ?? fd.returnOnEquity),
+    sector,
+    sectorChangePercent,
+    sectorBenchmarkLabel,
   };
 }
 
 export function useMarketFundamentals(symbol: string | null) {
   const { data, isLoading, isError } = useQuery<Fundamentals>({
-    queryKey: ["market", "fundamentals", symbol],
+    queryKey: ["market", "fundamentals", symbol, "v2"],
     queryFn: () => fetchFundamentals(symbol!),
     enabled: Boolean(symbol),
     staleTime: 300_000,

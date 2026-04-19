@@ -66,7 +66,9 @@ const traceSchema = new mongoose.Schema({
   metadata: {
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     related_id: { type: mongoose.Schema.Types.ObjectId }
-  }
+  },
+  /** Structured explainability: rules, reasoning, intelligence lines (execution-time). */
+  systemExplain: { type: mongoose.Schema.Types.Mixed, default: undefined },
 });
 
 const Trace = mongoose.model("Trace", traceSchema);
