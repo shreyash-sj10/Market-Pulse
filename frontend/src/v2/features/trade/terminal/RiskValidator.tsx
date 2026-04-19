@@ -12,6 +12,8 @@ export type RiskValidatorProps = {
   target: string;
   thesis: string;
   thesisMin: number;
+  /** Canonical emotion id (behaviour log) — empty until user selects. */
+  preTradeEmotion: string;
   /** Profile-linked: single-lot until journal unlock. */
   scalingBlocked?: boolean;
   snapshot: Snap;
@@ -44,6 +46,7 @@ function buildLocalLines(p: Omit<RiskValidatorProps, "mode" | "snapshot" | "auth
   const sl = parseFloat(p.stopLoss || "0");
   const tp = parseFloat(p.target || "0");
   const thesisOk = p.thesis.trim().length >= p.thesisMin;
+  const emotionOk = Boolean(p.preTradeEmotion && String(p.preTradeEmotion).trim());
 
   if (p.scalingBlocked && qty > 1) {
     push(lines, "block", "Scaling policy: journal/profile lock — use quantity 1 until unlock streak.");
@@ -65,6 +68,12 @@ function buildLocalLines(p: Omit<RiskValidatorProps, "mode" | "snapshot" | "auth
     push(lines, "warn", `Thesis: minimum ${p.thesisMin} characters required.`);
   } else {
     push(lines, "pass", "Thesis: minimum length satisfied.");
+  }
+
+  if (!emotionOk) {
+    push(lines, "block", "Emotional state: pick one option (feeds behavioural analytics).");
+  } else {
+    push(lines, "pass", `Emotional state: ${String(p.preTradeEmotion).replace(/_/g, " ")}.`);
   }
 
   if (p.side === "BUY") {
@@ -105,6 +114,7 @@ export default function RiskValidator({
   target,
   thesis,
   thesisMin,
+  preTradeEmotion,
   scalingBlocked,
   snapshot,
   authorityVerdict,
@@ -122,7 +132,17 @@ export default function RiskValidator({
   if (mode === "local") {
     return (
       <div className="trade-terminal-eval-details">
-        {buildLocalLines({ side, price, quantity, stopLoss, target, thesis, thesisMin, scalingBlocked }).map((l) => (
+        {buildLocalLines({
+          side,
+          price,
+          quantity,
+          stopLoss,
+          target,
+          thesis,
+          thesisMin,
+          preTradeEmotion,
+          scalingBlocked,
+        }).map((l) => (
           <ValidatorRow key={l.key} severity={l.severity} text={l.text} />
         ))}
       </div>

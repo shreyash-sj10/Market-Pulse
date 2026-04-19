@@ -17,7 +17,7 @@ describe("entry.engine", () => {
         strategyValid: true,
         adaptedRiskLevel: "MEDIUM",
       },
-      behaviorContext: { flags: [] },
+      behaviorContext: { status: "VALID", flags: [], closedTrades: [] },
     });
 
     expect(result.verdict).toBe("ALLOW");
@@ -37,7 +37,7 @@ describe("entry.engine", () => {
         consensusVerdict: "BUY",
         strategyValid: true,
       },
-      behaviorContext: { flags: [] },
+      behaviorContext: { status: "VALID", flags: [], closedTrades: [] },
     });
 
     expect(result.verdict).toBe("BLOCK");
@@ -58,7 +58,7 @@ describe("entry.engine", () => {
         strategyValid: true,
         adaptedRiskLevel: "MEDIUM",
       },
-      behaviorContext: { flags: ["REVENGE_TRADING_RISK"] },
+      behaviorContext: { status: "VALID", flags: ["REVENGE_TRADING_RISK"], closedTrades: [] },
     });
 
     expect(result.verdict).toBe("BLOCK");

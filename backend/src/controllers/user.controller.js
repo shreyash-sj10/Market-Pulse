@@ -1,11 +1,16 @@
 const Trade = require("../models/trade.model");
+const User = require("../models/user.model");
 const logger = require("../utils/logger");
+const { ANALYTICS_SNAPSHOT_VALID_MS } = require("../constants/analyticsSnapshot.constants");
 const { adaptProfile } = require("../adapters/profile.adapter");
 const { normalizeTrade } = require("../domain/trade.contract");
 const { mapToClosedTrades } = require("../domain/closedTrade.mapper");
+const { sendSuccess } = require("../utils/response.helper");
+const { buildProfileSurface } = require("../utils/profileSurface.util");
+const { SYSTEM_CONFIG } = require("../config/system.config");
 
 const getMe = (req, res) => {
-  res.status(200).json({
+  sendSuccess(res, req, {
     success: true,
     user: {
       id: req.user._id,
@@ -17,13 +22,21 @@ const getMe = (req, res) => {
 const getProfile = async (req, res, next) => {
   try {
     const userId = req.user._id;
+    const user = await User.findById(userId).lean();
+    if (!user) {
+      return sendSuccess(res, req, { success: false, message: "User not found" }, 404);
+    }
 
-    const [totalTrades, sellTrades, winTrades, tradesChrono] = await Promise.all([
+    const [totalTrades, sellTrades, winTrades, tradesChrono, pendingReflection] = await Promise.all([
       Trade.countDocuments({ user: userId }),
       Trade.countDocuments({ user: userId, type: "SELL" }),
       Trade.countDocuments({ user: userId, type: "SELL", pnlPaise: { $gt: 0 } }),
       /** Ascending FIFO needs full context — last-N-desc would often be orphan SELLs only. */
       Trade.find({ user: userId }).sort({ createdAt: 1 }).limit(400).lean(),
+      Trade.exists({
+        user: userId,
+        reflectionStatus: "PENDING",
+      }),
     ]);
 
     const winRate = sellTrades === 0 ? 0 : Number(((winTrades / sellTrades) * 100).toFixed(2));
@@ -40,10 +53,28 @@ const getProfile = async (req, res, next) => {
       });
     }
     const recentLearning = closed.slice(-5);
+    const profileSurface = buildProfileSurface(closed, user);
 
-    res.status(200).json({
+    const profileState = pendingReflection ? "STALE" : "READY";
+    const revengeMs = SYSTEM_CONFIG.intelligence.preTrade.revengeWindowMs;
+    const enforcedRiskFloor = {
+      minRewardToRisk: SYSTEM_CONFIG.risk.minRr,
+      revengeCooldownMinutes: Math.max(1, Math.round(revengeMs / 60000)),
+      maxClientPriceDriftPct: SYSTEM_CONFIG.trade.maxClientPriceDriftPct,
+    };
+
+    sendSuccess(res, req, {
       success: true,
-      data: adaptProfile(req.user, { totalTrades, winRate }, recentLearning),
+      data: adaptProfile(user, { totalTrades, winRate }, recentLearning, profileSurface),
+      meta: {
+        analyticsSnapshotLastUpdated: user.analyticsSnapshot?.lastUpdated || null,
+        analyticsLastUpdatedAt: user.analyticsLastUpdatedAt || null,
+        recentLearningSource: "closed_trades_fifo",
+        analyticsSnapshotValidMs: ANALYTICS_SNAPSHOT_VALID_MS,
+        systemStateVersion: user.systemStateVersion ?? 0,
+        profileState,
+        enforcedRiskFloor,
+      },
     });
   } catch (error) {
     next(error);

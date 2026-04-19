@@ -5,6 +5,7 @@ const { deriveReflectionState } = require("../utils/systemState");
 const { adaptJournal } = require("../adapters/journal.adapter");
 const { analyzeReflection } = require("../engines/reflection.engine");
 const logger = require("../utils/logger");
+const { sendSuccess } = require("../utils/response.helper");
 
 /**
  * GET /api/journal/summary
@@ -13,18 +14,38 @@ const logger = require("../utils/logger");
 exports.getJournalSummary = async (req, res, next) => {
   try {
     const userId = req.user._id;
-    const trades = await Trade.find({ user: userId }).sort({ createdAt: 1 });
+    // H-06 FIX: Add a hard limit to prevent O(n) full-collection scans for active
+    // users. 500 trades covers all realistic journal use-cases while bounding
+    // memory and response time. Sort ascending so FIFO pairing (BUY→SELL) works
+    // correctly on the most recent window.
+    const [trades, pendingRows] = await Promise.all([
+      Trade.find({ user: userId }).sort({ createdAt: 1 }).limit(500).lean(),
+      Trade.find({
+        user: userId,
+        status: "PENDING_EXECUTION",
+      })
+        .sort({ createdAt: -1 })
+        .select(
+          "symbol type quantity pricePaise totalValuePaise status createdAt _id reason userThinking manualTags preTradeEmotion",
+        )
+        .lean(),
+    ]);
     const normalized = trades.map((t) => normalizeTrade(t));
     let closed;
     try {
       closed = mapToClosedTrades(normalized);
     } catch (e) {
       logger.error({ action: "JOURNAL_FIFO_FAILED", userId, message: e?.message || String(e) });
-      return res.status(200).json({
+      return sendSuccess(res, req, {
         success: true,
         state: deriveReflectionState({ closedTrades: [], reflections: [] }),
-        data: { totalClosed: 0, frequentPatterns: [], entries: [] },
-        meta: { journalWarning: "TRADE_HISTORY_COULD_NOT_BE_PAIRED" },
+        data: { totalClosed: 0, frequentPatterns: [], entries: [], pendingExecutions: [] },
+        meta: {
+          journalWarning: "TRADE_HISTORY_COULD_NOT_BE_PAIRED",
+          journalScope: "CLOSED_ROUND_TRIPS",
+          pendingExecutionCount: 0,
+          systemStateVersion: req.user?.systemStateVersion ?? 0,
+        },
       });
     }
 
@@ -74,7 +95,8 @@ exports.getJournalSummary = async (req, res, next) => {
           why: reflection.insight,
           improvement: reflection.improvement
         },
-        tags: reflection.tags || []
+        tags: reflection.tags || [],
+        preTradeEmotionAtEntry: ct.entryPreTradeEmotion ?? null,
       };
     }).reverse(); // Most recent first
 
@@ -90,7 +112,21 @@ exports.getJournalSummary = async (req, res, next) => {
       .map(([type, count]) => ({ type, count, frequency: Number((count / (cards.length || 1) * 100).toFixed(0)) }))
       .sort((a, b) => b.count - a.count);
 
-    res.status(200).json({
+    const pendingExecutions = pendingRows.map((t) => ({
+      tradeId: String(t._id),
+      symbol: t.symbol,
+      side: t.type,
+      quantity: t.quantity,
+      pricePaise: t.pricePaise,
+      totalValuePaise: t.totalValuePaise,
+      status: t.status,
+      createdAt: t.createdAt,
+      reasoning:
+        (t.preTradeEmotion ? `[${t.preTradeEmotion}] ` : "") + (t.userThinking || t.reason || ""),
+      tags: Array.isArray(t.manualTags) ? t.manualTags : [],
+    }));
+
+    sendSuccess(res, req, {
       success: true,
       state,
       data: {
@@ -99,7 +135,10 @@ exports.getJournalSummary = async (req, res, next) => {
         entries: cards.map((c) => ({
             tradeId: c.tradeId,
             symbol: c.symbol,
-            side: "SELL",
+            // H-08 FIX: Journal entries represent closed round-trips (BUY+SELL pairs).
+            // Previously hardcoded to "SELL" which was misleading. Use ROUND_TRIP to
+            // accurately describe the entry type.
+            side: "ROUND_TRIP",
             quantity: c.quantity,
             exitPricePaise: c.exitPricePaise,
             entryPricePaise: c.entryPricePaise,
@@ -110,8 +149,20 @@ exports.getJournalSummary = async (req, res, next) => {
             plan: c.plan,
             actual: c.actual,
             learningSurface: adaptJournal(c),
-        }))
-      }
+            preTradeEmotionAtEntry: c.preTradeEmotionAtEntry ?? null,
+        })),
+        pendingExecutions,
+      },
+      meta: {
+        journalScope: "CLOSED_ROUND_TRIPS",
+        closedEntryCount: cards.length,
+        pendingExecutionCount: pendingExecutions.length,
+        /** Oldest→newest FIFO window used for pairing (H-06). */
+        journalTradeLimit: 500,
+        pipelineNote:
+          "entries are closed BUY+SELL pairs; pendingExecutions lists orders not yet executed into holdings.",
+        systemStateVersion: req.user?.systemStateVersion ?? 0,
+      },
     });
   } catch (error) {
     next(error);

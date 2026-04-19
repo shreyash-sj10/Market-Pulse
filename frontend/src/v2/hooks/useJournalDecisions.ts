@@ -107,10 +107,15 @@ function mapJournalEntryToRow(entry: Record<string, unknown>): JournalRowSource 
   };
   const decision = buildDecision(input);
 
+  const moodRaw = entry.preTradeEmotionAtEntry;
+  const preTradeEmotion =
+    moodRaw != null && String(moodRaw).trim() ? String(moodRaw).trim().toUpperCase() : null;
+
   return {
     symbol: sym || "—",
     sortTime,
     dateLabel: formatJournalDate(sortTime),
+    preTradeEmotion,
     mistake: mistake || sym || "Trade reflection",
     correction: correction || "Review before next entry.",
     insight: insight || "—",
@@ -170,7 +175,9 @@ export function useJournalPage(): JournalPageStatus {
   const q = useQuery({
     queryKey: queryKeys.journal,
     queryFn: loadJournal,
-    staleTime: 0,
+    staleTime: 20_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
   });
 
   if (q.isPending && !q.data) {

@@ -4,6 +4,7 @@ const rateLimit = require("express-rate-limit");
 const marketController = require('../controllers/market.controller');
 const marketDataService = require('../services/marketData.service');
 const protect = require("../middlewares/auth.middleware");
+const { sendSuccess } = require("../utils/response.helper");
 
 const marketReadLimiter = rateLimit({
   windowMs: Number(process.env.MARKET_RATE_LIMIT_WINDOW_MS || 60 * 1000),
@@ -31,7 +32,7 @@ router.get('/explore', marketReadLimiter, async (req, res, next) => {
     const search = req.query.query || "";
     const segment = String(req.query.segment || "all").toLowerCase();
     const result = await marketDataService.getExploreData(limit, offset, search, segment);
-    res.json({ success: true, ...result });
+    sendSuccess(res, req, { success: true, ...result });
   } catch (error) {
     next(error);
   }

@@ -7,9 +7,33 @@ const User = require("../../src/models/user.model");
 const Trade = require("../../src/models/trade.model");
 
 const marketDataService = require("../../src/services/marketData.service");
+const { getPrice } = require("../../src/services/price.engine");
 const aiExplanationService = require("../../src/services/aiExplanation.service");
 jest.mock("../../src/services/marketData.service");
+jest.mock("../../src/services/price.engine", () => ({
+  getPrice: jest.fn(),
+}));
 jest.mock("../../src/services/aiExplanation.service");
+jest.mock("../../src/services/news/news.engine", () => ({
+  getProcessedNews: jest.fn().mockImplementation(async (sym) => ({
+    symbol: sym || "",
+    status: "VALID",
+    signals: [
+      {
+        id: "jest-consensus",
+        event: "Synthetic consensus for integration tests",
+        verdict: "BUY",
+        impact: "BULLISH",
+        confidence: 80,
+        sector: "GENERAL",
+        mechanism: "TEST_STUB",
+        isConsensus: true,
+        status: "VALID",
+      },
+    ],
+    stats: { total: 1, lastUpdated: new Date().toISOString() },
+  })),
+}));
 jest.setTimeout(30000);
 const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/trading_platform_test";
 
@@ -44,6 +68,10 @@ describe("contract enforcement", () => {
     marketDataService.getLivePrices.mockResolvedValue({
       "RELIANCE.NS": { pricePaise: 2500, source: "REAL", isFallback: false },
     });
+    getPrice.mockResolvedValue({
+      pricePaise: 2500,
+      source: "LIVE",
+    });
     aiExplanationService.parseTradeIntent.mockResolvedValue({ status: "VALID", strategy: "Breakout", confidence: 90, keywords: [] });
     aiExplanationService.generateExplanation.mockResolvedValue({ status: "VALID", explanation: "Test", behaviorAnalysis: "Low risk" });
     aiExplanationService.generateFinalTradeCall.mockResolvedValue({ status: "VALID", finalCall: "BUY", confidence: 85, reasoning: "Test", suggestedAction: "BUY" });
@@ -62,9 +90,9 @@ describe("contract enforcement", () => {
   });
 
   afterAll(async () => {
-    await Trade.deleteMany({ user: testUser._id });
+    if (testUser?._id) await Trade.deleteMany({ user: testUser._id });
     await User.deleteMany({ email: "contract-enforcement@pulse.local" });
-    await mongoose.connection.close();
+    if (mongoose.connection.readyState !== 0) await mongoose.connection.close();
   });
 
   it("blocks legacy response fields and keeps paise contract", async () => {
@@ -82,12 +110,13 @@ describe("contract enforcement", () => {
       });
 
     expect(preRes.status).toBe(200);
-    const preTradeToken = preRes.body?.data?.token;
+    const preTradeToken = preRes.body?.data?.token ?? preRes.body?.data?.authority?.token;
 
     const buyRes = await request(app)
       .post("/api/trades/buy")
       .set("Authorization", `Bearer ${authToken}`)
       .set("idempotency-key", "contract-buy-1")
+      .set("pre-trade-token", preTradeToken)
       .send({
         symbol: "RELIANCE",
         side: "BUY",
@@ -95,6 +124,7 @@ describe("contract enforcement", () => {
         pricePaise: 2500,
         stopLossPaise: 2400,
         targetPricePaise: 2700,
+        preTradeEmotion: "DISCIPLINED",
         preTradeToken,
         decisionContext: { scope: "contract" },
         userThinking: "Contract test",
@@ -118,7 +148,7 @@ describe("contract enforcement", () => {
 
     expect(violations).toEqual([]);
 
-    const trade = buyRes.body.trade;
+    const trade = buyRes.body.data;
     REQUIRED_PAISE_KEYS.forEach((key) => {
       expect(trade[key]).not.toBeUndefined();
     });

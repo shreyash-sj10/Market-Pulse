@@ -25,6 +25,7 @@ const adaptPortfolio = (portfolio) => {
     realizedPnLPaise:   portfolio.realizedPnL   || 0,
     totalInvestedPaise: investedPaise,
     winRate:            portfolio.winRate        || 0,
+    pendingOrders: Array.isArray(portfolio.pendingOrders) ? portfolio.pendingOrders : [],
   };
 };
 

@@ -15,7 +15,10 @@ const {
 } = require("../utils/systemState");
 const { SYSTEM_STATE } = require("../constants/systemState");
 const { adaptPortfolio, adaptPositions } = require("../adapters/portfolio.adapter");
+const { ANALYTICS_SNAPSHOT_VALID_MS } = require("../constants/analyticsSnapshot.constants");
+const { RECENT_TRADE_SNAPSHOT_BYPASS_MS } = require("../constants/systemConvergence.constants");
 const logger = require("../utils/logger");
+const { sendSuccess } = require("../utils/response.helper");
 
 /** Never fail portfolio HTTP because Yahoo throttled; MTM falls back to avg cost. */
 async function safeLivePrices(symbols) {
@@ -37,12 +40,21 @@ async function safeLivePrices(symbols) {
 const getPortfolioSummary = async (req, res, next) => {
   try {
     const userId = req.user._id;
-    const user = await User.findById(userId);
+    const user = await User.findById(userId).lean();
 
     if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
+      return sendSuccess(res, req, { success: false, message: "User not found" }, 404);
     }
-    const holdingsDocs = await Holding.find({ userId });
+    const holdingsDocs = await Holding.find({ userId }).lean();
+
+    const winRatePromise = computeWinRate(userId);
+    const pendingTradePromise = Trade.find({
+      user: userId,
+      status: "PENDING_EXECUTION",
+    })
+      .sort({ createdAt: -1 })
+      .select("symbol type quantity pricePaise totalValuePaise status createdAt _id preTradeEmotion")
+      .lean();
 
     // 1. Get Live Prices
     const holdingSymbols = holdingsDocs.map((h) => h.symbol);
@@ -66,8 +78,17 @@ const getPortfolioSummary = async (req, res, next) => {
 
     // 3. Aggregate Behavioral Insights (PHASE 3: Snapshot First)
     let behavior, progression, skillAudit;
-    const SNAPSHOT_VALID_WINDOW = 24 * 60 * 60 * 1000;
-    const hasValidSnapshot = user.analyticsSnapshot && (Date.now() - new Date(user.analyticsSnapshot.lastUpdated).getTime() < SNAPSHOT_VALID_WINDOW);
+    const snapshotMs = user.analyticsSnapshot?.lastUpdated
+      ? new Date(user.analyticsSnapshot.lastUpdated).getTime()
+      : 0;
+    const lastActMs = user.lastTradeActivityAt ? new Date(user.lastTradeActivityAt).getTime() : 0;
+    const recentTradeWindow = lastActMs && Date.now() - lastActMs < RECENT_TRADE_SNAPSHOT_BYPASS_MS;
+    const tradeNewerThanSnapshot = lastActMs && lastActMs > snapshotMs;
+    const snapshotBypassed = Boolean(recentTradeWindow || tradeNewerThanSnapshot);
+    const hasValidSnapshot =
+      !snapshotBypassed &&
+      user.analyticsSnapshot &&
+      Date.now() - snapshotMs < ANALYTICS_SNAPSHOT_VALID_MS;
     
     let recentBehaviors = [];
     let journalInsights = { topMistake: "NONE", frequency: 0, last10Summary: { winRate: 0, avgPnL: 0 }, timePatterns: "INSUFFICIENT_DATA", disciplineTrend: "STABLE" };
@@ -85,16 +106,29 @@ const getPortfolioSummary = async (req, res, next) => {
          trend: user.analyticsSnapshot.trend,
          breakdown: { discipline: user.analyticsSnapshot.disciplineScore }
        };
-       behavior = { success: true, patterns: user.analyticsSnapshot.tags.map(t => ({ type: t, confidence: 100 })), disciplineScore: user.analyticsSnapshot.disciplineScore };
+       // H-10 read-path: prefer behaviorTags (post-fix snapshots); fall back to tags for legacy rows.
+       behavior = {
+         success: true,
+         patterns: (
+           Array.isArray(user.analyticsSnapshot.behaviorTags) &&
+           user.analyticsSnapshot.behaviorTags.length > 0
+             ? user.analyticsSnapshot.behaviorTags
+             : user.analyticsSnapshot.tags || []
+         ).map((t) => ({
+           type: t,
+           confidence: null,
+         })),
+         disciplineScore: user.analyticsSnapshot.disciplineScore,
+       };
        progression = { success: true, trend: user.analyticsSnapshot.trend, changes: [], narrative: "Performance snapshot active." };
 
        journalInsights = user.analyticsSnapshot.journalInsights || journalInsights;
        
-       const top5 = await Trade.find({ user: userId }).sort({ createdAt: -1 }).limit(5);
-       recentBehaviors = top5.map(t => normalizeTrade(t));
+       const top5 = await Trade.find({ user: userId }).sort({ createdAt: -1 }).limit(5).lean();
+       recentBehaviors = top5.map((t) => normalizeTrade(t));
     } else {
       try {
-        const analysisTrades = await Trade.find({ user: userId }).sort({ createdAt: -1 }).limit(100);
+        const analysisTrades = await Trade.find({ user: userId }).sort({ createdAt: -1 }).limit(100).lean();
         const normalizedTrades = analysisTrades.map((trade) => normalizeTrade(trade));
         const closedTrades = mapToClosedTrades(normalizedTrades);
         const reflectionResults = closedTrades.map((ct) => analyzeReflection(ct));
@@ -128,7 +162,7 @@ const getPortfolioSummary = async (req, res, next) => {
 
 
     // 4. Construct Response (STRICT CONTRACT)
-    const winRate = await computeWinRate(userId);
+    const [winRate, pendingTradeRows] = await Promise.all([winRatePromise, pendingTradePromise]);
 
     const holdingsPositions = holdingsDocs.map((holding) => ({
       symbol: holding.symbol,
@@ -164,6 +198,18 @@ const getPortfolioSummary = async (req, res, next) => {
 
     const availableBalance = user.balance - (user.reservedBalancePaise || 0);
 
+    const pendingOrders = pendingTradeRows.map((t) => ({
+      tradeId: String(t._id),
+      symbol: t.symbol,
+      side: t.type,
+      quantity: t.quantity,
+      pricePaise: t.pricePaise,
+      totalValuePaise: t.totalValuePaise,
+      status: t.status,
+      createdAt: t.createdAt,
+      preTradeEmotion: t.preTradeEmotion || null,
+    }));
+
     const rawResponseData = {
       state: summaryState,
       balance: availableBalance,
@@ -188,7 +234,8 @@ const getPortfolioSummary = async (req, res, next) => {
           behavior: t.reasoning || "Analyzing...",
           timestamp: t.createdAt
         }))
-      }
+      },
+      pendingOrders,
     };
 
     const response = {
@@ -197,11 +244,20 @@ const getPortfolioSummary = async (req, res, next) => {
       data: adaptPortfolio(rawResponseData),
       meta: {
         timestamp: new Date().toISOString(),
-        version: "3.1.1-fixed-contract"
+        version: "3.1.1-fixed-contract",
+        analyticsSnapshotValidMs: ANALYTICS_SNAPSHOT_VALID_MS,
+        analyticsSnapshotSource: hasValidSnapshot ? "cache" : "live",
+        systemStateVersion: user.systemStateVersion ?? 0,
+        snapshotBypassed,
+        snapshotBypassReason: snapshotBypassed
+          ? recentTradeWindow
+            ? "RECENT_TRADE_WINDOW"
+            : "TRADE_AFTER_SNAPSHOT"
+          : undefined,
       }
     };
 
-    res.status(200).json(response);
+    sendSuccess(res, req, response);
 
   } catch (error) {
     next(error);
@@ -229,16 +285,16 @@ const computeWinRate = async (userId) => {
 const getPositions = async (req, res, next) => {
   try {
     const userId = req.user._id;
-    const user = await User.findById(userId);
+    const user = await User.findById(userId).lean();
 
     if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
+      return sendSuccess(res, req, { success: false, message: "User not found" }, 404);
     }
-    const holdingsDocs = await Holding.find({ userId });
+    const holdingsDocs = await Holding.find({ userId }).lean();
 
     const holdingSymbols = holdingsDocs.map((holding) => holding.symbol);
     if (holdingSymbols.length === 0) {
-      return res.status(200).json({ success: true, state: SYSTEM_STATE.EMPTY, data: [] });
+      return sendSuccess(res, req, { success: true, state: SYSTEM_STATE.EMPTY, data: [] });
     }
 
     // Fetch live prices (non-fatal: empty map → cost-basis MTM in map below)
@@ -252,7 +308,13 @@ const getPositions = async (req, res, next) => {
       // Fallback: Use avgCost as currentPrice if live fetch failed
       const currentPrice = livePrice !== undefined ? livePrice : data.avgPricePaise;
       if (livePrice === undefined) {
-        console.warn(`[POS_FALLBACK] Missing live quote for ${symbol}`);
+        logger.warn({
+          service: "portfolio.controller",
+          step: "POSITION_LIVE_QUOTE_FALLBACK",
+          status: "WARN",
+          data: { symbol },
+          timestamp: new Date().toISOString(),
+        });
       }
 
       const investedValue = new Decimal(data.quantity).mul(data.avgPricePaise).toNumber();
@@ -279,7 +341,7 @@ const getPositions = async (req, res, next) => {
       positions,
     });
 
-    res.status(200).json({ success: true, state, data: adaptPositions(positions) });
+    sendSuccess(res, req, { success: true, state, data: adaptPositions(positions) });
   } catch (error) {
     next(error);
   }

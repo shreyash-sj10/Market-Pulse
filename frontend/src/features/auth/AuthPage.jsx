@@ -54,7 +54,11 @@ export default function AuthPage() {
         ? await loginUser(payload)
         : await registerUser(payload);
 
-      login(data.token, data.user);
+      login({
+        token: data.token,
+        user: data.user,
+        csrfToken: data.csrfToken,
+      });
       navigate("/dashboard");
     } catch (err) {
       if (err.response?.data?.errors) {

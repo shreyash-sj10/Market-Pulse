@@ -4,12 +4,11 @@ const axios = require('axios');
  * FINNHUB NEWS PROVIDER (PRIMARY)
  */
 const getNews = async (symbol) => {
-  const apiKey = process.env.VITE_FINNHUB_API_KEY;
+  const apiKey = process.env.FINNHUB_API_KEY;
   if (!apiKey) throw new Error("FINNHUB_API_KEY_MISSING");
 
-  // Finnhub uses naked tickers for global news but NSE:SYMBOL for Indian-specific
-  // We'll try both or just normalized.
   const cleanSymbol = symbol.split('.')[0];
+  const finnhubSymbol = cleanSymbol.startsWith("^") ? cleanSymbol : `NSE:${cleanSymbol}`;
   
   // Date range for news (last 7 days)
   const to = new Date().toISOString().split('T')[0];
@@ -18,7 +17,7 @@ const getNews = async (symbol) => {
   try {
     const response = await axios.get(`https://finnhub.io/api/v1/company-news`, {
       params: {
-        symbol: cleanSymbol,
+        symbol: finnhubSymbol,
         from,
         to,
         token: apiKey
@@ -35,7 +34,7 @@ const getNews = async (symbol) => {
       summary: item.summary
     }));
   } catch (error) {
-    console.warn(`[NewsProvider:Finnhub] Failed for ${symbol}: ${error.message}`);
+    require("../../utils/logger").warn({ event: "NEWS_PROVIDER_FINNHUB_FAIL", symbol, message: error.message });
     throw error;
   }
 };

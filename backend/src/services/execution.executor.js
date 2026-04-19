@@ -4,6 +4,11 @@ const marketDataService = require("./marketData.service");
 const { isMarketOpen } = require("./marketHours.service");
 const logger = require("../utils/logger");
 
+/**
+ * P1-C — Process-local background loop (setInterval). One web instance = one executor loop.
+ * Multiple replicas process overlapping pending orders (trade layer should remain safe, but work duplicates).
+ * See `docs/BACKGROUND_WORKERS_SCALE.md`.
+ */
 const EXECUTOR_INTERVAL_MS = 60 * 1000; // */1 * * * * equivalent
 const EXECUTOR_BATCH_LIMIT = 200;
 

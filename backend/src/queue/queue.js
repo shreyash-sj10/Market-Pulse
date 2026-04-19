@@ -18,6 +18,10 @@ const inlineHandlers = {
     const { processTradeClosedEvent } = require("../services/reflectionWorker.service");
     await processTradeClosedEvent(payload);
   },
+  USER_ANALYTICS_RECALIBRATE: async (payload) => {
+    const { recalibrateUserAnalyticsSnapshot } = require("../services/analyticsRecalibration.service");
+    await recalibrateUserAnalyticsSnapshot(payload.userId);
+  },
 };
 
 const registerInlineJobHandler = (jobName, handler) => {

@@ -2,6 +2,8 @@ jest.mock("jsonwebtoken", () => ({
   verify: jest.fn(),
 }));
 
+jest.mock("../../utils/redisClient", () => null);
+
 jest.mock("../../models/user.model", () => ({
   findById: jest.fn(),
 }));
@@ -36,7 +38,12 @@ describe("auth.middleware", () => {
 
   it("rejects when user not found", async () => {
     jwt.verify.mockReturnValue({ userId: "u1", tokenType: "access" });
-    User.findById.mockReturnValue({ select: jest.fn().mockResolvedValue(null) });
+    // Chain: findById().select().lean() → null (user not in DB)
+    User.findById.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(null),
+      }),
+    });
     const req = { headers: { authorization: "Bearer tkn" } };
     const next = buildNext();
 
@@ -46,7 +53,12 @@ describe("auth.middleware", () => {
 
   it("calls next without error when token and user are valid", async () => {
     jwt.verify.mockReturnValue({ userId: "u1", tokenType: "access" });
-    User.findById.mockReturnValue({ select: jest.fn().mockResolvedValue({ _id: "u1" }) });
+    // Chain: findById().select().lean() → plain user object
+    User.findById.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ _id: "u1", email: "a@b.c" }),
+      }),
+    });
     const req = { headers: { authorization: "Bearer tkn" } };
     const next = buildNext();
 

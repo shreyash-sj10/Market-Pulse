@@ -1,65 +1,142 @@
-import { useState } from "react";
+import { useMemo } from "react";
+import { Link } from "react-router-dom";
 import AppLayout from "../../layout/AppLayout/AppLayout.jsx";
 import { useJournalPage } from "../../hooks/useJournalDecisions";
-import type { EngineLinkFocus } from "../../hooks/useJournalDecisions";
-import LearningEnginePanel from "./components/LearningEnginePanel";
-import BehavioralInsightPanel from "./components/BehavioralInsightPanel";
-import JournalLogStrip from "./components/JournalLogStrip";
+import { ROUTES } from "../../routing/routes";
+import { buildJournalPageViewModel } from "./buildJournalPageViewModel";
 
 export default function JournalPage() {
   const journal = useJournalPage();
-  const [engineLink, setEngineLink] = useState<EngineLinkFocus>(null);
+  const vm = useMemo(() => buildJournalPageViewModel(journal), [journal]);
 
   return (
     <AppLayout>
-      <div className="home-terminal journal-terminal">
-        <header className="journal-terminal__header">
-          <div>
-            <h1 className="journal-terminal__title">Journal</h1>
-            <p className="journal-terminal__lead">Behavioral intelligence · pattern detection · enforcement layer</p>
-            <p className="journal-terminal__loop">
-              This window feeds Profile (bias, scores, constraints) and the Trade terminal before execution — loop
-              closes when trades journal on close.
-            </p>
-          </div>
+      <div className="home-terminal journal-learn">
+        <header className="journal-learn__head">
+          <h1 className="journal-learn__title">Journal</h1>
+          <p className="journal-learn__subtitle">Input → feedback → learning loop</p>
         </header>
 
-        {journal.isDegraded && (
-          <div className="data-degraded-banner" role="status">
-            Degraded mode — last known journal window; live sync unavailable
+        {vm.isDegraded && (
+          <div className="data-degraded-banner journal-learn__banner" role="status">
+            Partial window — live journal sync degraded; entries shown may be incomplete.
           </div>
         )}
 
-        <LearningEnginePanel model={journal.engine} activeLink={engineLink} onSelectLink={setEngineLink} />
+        {/* SECTION 1 — SYSTEM STATE */}
+        <section className="journal-learn__block journal-learn__block--state" aria-label="Journal system state">
+          <p className="journal-learn__state-line">{vm.systemStateSummary}</p>
+          <p className="journal-learn__state-meta">
+            <span className="journal-learn__state-k">Status</span>
+            <span className="journal-learn__state-v">{vm.journalStatusLabel}</span>
+            <span className="journal-learn__state-dot" aria-hidden="true">
+              ·
+            </span>
+            <span className="journal-learn__state-k">Entries</span>
+            <span className="journal-learn__state-v journal-learn__state-v--mono">{vm.entryCount}</span>
+            <span className="journal-learn__state-dot" aria-hidden="true">
+              ·
+            </span>
+            <span className="journal-learn__state-k">Learning</span>
+            <span className="journal-learn__state-v">{vm.learningStateLabel}</span>
+          </p>
+        </section>
 
-        <div className="home-terminal__grid journal-terminal__grid">
-          <div className="home-terminal__main journal-terminal__main">
-            <section className="journal-logs" aria-label="Journal logs">
-              <header className="journal-logs__head">
-                <h2 className="journal-logs__title">Intelligence log</h2>
-              </header>
-              {journal.isLoading ? (
-                <p className="page-loading page-note">Loading intelligence log…</p>
-              ) : journal.logs.length === 0 ? (
-                <p className="page-note journal-logs__empty">No journal entries — system has no behavioral window yet.</p>
-              ) : (
-                <div className="journal-log-stream">
-                  {journal.logs.map((log) => (
-                    <JournalLogStrip
-                      key={log.id}
-                      log={log}
-                      engine={journal.engine}
-                      engineLink={engineLink}
-                    />
-                  ))}
-                </div>
-              )}
+        {/* SECTION 2 — PRIMARY ACTION */}
+        {vm.showPrimaryAction ? (
+          <section className="journal-learn__block journal-learn__block--primary" aria-label="Activate learning">
+            <p className="journal-learn__primary-text">Start logging your trades to activate learning</p>
+            <Link className="journal-learn__cta" to={ROUTES.markets}>
+              Go to Markets
+            </Link>
+          </section>
+        ) : null}
+
+        {vm.loading ? (
+          <p className="journal-learn__muted journal-learn__loading">Syncing closes from the server — entries appear here when ready.</p>
+        ) : vm.isError ? (
+          <section className="journal-learn__block" aria-live="polite">
+            <p className="journal-learn__muted">Journal feed could not be loaded. Check connection and try again.</p>
+            <Link className="journal-learn__cta journal-learn__cta--ghost" to={ROUTES.markets}>
+              Go to Markets
+            </Link>
+          </section>
+        ) : vm.entryCount === 0 ? (
+          <section className="journal-learn__block journal-learn__muted" aria-label="Guidance">
+            <p>
+              Every closed round-trip writes a learning surface. Open Markets, execute, and close with reflection so
+              this page fills with mistakes, corrections, and system response.
+            </p>
+          </section>
+        ) : (
+          <>
+            {/* SECTION 3 — RECENT ENTRIES */}
+            <section className="journal-learn__block" aria-label="Recent journal entries">
+              <h2 className="journal-learn__h">Recent entries</h2>
+              <ol className="journal-learn__entries">
+                {vm.entries.map((e) => (
+                  <li key={e.id} className="journal-learn__entry">
+                    <p className="journal-learn__entry-line">
+                      <span className="journal-learn__k">Trade</span>
+                      <span className="journal-learn__v journal-learn__trade-val">
+                        <span className="journal-learn__v--mono">{e.tradeSummary}</span>
+                        {e.moodLabel ? (
+                          <span
+                            className="journal-learn__mood-chip"
+                            title="How you felt when you opened this position (self-reported)"
+                          >
+                            {e.moodLabel}
+                          </span>
+                        ) : null}
+                      </span>
+                    </p>
+                    <p className="journal-learn__entry-line">
+                      <span className="journal-learn__k">Decision</span>
+                      <span className="journal-learn__v">{e.decision}</span>
+                    </p>
+                    <p className="journal-learn__entry-line">
+                      <span className="journal-learn__k">Outcome</span>
+                      <span className="journal-learn__v">{e.outcome}</span>
+                    </p>
+                    <p className="journal-learn__entry-line">
+                      <span className="journal-learn__k">Mistake</span>
+                      <span className="journal-learn__v">{e.mistake}</span>
+                    </p>
+                    <p className="journal-learn__entry-line">
+                      <span className="journal-learn__k">Correction</span>
+                      <span className="journal-learn__v">{e.correction}</span>
+                    </p>
+                  </li>
+                ))}
+              </ol>
             </section>
-          </div>
-          <div className="home-terminal__aside journal-terminal__aside">
-            <BehavioralInsightPanel model={journal.behavioral} />
-          </div>
-        </div>
+
+            {/* SECTION 4 — PATTERN DETECTION */}
+            <section className="journal-learn__block" aria-label="Detected patterns">
+              <h2 className="journal-learn__h">Detected behavioral patterns</h2>
+              <ul className="journal-learn__bullets">
+                {vm.patternLines.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </section>
+
+            {/* SECTION 5 — SYSTEM RESPONSE */}
+            <section className="journal-learn__block" aria-label="System response">
+              <h2 className="journal-learn__h">System response</h2>
+              <ul className="journal-learn__rules">
+                {vm.systemResponseLines.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </section>
+          </>
+        )}
+
+        {/* SECTION 6 — LEARNING FEEDBACK (always) */}
+        <footer className="journal-learn__footer">
+          <p className="journal-learn__footer-line">More data improves system accuracy</p>
+        </footer>
       </div>
     </AppLayout>
   );

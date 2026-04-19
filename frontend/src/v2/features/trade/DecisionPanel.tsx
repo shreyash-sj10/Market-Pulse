@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { X, Loader, CheckCircle, AlertTriangle } from "lucide-react";
 import type { TradePanelContext } from "../../trade-flow";
 import { useMarketQuote } from "../../hooks/useMarketQuote";
@@ -20,6 +20,8 @@ import TradeInputs from "./terminal/TradeInputs";
 import ValidationEngineView from "./terminal/ValidationEngineView";
 import { hasBlockingLocalIssues } from "./terminal/riskLocalGate";
 import ThesisInput from "./terminal/ThesisInput";
+import PreTradeEmotionSelect from "./terminal/PreTradeEmotionSelect";
+import type { PreTradeEmotionId } from "./terminal/preTradeEmotions";
 import type { TradeOutcomeVisual } from "./terminal/DecisionResult";
 import { buildTradeEvaluation, type TradeEvaluation } from "./terminal/tradeEvaluation";
 import DecisionActionBar from "./terminal/DecisionActionBar";
@@ -59,16 +61,23 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
   const livePriceINR = quote ? fromPaise(quote.pricePaise).toFixed(2) : "";
 
   const [side, setSide] = useState<"BUY" | "SELL">("BUY");
+  const [productType, setProductType] = useState<"DELIVERY" | "INTRADAY">("DELIVERY");
   const [quantity, setQuantity] = useState("1");
   const [price, setPrice] = useState("");
   const [stopLoss, setStopLoss] = useState("");
   const [target, setTarget] = useState("");
   const [thinking, setThinking] = useState("");
+  const [preTradeEmotion, setPreTradeEmotion] = useState<PreTradeEmotionId | "">("");
 
   const [phase, setPhase] = useState<Phase>("SETUP");
+  /** Server execution price (paise) after successful POST — aligns header with DB truth. */
+  const [executedPricePaise, setExecutedPricePaise] = useState<number | null>(null);
+  /** One idempotency key per confirm action; reused on network retry until success. */
+  const executionIdempotencyKeyRef = useRef<string | null>(null);
   const [preTrade, setPreTrade] = useState<PreTradeResult | null>(null);
   const [evaluation, setEvaluation] = useState<TradeEvaluation | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
+  const [submissionOutcome, setSubmissionOutcome] = useState<"executed" | "queued">("executed");
 
   useEffect(() => {
     if (open) {
@@ -77,9 +86,14 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
       setEvaluation(null);
       setErrorMsg("");
       setQuantity("1");
+      setProductType("DELIVERY");
       setStopLoss("");
       setTarget("");
       setThinking("");
+      setPreTradeEmotion("");
+      executionIdempotencyKeyRef.current = null;
+      setExecutedPricePaise(null);
+      setSubmissionOutcome("executed");
     }
   }, [open, symbol]);
 
@@ -87,11 +101,33 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
     if (livePriceINR) setPrice(livePriceINR);
   }, [livePriceINR]);
 
+  const portfolioExitQty = useMemo(() => {
+    if (!symbol) return 0;
+    const row = portfolioDecisions.items.find((i) => i.title === symbol);
+    const q = row?.meta?.quantity;
+    return typeof q === "number" && Number.isFinite(q) && q > 0 ? Math.floor(q) : 0;
+  }, [symbol, portfolioDecisions.items]);
+
+  const showPortfolioExit = portfolioExitQty >= 1;
+
   useEffect(() => {
+    if (!open) return;
     const m = context?.meta as { side?: string; quantity?: number } | undefined;
-    if (m?.side === "BUY" || m?.side === "SELL") setSide(m.side);
-    if (m?.quantity != null) setQuantity(String(m.quantity));
-  }, [context]);
+    if (m?.side === "SELL" && portfolioExitQty >= 1) {
+      setSide("SELL");
+      if (m.quantity != null) setQuantity(String(Math.min(Math.max(1, m.quantity), portfolioExitQty)));
+      return;
+    }
+    if (m?.side === "BUY") {
+      setSide("BUY");
+      if (m.quantity != null) setQuantity(String(m.quantity));
+    }
+  }, [open, symbol, context, portfolioExitQty]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (side === "SELL" && portfolioExitQty < 1) setSide("BUY");
+  }, [open, side, portfolioExitQty]);
 
   const toInt = useCallback((v: string): number => Math.round(parseFloat(v || "0") * 100), []);
 
@@ -101,6 +137,18 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
     if (p > 0) return `₹${p.toFixed(2)}`;
     return "—";
   }, [quote?.pricePaise, price]);
+
+  const headerPriceDisplay = useMemo(() => {
+    if (
+      phase === "SUCCESS" &&
+      submissionOutcome === "executed" &&
+      executedPricePaise != null &&
+      Number.isFinite(executedPricePaise)
+    ) {
+      return `₹${fromPaise(executedPricePaise).toFixed(2)} (executed)`;
+    }
+    return headerPrice;
+  }, [phase, submissionOutcome, executedPricePaise, headerPrice]);
 
   const changePct = context?.meta?.changePct ?? null;
   const decision = context?.decision ?? { action: "GUIDE" as const, confidence: 0, reason: "" };
@@ -155,9 +203,10 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
         target,
         thesis: thinking,
         thesisMin,
+        preTradeEmotion,
         scalingBlocked,
       }),
-    [side, price, quantity, stopLoss, target, thinking, thesisMin, scalingBlocked],
+    [side, price, quantity, stopLoss, target, thinking, thesisMin, preTradeEmotion, scalingBlocked],
   );
 
   const setupJudgment = useMemo(
@@ -175,14 +224,21 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
   const canExecute = useMemo(() => {
     if (phase !== "REVIEW" || evaluation?.status !== "VALID") return false;
     if (!preTrade?.data?.authority?.token || !symbol) return false;
+    if (!preTradeEmotion) return false;
     return true;
-  }, [phase, evaluation, preTrade, symbol]);
+  }, [phase, evaluation, preTrade, symbol, preTradeEmotion]);
 
   const epNum = parseFloat(price || "0");
   const slNum = parseFloat(stopLoss || "0");
   const tpNum = parseFloat(target || "0");
+  const qtyIntForGate = parseInt(quantity || "1", 10);
+  // L-03: SELL no longer auto-passes the "stop" row — require positive limit price
+  // and quantity so the setup checklist reflects real exit inputs (thesis is still
+  // enforced separately and by hasBlockingLocalIssues).
   const stopOk =
-    side === "SELL" || (epNum > 0 && slNum > 0 && tpNum > 0 && slNum < epNum && tpNum > epNum);
+    side === "SELL"
+      ? epNum > 0 && qtyIntForGate > 0
+      : epNum > 0 && slNum > 0 && tpNum > 0 && slNum < epNum && tpNum > epNum;
   const thesisOk = thinking.trim().length >= thesisMin;
   const riskBandOk = decision.action !== "BLOCK";
 
@@ -194,25 +250,31 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
         label:
           side === "BUY"
             ? "Stop loss valid (below entry, target above)"
-            : "Sell-side size path (no buy bracket)",
+            : "Limit price and quantity valid for exit",
       },
       { id: "thesis", ok: thesisOk, label: `Thesis entered (≥ ${thesisMin} chars)` },
+      {
+        id: "emotion",
+        ok: Boolean(preTradeEmotion),
+        label: "Emotional state selected (behaviour log)",
+      },
       { id: "risk", ok: riskBandOk, label: "Market risk band acceptable (not BLOCK)" },
     ],
-    [stopOk, thesisOk, riskBandOk, side, thesisMin],
+    [stopOk, thesisOk, riskBandOk, side, thesisMin, qtyIntForGate, preTradeEmotion],
   );
 
   const reviewChecklist = useMemo(
     () => [
-      { id: "stop", ok: stopOk, label: side === "BUY" ? "Stop loss valid" : "Sell bracket" },
+      { id: "stop", ok: stopOk, label: side === "BUY" ? "Stop loss valid" : "Exit price & size valid" },
       { id: "thesis", ok: thesisOk, label: "Thesis on file" },
+      { id: "emotion", ok: Boolean(preTradeEmotion), label: "Emotional state on file" },
       {
         id: "risk",
         ok: evaluation?.status === "VALID",
         label: "Risk evaluation: acceptable for submit",
       },
     ],
-    [stopOk, thesisOk, evaluation?.status, side],
+    [stopOk, thesisOk, evaluation?.status, side, preTradeEmotion],
   );
 
   const analyzeLabel = analyzeButtonLabel(localGate, decision, canAnalyze, systemPolicy);
@@ -248,12 +310,14 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
     try {
       const result = await runPreTrade({
         side,
+        productType: side === "BUY" ? productType : undefined,
         symbol,
         quantity: qtyInt,
         pricePaise,
         stopLossPaise: side === "BUY" ? slPaise : undefined,
         targetPricePaise: side === "BUY" ? tpPaise : undefined,
         userThinking: thesis,
+        preTradeEmotion: preTradeEmotion || undefined,
       });
       const ev = buildTradeEvaluation(result);
       setEvaluation(ev);
@@ -300,18 +364,26 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
     const token = preTrade.data.authority.token;
     const verdict = preTrade.data.authority.verdict;
 
-    if (!canExecute) return;
+    if (!canExecute || !preTradeEmotion) return;
 
     setPhase("EXECUTING");
+    if (!executionIdempotencyKeyRef.current) {
+      executionIdempotencyKeyRef.current =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `idem-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
     try {
-      await executeTrade({
+      const execRes = await executeTrade({
         side,
+        productType: side === "BUY" ? productType : undefined,
         symbol,
         quantity: qtyInt,
         pricePaise,
         stopLossPaise: side === "BUY" ? slPaise : undefined,
         targetPricePaise: side === "BUY" ? tpPaise : undefined,
         preTradeToken: token,
+        idempotencyKey: executionIdempotencyKeyRef.current,
         decisionContext: {
           source: "NOESIS_PANEL",
           verdict,
@@ -326,12 +398,25 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
             portfolioDefensive: systemPolicy.portfolioLayer.defensive,
             criticalBreaches: systemPolicy.criticalBreaches,
             systemVerdict: systemPolicy.verdictLayer.headline,
+            preTradeEmotion,
           },
         },
         userThinking: thinking.trim(),
+        preTradeEmotion,
       });
+      // C-04 FIX: Remove executionBalance from the fallback chain.
+      // executionBalance is the user's remaining CASH BALANCE (e.g. ₹4,50,000 = 45,000,000 paise),
+      // not the trade execution price. Using it as a fallback displayed the user's
+      // balance as the executed price in the trade success header.
+      const queued = execRes.state === "PENDING" || execRes.data?.status === "PENDING_EXECUTION";
+      setSubmissionOutcome(queued ? "queued" : "executed");
+      const ep = execRes.data?.executionPricePaise ?? execRes.data?.pricePaise;
+      if (!queued && typeof ep === "number" && Number.isFinite(ep)) {
+        setExecutedPricePaise(ep);
+      }
 
       sessionStorage.setItem(TRADE_SUCCESS_SESSION_KEY, "1");
+      executionIdempotencyKeyRef.current = null;
       setPhase("SUCCESS");
 
       await Promise.all([
@@ -376,7 +461,7 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
 
         <TradeHeader
           symbol={symbol}
-          priceDisplay={headerPrice}
+          priceDisplay={headerPriceDisplay}
           changePct={changePct}
           signal={decision.action}
           subline="System-controlled execution — inputs evaluated before release"
@@ -392,16 +477,18 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
                 stressedPositionCount={stressedPositionCount}
                 openPositionCount={openPositionCount}
               />
-              <TradeSystemVerdict verdict={setupJudgment.verdict} explanation={setupJudgment.explanation} />
               <ThesisInput
                 value={thinking}
                 onChange={setThinking}
                 minLength={thesisMin}
                 mandatory={systemPolicy.behaviorLayer.thesisMandatory}
               />
+              <PreTradeEmotionSelect value={preTradeEmotion} onChange={setPreTradeEmotion} />
               <TradeInputs
                 side={side}
                 onSideChange={setSide}
+                productType={productType}
+                onProductTypeChange={setProductType}
                 price={price}
                 onPriceChange={setPrice}
                 quantity={quantity}
@@ -413,6 +500,8 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
                 livePriceHint={livePriceINR ? ` · Live reference ₹${livePriceINR}` : undefined}
                 quantitySystemHint={quantitySystemHint}
                 stopSystemNote={stopSystemNote}
+                showPortfolioExit={showPortfolioExit}
+                exitMaxQuantity={portfolioExitQty}
               />
               <ValidationEngineView
                 outcome={localGate ? "adjust" : "pending"}
@@ -429,11 +518,13 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
                 target={target}
                 thesis={thinking}
                 thesisMin={thesisMin}
+                preTradeEmotion={preTradeEmotion}
                 scalingBlocked={scalingBlocked}
                 snapshot={null}
                 authorityVerdict={null}
                 analyzing={false}
               />
+              <TradeSystemVerdict verdict={setupJudgment.verdict} explanation={setupJudgment.explanation} />
               <DecisionActionBar
                 phase="setup"
                 primaryLabel={analyzeLabel}
@@ -462,7 +553,6 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
                 stressedPositionCount={stressedPositionCount}
                 openPositionCount={openPositionCount}
               />
-              <TradeSystemVerdict verdict={reviewJudgment.verdict} explanation={reviewJudgment.explanation} />
               <ValidationEngineView
                 outcome={decisionResultVisual}
                 message={
@@ -477,22 +567,28 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
                 target={target}
                 thesis={thinking}
                 thesisMin={thesisMin}
+                preTradeEmotion={preTradeEmotion}
                 scalingBlocked={scalingBlocked}
                 snapshot={snap}
                 authorityVerdict={authorityVerdict}
                 analyzing={false}
               />
+              <TradeSystemVerdict verdict={reviewJudgment.verdict} explanation={reviewJudgment.explanation} />
               <p className="trade-terminal-recap">
                 <span className="trade-terminal-recap__sym">{symbol}</span>
-                <span className="trade-terminal-recap__side">{side}</span>
+                <span className="trade-terminal-recap__side">{side === "SELL" ? "EXIT" : side}</span>
                 <span>
                   {quantity} @ ₹{parseFloat(price || "0").toFixed(2)}
                 </span>
+                {side === "BUY" ? <span> · {productType}</span> : null}
                 {side === "BUY" ? (
                   <span>
                     {" "}
                     · SL ₹{parseFloat(stopLoss || "0").toFixed(2)} · TP ₹{parseFloat(target || "0").toFixed(2)}
                   </span>
+                ) : null}
+                {preTradeEmotion ? (
+                  <span className="trade-terminal-mono"> · Mood: {preTradeEmotion}</span>
                 ) : null}
               </p>
               <DecisionActionBar
@@ -521,7 +617,9 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
               <CheckCircle size={36} className="trade-terminal-center__ok" aria-hidden />
               <p className="trade-terminal-center__title">Order accepted</p>
               <p className="trade-terminal-center__sub">
-                Portfolio updating · journal will bind on close · behavioral loop closed
+                {submissionOutcome === "queued"
+                  ? "Order queued for the next market open (09:15 IST). Cash remains reserved until execution or expiry."
+                  : "Portfolio updating · closed journal entries appear after round-trip · skill/tags update when reflection completes"}
               </p>
             </div>
           )}

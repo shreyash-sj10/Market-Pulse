@@ -78,6 +78,8 @@ exports.mapToClosedTrades = (trades) => {
         closedTrades.push({
           id: `ct-${buyKey}-${sellKey}`.substring(0, 64),
           symbol,
+          productType: firstBuy.productType || "DELIVERY",
+          terminalOpenPricePaise: firstBuy.terminalOpenPricePaise ?? null,
           entryPricePaise: firstBuy.pricePaise,
           exitPricePaise: trade.pricePaise,
           quantity: matchedQty,
@@ -103,7 +105,8 @@ exports.mapToClosedTrades = (trades) => {
             ...(firstBuy.behaviorTags || []),
             ...(trade.analysis?.mistakeTags || []),
             ...(trade.behaviorTags || [])
-          ]
+          ],
+          entryPreTradeEmotion: firstBuy.preTradeEmotion || null,
         });
 
         sellQty -= matchedQty;

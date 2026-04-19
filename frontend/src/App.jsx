@@ -2,6 +2,7 @@ import { Routes, Route, Outlet, Navigate } from "react-router-dom";
 import AuthPage from "./features/auth/AuthPage.jsx";
 import ProtectedRoute from "./features/auth/ProtectedRoute.jsx";
 import TradeFlowNavigateBinder from "./components/TradeFlowNavigateBinder.jsx";
+import ApiErrorListener from "./v2/components/observability/ApiErrorListener.jsx";
 import { ROUTES } from "./v2/routing/routes";
 
 import V2PortfolioPage from "./v2/pages/portfolio/PortfolioPage";
@@ -14,6 +15,7 @@ import V2TracePage from "./v2/pages/trace/TracePage";
 function App() {
   return (
     <>
+      <ApiErrorListener />
       <TradeFlowNavigateBinder />
       <Routes>
         <Route path={ROUTES.login}    element={<AuthPage />} />

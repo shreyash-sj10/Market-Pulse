@@ -2,6 +2,7 @@
  * INTELLIGENCE CACHE UTILITY
  * Implements 5-minute bucketed caching for high-frequency intelligence endpoints.
  */
+const logger = require("./logger");
 const cache = new Map();
 
 const getBucketKey = (category, symbol) => {
@@ -14,11 +15,23 @@ exports.get = (category, symbol) => {
   const entry = cache.get(key);
   
   if (entry) {
-    console.log(`[CACHE HIT] ${category} - ${symbol || "GENERAL"}`);
+    logger.debug({
+      service: "intelligence.cache",
+      step: "CACHE_HIT",
+      status: "INFO",
+      data: { category, symbol: symbol || "GENERAL" },
+      timestamp: new Date().toISOString(),
+    });
     return entry;
   }
-  
-  console.log(`[CACHE MISS] ${category} - ${symbol || "GENERAL"}`);
+
+  logger.debug({
+    service: "intelligence.cache",
+    step: "CACHE_MISS",
+    status: "INFO",
+    data: { category, symbol: symbol || "GENERAL" },
+    timestamp: new Date().toISOString(),
+  });
   return null;
 };
 

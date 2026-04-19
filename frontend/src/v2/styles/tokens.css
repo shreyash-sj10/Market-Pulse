@@ -112,6 +112,7 @@
 
   /* ── LAYOUT ──────────────────────────────────────────── */
   --sidebar-width:  220px;
+  --sidebar-width-collapsed: 56px;
   --topbar-height:   52px;
   --panel-width:    380px;
 

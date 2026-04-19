@@ -25,6 +25,15 @@ const preTradeTokenSchema = new mongoose.Schema(
       type: Date,
       required: true,
     },
+    /**
+     * VALID → IN_USE (execution transaction) → CONSUMED (success).
+     * On transaction abort after IN_USE, state returns to VALID (rolled back).
+     */
+    state: {
+      type: String,
+      enum: ["VALID", "IN_USE", "CONSUMED"],
+      default: "VALID",
+    },
     createdAt: {
       type: Date,
       default: Date.now,

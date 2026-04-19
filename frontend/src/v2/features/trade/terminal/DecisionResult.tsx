@@ -13,19 +13,19 @@ export default function DecisionResult({ outcome, message }: DecisionResultProps
     state = "Complete inputs → run Analyze Risk";
     detail = message ?? "System has not evaluated this ticket yet.";
   } else if (outcome === "valid") {
-    state = "✔ Trade Ready";
+    state = "Ready to submit";
     detail = message ?? "Execution is permitted when you confirm.";
   } else if (outcome === "adjust") {
-    state = "⚠ Adjust Inputs";
-    detail = message ?? "Fix the issues below before execution.";
+    state = "Adjust inputs";
+    detail = message ?? "Fix the items below before running the risk gate again.";
   } else {
-    state = "❌ Trade Blocked";
+    state = "Gate closed";
     detail = message ?? "Execution is not permitted under current constraints.";
   }
 
   return (
-    <div className="trade-terminal-judgment">
-      <p className="trade-terminal-judgment__kicker">SYSTEM JUDGMENT</p>
+    <div className={`trade-terminal-judgment trade-terminal-judgment--${outcome}`}>
+      <p className="trade-terminal-judgment__kicker">Risk gate</p>
       <p className="trade-terminal-judgment__state">{state}</p>
       {detail ? <p className="trade-terminal-judgment__detail">{detail}</p> : null}
     </div>

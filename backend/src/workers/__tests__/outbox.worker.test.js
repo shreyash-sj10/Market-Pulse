@@ -57,7 +57,7 @@ describe("outbox.worker reliability", () => {
     expect(tradeQueue.add).toHaveBeenCalledWith(
       "TRADE_CLOSED",
       expect.objectContaining({ tradeId: "t1", userId: "u1", outboxJobId: "job-1" }),
-      expect.objectContaining({ attempts: 1 })
+      expect.objectContaining({ attempts: 5 })
     );
     expect(Outbox.updateOne).toHaveBeenCalledWith(
       { _id: "job-1", status: "PROCESSING" },

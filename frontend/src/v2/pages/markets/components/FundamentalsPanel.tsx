@@ -1,6 +1,5 @@
 import type { MarketStock } from "../../../hooks/useMarketExplorer";
 import { useMarketFundamentals } from "../../../hooks/useMarketFundamentals";
-import { formatMarketMktCap } from "../marketsFormat";
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
@@ -31,8 +30,6 @@ export default function FundamentalsPanel({ symbol, selected }: FundamentalsPane
       : selected.peRatio != null
         ? selected.peRatio.toFixed(1)
         : "—";
-  const mcapDisplay =
-    fundamentals?.marketCap != null ? formatMarketMktCap(fundamentals.marketCap) : formatMarketMktCap(selected.marketCap);
   const debtEqDisplay =
     isLoading ? "…" : isError ? "—" : fundamentals?.debtToEquity != null ? fundamentals.debtToEquity.toFixed(2) : "—";
   const roeDisplay = isLoading ? "…" : isError ? "—" : formatRoeDisplay(fundamentals?.returnOnEquity ?? null);
@@ -44,9 +41,8 @@ export default function FundamentalsPanel({ symbol, selected }: FundamentalsPane
       <p className="analysis-col__title">Fundamentals</p>
       <div className="workspace-metric-list">
         <Row label="P/E" value={peDisplay} />
-        <Row label="Market cap" value={mcapDisplay} />
-        <Row label="Debt / equity" value={debtEqDisplay} />
         <Row label="ROE" value={roeDisplay} />
+        <Row label="Debt / equity" value={debtEqDisplay} />
         <Row label="EPS" value={epsDisplay} />
       </div>
     </div>

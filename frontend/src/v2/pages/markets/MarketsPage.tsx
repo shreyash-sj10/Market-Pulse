@@ -3,7 +3,6 @@ import { Search, RefreshCw, AlertTriangle } from "lucide-react";
 import AppLayout from "../../layout/AppLayout/AppLayout.jsx";
 import DecisionPanel from "../../features/trade/DecisionPanel";
 import { useMarketExplorer, type MarketSegment } from "../../hooks/useMarketExplorer";
-import { useMarketFundamentals } from "../../hooks/useMarketFundamentals";
 import {
   buildMarketRowFromExplorerStock,
   tradePanelContextFromMarketRow,
@@ -23,67 +22,11 @@ const SEGMENT_OPTIONS: { id: MarketSegment; label: string }[] = [
   { id: "small", label: "Small cap" },
 ];
 
-function InlineFundamentals({ symbol }: { symbol: string }) {
-  const { fundamentals, isLoading, isError } = useMarketFundamentals(symbol);
-
-  if (isLoading) {
-    return (
-      <div className="inline-fund-row">
-        <span className="inline-fund__item inline-fund__item--muted">Loading fundamentals…</span>
-      </div>
-    );
-  }
-
-  if (isError || !fundamentals) {
-    return (
-      <div className="inline-fund-row">
-        <span className="inline-fund__item inline-fund__item--error">
-          <AlertTriangle size={10} className="inline-fund__warn-icon" aria-hidden />
-          Fundamental data unavailable
-        </span>
-      </div>
-    );
-  }
-
-  const items = [
-    { label: "EPS", value: fundamentals.eps != null ? `₹${fundamentals.eps.toFixed(2)}` : "—" },
-    {
-      label: "Div Yield",
-      value: fundamentals.dividendYield != null ? `${(fundamentals.dividendYield * 100).toFixed(2)}%` : "—",
-    },
-    { label: "Beta", value: fundamentals.beta != null ? fundamentals.beta.toFixed(2) : "—" },
-    {
-      label: "52W High",
-      value: fundamentals.fiftyTwoWeekHigh != null ? `₹${fundamentals.fiftyTwoWeekHigh.toFixed(2)}` : "—",
-    },
-    {
-      label: "52W Low",
-      value: fundamentals.fiftyTwoWeekLow != null ? `₹${fundamentals.fiftyTwoWeekLow.toFixed(2)}` : "—",
-    },
-    {
-      label: "Fwd P/E",
-      value: fundamentals.forwardPE != null ? fundamentals.forwardPE.toFixed(1) : "—",
-    },
-  ];
-
-  return (
-    <div className="inline-fund-row">
-      {items.map((item) => (
-        <div key={item.label} className="inline-fund__item">
-          <span className="inline-fund__label">{item.label}</span>
-          <span className="inline-fund__value">{item.value}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export default function MarketsPage() {
   const [search, setSearch] = useState("");
   const [segment, setSegment] = useState<MarketSegment>("all");
   const [selected, setSelected] = useState<MarketStock | null>(null);
   const [panel, setPanel] = useState<{ symbol: string; ctx: TradePanelContext } | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
 
   const { stocks, meta, isLoading, isFetching, isFetchingMore, isError, hasMore, loadMore } =
     useMarketExplorer(search, segment);
@@ -120,15 +63,6 @@ export default function MarketsPage() {
     });
   }, []);
 
-  const toggleExpand = useCallback((symbol: string) => {
-    setExpanded((prev) => (prev === symbol ? null : symbol));
-  }, []);
-
-  const renderExpand = useCallback(
-    (stock: MarketStock) => <InlineFundamentals symbol={stock.fullSymbol ?? stock.symbol} />,
-    [],
-  );
-
   return (
     <AppLayout>
       <div className="markets-terminal">
@@ -136,7 +70,7 @@ export default function MarketsPage() {
           <div className="markets-terminal__scan markets-scanner">
             <div className="markets-scanner__toolbar">
               <span className="markets-scanner__title">
-                Market Scanner
+                Scanner
                 {meta.isFallback && <span className="markets-scanner__badge">FALLBACK</span>}
                 {(isFetchingMore || (isFetching && !isLoading)) && (
                   <RefreshCw size={10} className="markets-scanner__spinner" aria-hidden />
@@ -152,7 +86,6 @@ export default function MarketsPage() {
                       onClick={() => {
                         if (opt.id === segment) return;
                         setSegment(opt.id);
-                        setExpanded(null);
                       }}
                     >
                       {opt.label}
@@ -169,7 +102,6 @@ export default function MarketsPage() {
                     onChange={(e) => {
                       setSearch(e.target.value);
                       setSelected(null);
-                      setExpanded(null);
                     }}
                   />
                 </div>
@@ -186,9 +118,6 @@ export default function MarketsPage() {
               stocks={sortedStocks}
               selected={selected}
               onSelect={setSelected}
-              expandedSymbol={expanded}
-              onToggleExpand={toggleExpand}
-              renderExpand={renderExpand}
               isLoading={isLoading}
               search={search}
               hasMore={hasMore}

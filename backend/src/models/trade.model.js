@@ -18,6 +18,11 @@ const tradeSchema = new mongoose.Schema(
       enum: ["BUY", "SELL"],
       required: true,
     },
+    productType: {
+      type: String,
+      enum: ["DELIVERY", "INTRADAY"],
+      default: "DELIVERY",
+    },
     status: {
       type: String,
       enum: ["PROCESSING", "EXECUTED", "PENDING", "PENDING_EXECUTION", "FAILED", "CLOSED", "COMPLETE", "EXECUTED_PENDING_REFLECTION"],
@@ -25,8 +30,14 @@ const tradeSchema = new mongoose.Schema(
     },
     reflectionStatus: {
       type: String,
-      enum: ["PENDING", "DONE"],
+      enum: ["PENDING", "DONE", "FAILED"],
       default: null,
+    },
+    /** BullMQ / inline reflection attempts (deterministic block). */
+    reflectionJobAttempts: {
+      type: Number,
+      default: 0,
+      min: 0,
     },
     queuedAt: {
       type: Date,
@@ -74,6 +85,14 @@ const tradeSchema = new mongoose.Schema(
     userThinking: {
       type: String,
       trim: true,
+    },
+    /** Self-reported emotional state at order submit (behaviour / journal analytics). */
+    preTradeEmotion: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      maxlength: 32,
+      default: null,
     },
 
     // 🔥 Mistake analysis snapshot
@@ -220,6 +239,16 @@ const tradeSchema = new mongoose.Schema(
       sparse: true,
       trim: true,
     },
+    /** Same as ExecutionLock.requestPayloadHash — enables replay if lock TTL expires. */
+    executionRequestHash: {
+      type: String,
+      default: null,
+    },
+    /** Cash balance (paise) immediately after this trade row committed — replay clarity. */
+    postExecutionBalancePaise: {
+      type: Number,
+      default: null,
+    },
   },
   {
     timestamps: true,
@@ -227,6 +256,8 @@ const tradeSchema = new mongoose.Schema(
 );
 
 tradeSchema.index({ user: 1, symbol: 1, createdAt: -1 }, { background: true });
+// H-06: supports journal / history queries bounded by user + createdAt ascending.
+tradeSchema.index({ user: 1, createdAt: 1 }, { background: true, name: "idx_trade_user_createdAt_asc" });
 tradeSchema.index(
   { user: 1, idempotencyKey: 1 },
   { unique: true, sparse: true, background: true, name: "idx_trade_user_idempotency_uniq" }

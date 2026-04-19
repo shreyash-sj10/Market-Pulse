@@ -27,6 +27,9 @@ exports.analyzeReflection = (closedTrade) => {
     exitPricePaise: exitPrice,
     currentPricePaise: closedTrade.currentPricePaise,
     timeHeld: closedTrade.holdTime,
+    // Pass timestamps so PANIC classification can fire.
+    entryTime: closedTrade.entryTime,
+    exitTime: closedTrade.exitTime,
     behaviorContext: { tags: closedTrade.behaviorTags || [] },
   });
 
@@ -37,7 +40,13 @@ exports.analyzeReflection = (closedTrade) => {
   let improvement = "Maintain current discipline level.";
   const tags = [];
 
-  if (exitAnalysis.notes.includes("TARGET_HIT")) {
+  if (exitAnalysis.exitType === "PANIC") {
+    verdict = "POOR_PROCESS";
+    executionPattern = "PANIC_EXIT";
+    insight = "Position closed within minutes of entry — a panic-driven exit driven by short-term price noise rather than your original thesis.";
+    improvement = "Define your stop loss before entering. If price has not reached your SL, the thesis is intact — exit only on thesis break, not fear.";
+    tags.push("PANIC_EXIT", "FEAR_PATTERN");
+  } else if (exitAnalysis.notes.includes("TARGET_HIT")) {
     verdict = "DISCIPLINED_PROFIT";
     executionPattern = "TARGET_HIT";
     insight = "Position reached the defined target. Protocol fully realized through disciplined execution.";
@@ -49,7 +58,7 @@ exports.analyzeReflection = (closedTrade) => {
     verdict = "POOR_PROCESS";
     executionPattern = "EARLY_EXIT";
     insight = "Exited before target hit indicates fear-based decision under uncertainty. Leaving institutional gains on the table.";
-    improvement = "Trust the AI-vetted strategy; avoid manual anxiety-driven exits during volatility.";
+    improvement = "Trust the pre-validated plan; avoid manual anxiety-driven exits during volatility.";
     tags.push("EARLY_EXIT", "FEAR_PATTERN");
   } else if (exitAnalysis.notes.includes("EARLY_CUT")) {
     verdict = "DISCIPLINED_LOSS";

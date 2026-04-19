@@ -6,6 +6,9 @@ const toTraceListItem = (item) => ({
   timestamp: item?.timestamp ?? item?.createdAt ?? new Date().toISOString(),
   verdict: item?.verdict ?? null,
   summary: item?.summary ?? "",
+  systemAction: item?.systemAction != null ? String(item.systemAction) : null,
+  confidence: item?.confidence != null && Number.isFinite(Number(item.confidence)) ? Number(item.confidence) : null,
+  reason: item?.reason != null ? String(item.reason) : "",
 });
 
 export const normalizeTraceList = (response) => {

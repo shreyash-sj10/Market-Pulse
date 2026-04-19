@@ -4,23 +4,14 @@
  * Replaces the old in-memory Map with a MongoDB collection so tokens
  * survive server restarts and work correctly across multiple instances.
  *
- * Public API is intentionally kept identical to the previous Map-based
- * implementation except that issueDecisionToken, getDecisionRecord and
- * consumeDecisionRecord are now async (callers were already in async
- * contexts, so no contract breakage).
+ * Tokens are peeked until execution succeeds, then removed via deleteDecisionRecord /
+ * consumeDecisionRecord (alias). issueDecisionToken, peekDecisionRecord, and deletes are async.
  */
 const crypto = require("crypto");
 const PreTradeToken = require("../../models/preTradeToken.model");
+const { normalizeSymbol } = require("../../utils/symbol.utils");
 
 const TOKEN_TTL_MS = 2 * 60 * 1000; // 2 minutes
-
-// ── Symbol normalisation (same rules as trade.service) ───────────────────────
-const normalizeSymbol = (symbol) => {
-  if (!symbol) return "";
-  const s = String(symbol).toUpperCase().trim();
-  if (s.endsWith(".NS") || s.endsWith(".BO")) return s;
-  return `${s}.NS`;
-};
 
 // ── Integer coercion (same rules as before) ───────────────────────────────────
 const toInteger = (value) => {
@@ -30,24 +21,39 @@ const toInteger = (value) => {
   return Math.round(num);
 };
 
+const normalizeProductType = (value) => {
+  const raw = typeof value === "string" ? value.toUpperCase().trim() : "";
+  return raw === "INTRADAY" ? "INTRADAY" : "DELIVERY";
+};
+
+// ── HMAC key — must be present; fail hard at module load time rather than
+//    silently using a known constant that makes payload hashes forgeable.
+const HMAC_SECRET = process.env.JWT_SECRET;
+if (!HMAC_SECRET) {
+  throw new Error(
+    "FATAL: JWT_SECRET environment variable is not set. " +
+    "preTradeAuthority.store cannot initialise without a signing secret."
+  );
+}
+
 // ── Deterministic payload hash (Canonical Stringify) ──────────────────────────
 const buildPayloadHash = (payload) => {
   const canonical = {
-    symbol: normalizeSymbol(payload.symbol),
+    symbol: normalizeSymbol(payload.symbol) || "",
+    productType: normalizeProductType(payload.productType),
     pricePaise: toInteger(payload.pricePaise),
     quantity: toInteger(payload.quantity),
     stopLossPaise: toInteger(payload.stopLossPaise),
     targetPricePaise: toInteger(payload.targetPricePaise),
   };
-  
+
   // Strict canonical sorting for determinism (Phase 3)
   const sortedKeys = Object.keys(canonical).sort();
-  // Filter out undefined, preserve null (Phase 3 enforced by toInteger already, but let's be explicit)
   const json = JSON.stringify(canonical, sortedKeys);
-  
+
   // HMAC signing (Phase 2)
   return crypto
-    .createHmac("sha256", process.env.JWT_SECRET || "production_secret_fallback")
+    .createHmac("sha256", HMAC_SECRET)
     .update(json)
     .digest("hex");
 };
@@ -58,9 +64,9 @@ const redisClient = require("../../utils/redisClient");
 const logger = require("../../utils/logger");
 
 
-const issueDecisionToken = async ({ symbol, pricePaise, quantity, stopLossPaise, targetPricePaise, verdict, userId }) => {
+const issueDecisionToken = async ({ symbol, productType, pricePaise, quantity, stopLossPaise, targetPricePaise, verdict, userId }) => {
   const token = crypto.randomUUID();
-  const payloadHash = buildPayloadHash({ symbol, pricePaise, quantity, stopLossPaise, targetPricePaise });
+  const payloadHash = buildPayloadHash({ symbol, productType, pricePaise, quantity, stopLossPaise, targetPricePaise });
   const expiresAt = new Date(Date.now() + TOKEN_TTL_MS);
 
   const data = { token, userId: userId || null, payloadHash, verdict, expiresAt: expiresAt.getTime() };
@@ -69,51 +75,80 @@ const issueDecisionToken = async ({ symbol, pricePaise, quantity, stopLossPaise,
        await redisClient.set(`pretrade:${token}`, JSON.stringify(data), "EX", 120);
      } catch(e) { /* fallback */ }
   }
-  await PreTradeToken.create({ token, userId: userId || null, payloadHash, verdict, expiresAt });
+  await PreTradeToken.create({
+    token,
+    userId: userId || null,
+    payloadHash,
+    verdict,
+    expiresAt,
+    state: "VALID",
+  });
 
   return data;
 };
 
-const getDecisionRecord = async (token) => {
+/**
+ * Read token without consuming it. Used until execution transaction succeeds.
+ */
+const peekDecisionRecord = async (token) => {
   if (!token) return null;
-  
+
   if (redisClient && redisClient.status === "ready") {
-     try {
-       // Atomic Lua script: Get and Delete
-       const script = `
-         local val = redis.call("GET", KEYS[1])
-         if val then
-           redis.call("DEL", KEYS[1])
-         end
-         return val
-       `;
-       const str = await redisClient.eval(script, 1, `pretrade:${token}`);
-       if (str) {
-         // Silently keep Mongo clean
-         PreTradeToken.deleteOne({ token }).catch(()=>{});
-         const obj = JSON.parse(str);
-         if (obj.expiresAt <= Date.now()) return null;
-         return obj;
-       }
-     } catch(e) {}
+    try {
+      const str = await redisClient.get(`pretrade:${token}`);
+      if (str) {
+        const obj = JSON.parse(str);
+        if (obj.expiresAt <= Date.now()) return null;
+        return obj;
+      }
+    } catch (e) {
+      /* fall through to Mongo */
+    }
   }
-  
-  // Atomic Mongo Fetch & Delete
-  const record = await PreTradeToken.findOneAndDelete({ token }).lean();
+
+  const record = await PreTradeToken.findOne({
+    token,
+    $or: [{ state: "VALID" }, { state: { $exists: false } }],
+  }).lean();
   if (!record) return null;
   if (record.expiresAt <= new Date()) return null;
-  return record;
+  if (record.state && record.state !== "VALID") return null;
+  return {
+    token: record.token,
+    userId: record.userId,
+    payloadHash: record.payloadHash,
+    verdict: record.verdict,
+    expiresAt: record.expiresAt instanceof Date ? record.expiresAt.getTime() : record.expiresAt,
+  };
 };
 
-const consumeDecisionRecord = async (token) => {
-  // NO-OP: Token is now atomically popped by getDecisionRecord
+/**
+ * Single-use after successful execution only. Call after DB commit succeeds.
+ */
+const deleteDecisionRecord = async (token) => {
+  if (!token) return;
+  if (redisClient && redisClient.status === "ready") {
+    try {
+      await redisClient.del(`pretrade:${token}`);
+    } catch (e) {
+      /* continue */
+    }
+  }
+  await PreTradeToken.updateOne({ token }, { $set: { state: "CONSUMED" } });
 };
+
+/** @deprecated Use peekDecisionRecord — kept for backward-compatible imports. */
+const getDecisionRecord = peekDecisionRecord;
+
+const consumeDecisionRecord = deleteDecisionRecord;
 
 // ── Test helpers (mirror of old __testables interface) ───────────────────────
 const __testables = {
   buildPayloadHash,
   issueDecisionToken,
   getDecisionRecord,
+  peekDecisionRecord,
+  deleteDecisionRecord,
   consumeDecisionRecord,
   // clearStore: deletes all tokens — used in test teardown
   clearStore: async () => {
@@ -127,6 +162,8 @@ module.exports = {
   buildPayloadHash,
   issueDecisionToken,
   getDecisionRecord,
+  peekDecisionRecord,
+  deleteDecisionRecord,
   consumeDecisionRecord,
   __testables,
 };

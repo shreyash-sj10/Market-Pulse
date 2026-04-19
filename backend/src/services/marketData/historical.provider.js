@@ -1,6 +1,8 @@
 const axios = require('axios');
 const YahooFinance = require('yahoo-finance2').default;
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
+const { toYahooSymbol } = require("../../utils/symbol.utils");
+const logger = require("../../utils/logger");
 
 // Caching layer (Historical data is less volatile)
 const cache = new Map();
@@ -13,9 +15,7 @@ const CACHE_TTL = 3600000; // 1 Hour
  */
 const getHistory = async (symbol, period = '1mo', interval = '1d') => {
   const cacheKey = `${symbol}_${period}_${interval}`;
-  const normSymbol = (symbol.startsWith('^') || symbol.includes('.') || symbol.endsWith('=F') || symbol.endsWith('=X')) 
-    ? symbol.toUpperCase() 
-    : `${symbol.toUpperCase()}.NS`;
+  const normSymbol = toYahooSymbol(symbol);
   
   // 1. Check Cache
   const cached = cache.get(cacheKey);
@@ -42,7 +42,11 @@ const getHistory = async (symbol, period = '1mo', interval = '1d') => {
     cache.set(cacheKey, { data, timestamp: Date.now() });
     return data;
   } catch (error) {
-    console.warn(`[HistoricalProvider] Python fail for ${normSymbol}, attempting Node native fallback.`);
+    logger.warn({
+      event: "HISTORICAL_PROVIDER_PYTHON_FALLBACK",
+      symbol: normSymbol,
+      message: error.message,
+    });
     
     // 3. Native Fallback (Yahoo Finance Node)
     try {
@@ -103,7 +107,11 @@ const getHistory = async (symbol, period = '1mo', interval = '1d') => {
       cache.set(cacheKey, { data, timestamp: Date.now() });
       return data;
     } catch (fallbackErr) {
-      console.error(`[HistoricalProvider] CRITICAL: All historical providers failed for ${normSymbol}`);
+      logger.error({
+        event: "HISTORICAL_PROVIDER_ALL_FAILED",
+        symbol: normSymbol,
+        message: fallbackErr.message,
+      });
       throw new Error(`HISTORICAL_DATA_UNAVAILABLE: ${normSymbol}`);
     }
   }

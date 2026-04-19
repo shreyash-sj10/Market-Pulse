@@ -1,0 +1,14 @@
+# Render Blueprint — adjust name/plan and set env vars in the Render dashboard.
+# Required env: MONGO_URI, JWT_SECRET, FRONTEND_URL (https origin of your SPA)
+# https://render.com/docs/blueprint-spec
+#
+# P1-C: Keep this web service at a single instance unless background workers are moved to
+# BullMQ-only / Redis locks / a separate worker service. See backend/docs/BACKGROUND_WORKERS_SCALE.md.
+services:
+  - type: web
+    name: stock-trading-api
+    runtime: node
+    rootDir: backend
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health

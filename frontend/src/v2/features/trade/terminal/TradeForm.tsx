@@ -1,6 +1,12 @@
 export type TradeFormProps = {
   side: "BUY" | "SELL";
   onSideChange: (s: "BUY" | "SELL") => void;
+  /** Long-only: exit leg only when there is an open position in this symbol (no short). */
+  showPortfolioExit?: boolean;
+  /** Max quantity closable from portfolio (for copy / validation hints). */
+  exitMaxQuantity?: number;
+  productType: "DELIVERY" | "INTRADAY";
+  onProductTypeChange: (v: "DELIVERY" | "INTRADAY") => void;
   price: string;
   onPriceChange: (v: string) => void;
   quantity: string;
@@ -19,6 +25,8 @@ export type TradeFormProps = {
 export default function TradeForm({
   side,
   onSideChange,
+  productType,
+  onProductTypeChange,
   price,
   onPriceChange,
   quantity,
@@ -30,6 +38,8 @@ export default function TradeForm({
   livePriceHint,
   quantitySystemHint,
   stopSystemNote,
+  showPortfolioExit = false,
+  exitMaxQuantity = 0,
 }: TradeFormProps) {
   const ep = parseFloat(price);
   const sl = parseFloat(stopLoss);
@@ -40,7 +50,9 @@ export default function TradeForm({
   return (
     <div className="trade-terminal-section">
       <p className="trade-terminal-kicker">Action</p>
-      <div className="dp-side-toggle trade-terminal-side-toggle">
+      <div
+        className={`dp-side-toggle trade-terminal-side-toggle ${!showPortfolioExit ? "trade-terminal-side-toggle--buy-only" : ""}`}
+      >
         <button
           type="button"
           className={`dp-side-btn dp-side-btn--buy ${side === "BUY" ? "dp-side-btn--active" : ""}`}
@@ -48,14 +60,57 @@ export default function TradeForm({
         >
           Buy
         </button>
-        <button
-          type="button"
-          className={`dp-side-btn dp-side-btn--sell ${side === "SELL" ? "dp-side-btn--active" : ""}`}
-          onClick={() => onSideChange("SELL")}
-        >
-          Sell
-        </button>
+        {showPortfolioExit ? (
+          <button
+            type="button"
+            className={`dp-side-btn dp-side-btn--sell ${side === "SELL" ? "dp-side-btn--active" : ""}`}
+            onClick={() => onSideChange("SELL")}
+            title="Close an existing holding (same quantity rules as Portfolio)"
+          >
+            Exit
+          </button>
+        ) : null}
       </div>
+      {!showPortfolioExit ? (
+        <p className="trade-terminal-field-hint">
+          Long-only — to close a line you already hold, open Exit from Portfolio (this panel stays buy-to-open).
+        </p>
+      ) : exitMaxQuantity > 0 ? (
+        <p className="trade-terminal-field-hint">
+          Open position: up to <span className="trade-terminal-mono">{exitMaxQuantity}</span> shares closable here.
+        </p>
+      ) : null}
+
+      {side === "BUY" ? (
+        <>
+          <p className="trade-terminal-kicker trade-terminal-kicker--spaced">Product</p>
+          <div className="dp-side-toggle trade-terminal-product-toggle">
+            <button
+              type="button"
+              className={`dp-side-btn ${productType === "DELIVERY" ? "dp-side-btn--active" : ""}`}
+              onClick={() => onProductTypeChange("DELIVERY")}
+            >
+              Delivery
+            </button>
+            <button
+              type="button"
+              className={`dp-side-btn ${productType === "INTRADAY" ? "dp-side-btn--active" : ""}`}
+              onClick={() => onProductTypeChange("INTRADAY")}
+            >
+              Intraday
+            </button>
+          </div>
+          <p className="trade-terminal-field-hint">
+            {productType === "INTRADAY"
+              ? "Intraday positions are auto square-off candidates after market close."
+              : "Delivery positions can carry forward beyond the session."}
+          </p>
+        </>
+      ) : (
+        <p className="trade-terminal-field-hint trade-terminal-kicker--spaced">
+          Sell exits use the product type of the existing position.
+        </p>
+      )}
 
       <p className="trade-terminal-kicker trade-terminal-kicker--spaced">Order entry</p>
       <div className="trade-terminal-entry-grid">

@@ -14,12 +14,12 @@ import type { TradePanelContext } from "../../trade-flow";
 import MetricBlock from "../home/components/MetricBlock";
 import EventLog from "../home/components/EventLog";
 import { buildEventLogs } from "../home/mapHomeViewModel";
-import PortfolioDecisionStrip, { PortfolioClosedStrip } from "./PortfolioDecisionStrip";
+import PortfolioDecisionStrip, { PortfolioClosedStrip, PortfolioPendingStrip } from "./PortfolioDecisionStrip";
 import { buildPortfolioSessionLogs } from "./portfolioSessionLogs";
 import { ROUTES } from "../../routing/routes";
 import type { PortfolioSummary } from "../../hooks/usePortfolioSummary";
 
-type PortfolioTab = "Active Positions" | "Closed History";
+type PortfolioTab = "Active Positions" | "Pending Orders" | "Closed History";
 
 function exposurePct(netEquityPaise: number, investedPaise: number): number | null {
   if (!Number.isFinite(netEquityPaise) || netEquityPaise <= 0) return null;
@@ -98,7 +98,7 @@ function buildPortfolioIntel(items: DecisionCardProps[], summary: PortfolioSumma
 
 export default function PortfolioPage() {
   const portfolio = usePortfolioDecisions();
-  const { summary, isError: summaryError } = usePortfolioSummary();
+  const { summary, isError: summaryError, isLoading: summaryLoading } = usePortfolioSummary();
   const closed = useClosedPositions();
   const trace = useTraceData();
   const navigate = useNavigate();
@@ -226,16 +226,23 @@ export default function PortfolioPage() {
             />
           </section>
 
-          <div className="portfolio-tabs">
-            {(["Active Positions", "Closed History"] as PortfolioTab[]).map((t) => (
+          <div className="portfolio-tabs" role="tablist" aria-label="Portfolio sections">
+            {(
+              [
+                ["Active Positions", portfolio.items.length] as const,
+                ["Pending Orders", summary.pendingOrders.length] as const,
+                ["Closed History", closed.trades.length] as const,
+              ] as const
+            ).map(([t, count]) => (
               <button
                 key={t}
                 type="button"
+                role="tab"
+                aria-selected={tab === t}
                 className={`portfolio-tab ${tab === t ? "portfolio-tab--active" : ""}`}
                 onClick={() => setTab(t)}
               >
-                {t}{" "}
-                {t === "Active Positions" ? `(${portfolio.items.length})` : `(${closed.trades.length})`}
+                {t} ({count})
               </button>
             ))}
           </div>
@@ -282,6 +289,49 @@ export default function PortfolioPage() {
                         key={`${item.title}-${i}`}
                         item={item}
                         onReview={() => openTradeReview(item)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )
+            ) : tab === "Pending Orders" ? (
+              summaryLoading ? (
+                <p className="page-loading page-note" style={{ padding: "var(--space-6)" }}>
+                  Loading queued orders…
+                </p>
+              ) : summaryError ? (
+                <div className="degraded-banner" style={{ margin: 0 }}>
+                  <AlertTriangle size={12} /> Could not load queued orders — retrying
+                </div>
+              ) : summary.pendingOrders.length === 0 ? (
+                <section className="home-panel portfolio-decisions-panel" aria-label="Pending orders">
+                  <header className="home-panel__head">
+                    <h2 className="home-panel__title">Pending orders</h2>
+                    <p className="home-panel__lead">
+                      Nothing in the execution queue. Orders you place outside cash market hours are held here
+                      until the session opens.
+                    </p>
+                  </header>
+                  <p className="page-note" style={{ padding: "var(--space-5)" }}>
+                    No pending orders.
+                  </p>
+                </section>
+              ) : (
+                <section className="home-panel portfolio-decisions-panel" aria-label="Pending orders">
+                  <header className="home-panel__head">
+                    <h2 className="home-panel__title">Pending orders</h2>
+                    <p className="home-panel__lead">
+                      Submitted while the market was closed or execution was deferred — fills when the exchange
+                      session is active.
+                    </p>
+                  </header>
+                  <div className="portfolio-decision-strips">
+                    {summary.pendingOrders.map((order) => (
+                      <PortfolioPendingStrip
+                        key={order.tradeId}
+                        order={order}
+                        formatPriceInr={(paise) => `₹${fromPaise(paise).toFixed(2)}`}
+                        formatNotionalInr={(paise) => formatINR(paise)}
                       />
                     ))}
                   </div>

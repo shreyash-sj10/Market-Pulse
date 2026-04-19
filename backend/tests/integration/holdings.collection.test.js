@@ -7,6 +7,14 @@ jest.mock("../../src/services/marketData.service", () => ({
     symbol: "TEST",
     data: { pricePaise: 10000, source: "REAL", isFallback: false },
   }),
+  resolvePrice: jest.fn(),
+}));
+
+jest.mock("../../src/services/price.engine", () => ({
+  getPrice: jest.fn().mockResolvedValue({
+    pricePaise: 10000,
+    source: "LIVE",
+  }),
 }));
 
 jest.mock("../../src/services/aiExplanation.service", () => ({
@@ -16,10 +24,6 @@ jest.mock("../../src/services/aiExplanation.service", () => ({
     behaviorAnalysis: "Controlled behavior",
   }),
   generateFinalTradeCall: jest.fn().mockResolvedValue({ suggestedAction: "BUY", verdict: "BUY" }),
-}));
-
-jest.mock("../../src/utils/transaction", () => ({
-  runInTransaction: jest.fn(async (work) => work(null)),
 }));
 
 const User = require("../../src/models/user.model");
@@ -38,6 +42,7 @@ const buyPayload = (overrides = {}) => ({
   pricePaise: 10000,
   stopLossPaise: 9000,
   targetPricePaise: 12000,
+  preTradeEmotion: "CALM",
   userThinking: "Buy test",
   decisionContext: { stage: "BUY" },
   ...overrides,
@@ -46,7 +51,8 @@ const buyPayload = (overrides = {}) => ({
 const sellPayload = (overrides = {}) => ({
   symbol: "HOLD_TEST",
   quantity: 1,
-  pricePaise: 11000,
+  pricePaise: 10000,
+  preTradeEmotion: "DISCIPLINED",
   userThinking: "Sell test",
   decisionContext: { stage: "SELL" },
   ...overrides,
@@ -131,9 +137,9 @@ describe("Holdings collection integrity", () => {
     const second = buyPayload({
       requestId: "buy-avg-2",
       quantity: 1,
-      pricePaise: 13000,
-      stopLossPaise: 12000,
-      targetPricePaise: 15000,
+      pricePaise: 10000,
+      stopLossPaise: 9000,
+      targetPricePaise: 12000,
     });
 
     await tradeService.executeBuyTrade(user, { ...first, token: await issueBuyToken(first, user._id) });
@@ -141,7 +147,8 @@ describe("Holdings collection integrity", () => {
 
     const holding = await Holding.findOne({ userId: user._id, symbol: "HOLD_TEST.NS" });
     expect(holding.quantity).toBe(3);
-    expect(holding.avgPricePaise).toBe(11000);
+    // Execution fill uses `getPrice` mock (10000 paise), not the limit price in the payload.
+    expect(holding.avgPricePaise).toBe(10000);
   });
 
   it("SELL reduces quantity", async () => {
@@ -199,8 +206,8 @@ describe("Holdings collection integrity", () => {
 
     const buys = [
       buyPayload({ requestId: "par-buy-1", quantity: 1, pricePaise: 10000, stopLossPaise: 9000, targetPricePaise: 12000 }),
-      buyPayload({ requestId: "par-buy-2", quantity: 2, pricePaise: 11000, stopLossPaise: 10000, targetPricePaise: 13000 }),
-      buyPayload({ requestId: "par-buy-3", quantity: 1, pricePaise: 9000, stopLossPaise: 8000, targetPricePaise: 11000 }),
+      buyPayload({ requestId: "par-buy-2", quantity: 2, pricePaise: 10000, stopLossPaise: 9000, targetPricePaise: 12000 }),
+      buyPayload({ requestId: "par-buy-3", quantity: 1, pricePaise: 10000, stopLossPaise: 9000, targetPricePaise: 12000 }),
     ];
 
     await Promise.all(
@@ -209,7 +216,7 @@ describe("Holdings collection integrity", () => {
 
     const holding = await Holding.findOne({ userId: user._id, symbol: "HOLD_TEST.NS" });
     expect(holding.quantity).toBe(4);
-    expect(holding.avgPricePaise).toBe(10250);
+    expect(holding.avgPricePaise).toBe(10000);
   });
 });
 

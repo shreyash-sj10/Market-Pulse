@@ -5,6 +5,7 @@
  * Deterministic. No AI calls. No side effects.
  */
 const { VOCAB } = require("../constants/systemVocabulary");
+const { computeUnifiedConfidence0to100, clamp01 } = require("./unifiedConfidence");
 
 /**
  * Extracts the top 3 reasons from signal inputs.
@@ -61,14 +62,43 @@ const extractConflicts = (signals = {}) => {
  * @returns {Object} structured context for AI
  */
 const buildDecisionContext = (input = {}) => {
-  const { verdict, score, marketSignals, behaviorSignals, riskSignals, behaviorTag } = input;
+  const {
+    verdict,
+    score,
+    marketSignals,
+    behaviorSignals,
+    riskSignals,
+    behaviorTag,
+    marketAlignment,
+    ruleVerdict,
+  } = input;
   const signals = { marketSignals, behaviorSignals, riskSignals };
+  const contradictions = extractConflicts(signals);
+  const alignment =
+    marketAlignment ||
+    (contradictions.length > 0 ? "CONFLICTED" : "ALIGNED");
+  const numericScore = typeof score === "number" ? score : 0;
+  const signalStrength = clamp01(numericScore / 100);
+  const signalAgreement = contradictions.length > 0 ? 0.35 : 0.72;
+  const dataCompleteness =
+    (marketSignals?.direction ? 0.35 : 0) +
+    (behaviorSignals?.risk ? 0.3 : 0) +
+    (riskSignals?.level ? 0.35 : 0);
+  const unifiedConfidence = computeUnifiedConfidence0to100({
+    signalStrength,
+    signalAgreement,
+    dataCompleteness: clamp01(dataCompleteness),
+  });
+
   return {
     verdict: verdict || "UNKNOWN",
-    confidence: typeof score === "number" ? score : 0,
+    ruleVerdict: ruleVerdict || verdict || "UNKNOWN",
+    confidence: numericScore,
+    unifiedConfidence,
     verdictLabel: VOCAB[`VERDICT_${verdict}`] || verdict,
     reasonChain: extractTopReasons(signals),
-    contradictions: extractConflicts(signals),
+    contradictions,
+    alignment,
     behavior: VOCAB.BEHAVIOR_TAGS?.[behaviorTag] || behaviorTag || "None",
   };
 };

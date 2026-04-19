@@ -6,7 +6,8 @@ const Holding = require("../models/holding.model");
 const Trade = require("../models/trade.model");
 
 const TRACE_TTL_SECONDS = 7776000;
-const EXECUTION_LOCK_TTL_SECONDS = Number(process.env.EXECUTION_LOCK_TTL_SECONDS || 120);
+/** Keep in sync with `models/executionLock.model.js` default. */
+const EXECUTION_LOCK_TTL_SECONDS = Number(process.env.EXECUTION_LOCK_TTL_SECONDS || 604800);
 
 const ensureTraceTtlIndex = async () => {
   const indexes = await Trace.collection.indexes();
@@ -30,7 +31,12 @@ const ensureTraceTtlIndex = async () => {
 
 const ensureExecutionLockIndexes = async () => {
   const indexes = await ExecutionLock.collection.indexes();
-  const legacyIdempotencyIndex = indexes.find((idx) => idx.key && idx.key.idempotencyKey === 1);
+  const legacyIdempotencyIndex = indexes.find(
+    (idx) =>
+      idx.key &&
+      idx.key.idempotencyKey === 1 &&
+      Object.keys(idx.key).length === 1
+  );
   const requestIdOnlyIndex = indexes.find(
     (idx) =>
       idx.key &&
@@ -71,13 +77,13 @@ const ensureExecutionLockIndexes = async () => {
 
   if (!ttlIndex) {
     await ExecutionLock.collection.createIndex({ createdAt: 1 }, { expireAfterSeconds: EXECUTION_LOCK_TTL_SECONDS, name: "createdAt_1" });
-    logger.info("ExecutionLock TTL index created (createdAt_1, 120s)");
+    logger.info(`ExecutionLock TTL index created (createdAt_1, ${EXECUTION_LOCK_TTL_SECONDS}s)`);
   } else if (ttlIndex.expireAfterSeconds !== EXECUTION_LOCK_TTL_SECONDS) {
     await ExecutionLock.collection.dropIndex(ttlIndex.name);
     await ExecutionLock.collection.createIndex({ createdAt: 1 }, { expireAfterSeconds: EXECUTION_LOCK_TTL_SECONDS, name: "createdAt_1" });
     logger.warn(`ExecutionLock TTL index corrected from ${ttlIndex.expireAfterSeconds}s to ${EXECUTION_LOCK_TTL_SECONDS}s`);
   } else {
-    logger.info("ExecutionLock TTL index verified (createdAt_1, 120s)");
+    logger.info(`ExecutionLock TTL index verified (createdAt_1, ${EXECUTION_LOCK_TTL_SECONDS}s)`);
   }
 };
 
@@ -131,37 +137,47 @@ const ensureTradeIdempotencyIndexes = async () => {
   }
 };
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const connectDB = async () => {
   const mongoUri = process.env.MONGO_URI;
 
   if (!mongoUri) {
-    console.error("\n" + "=".repeat(50));
-    console.error("FATAL ERROR: MONGO_URI is not defined in .env file.");
-    console.error("Please add MONGO_URI=mongodb://localhost:27017/trade_engine to your backend/.env");
-    console.error("=".repeat(50) + "\n");
+    logger.error("FATAL: MONGO_URI is not defined. Set it in backend/.env (see .env.example).");
     process.exit(1);
   }
 
-  try {
-    await mongoose.connect(mongoUri, {
-      serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of hanging
-    });
-    await ensureTraceTtlIndex();
-    await ensureExecutionLockIndexes();
-    await ensureHoldingsIndexes();
-    await ensureTradeIdempotencyIndexes();
-    logger.info("MongoDB connected successfully");
-  } catch (error) {
-    console.error("\n" + "=".repeat(50));
-    console.error("DATABASE CONNECTION FAILED!");
-    console.error("1. Ensure MongoDB is installed and running on your system.");
-    console.error("2. Check if the connection string in .env is correct.");
-    console.error("3. Error Details:", error.message);
-    console.error("=".repeat(50) + "\n");
-    
-    // In a real production app we might exit, but for this project we'll 
-    // log the error and wait for the user to fix it.
-    process.exit(1);
+  const maxAttempts = Math.max(1, Number(process.env.MONGO_CONNECT_RETRIES || 3));
+  const poolSize = Math.max(1, Number(process.env.MONGO_MAX_POOL_SIZE || 10));
+  const lastError = { message: "" };
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await mongoose.connect(mongoUri, {
+        serverSelectionTimeoutMS: Number(process.env.MONGO_SERVER_SELECTION_MS || 10000),
+        maxPoolSize: poolSize,
+        retryWrites: true,
+      });
+      await ensureTraceTtlIndex();
+      await ensureExecutionLockIndexes();
+      await ensureHoldingsIndexes();
+      await ensureTradeIdempotencyIndexes();
+      logger.info({ attempt }, "MongoDB connected successfully");
+      return;
+    } catch (error) {
+      lastError.message = error?.message || String(error);
+      logger.error(
+        { attempt, maxAttempts, err: lastError.message },
+        "MongoDB connection attempt failed"
+      );
+      if (attempt >= maxAttempts) {
+        logger.error(
+          "MongoDB unavailable after retries. Check URI, replica set (for transactions), and network."
+        );
+        process.exit(1);
+      }
+      await sleep(1000 * attempt);
+    }
   }
 };
 

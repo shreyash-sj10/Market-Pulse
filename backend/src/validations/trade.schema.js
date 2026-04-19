@@ -1,4 +1,5 @@
 const { z } = require("zod");
+const { sendSuccess } = require("../utils/response.helper");
 
 const createTradeSchema = z.object({
   body: z.object({
@@ -41,11 +42,11 @@ const validateData = (schema) => (req, res, next) => {
       const logger = require("../utils/logger");
       logger.warn(`[400] Validation failed - ${req.originalUrl}: ${JSON.stringify(validationErrors)}`);
 
-      return res.status(400).json({
+      return sendSuccess(res, req, {
         success: false,
         message: "Invalid payload input",
         errors: validationErrors,
-      });
+      }, 400);
     }
     next(err);
   }

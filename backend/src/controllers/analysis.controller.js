@@ -5,7 +5,9 @@ const { analyzeProgression } = require("../services/progression.engine");
 const Decimal = require("decimal.js");
 const { normalizeTrade } = require("../domain/trade.contract");
 const { mapToClosedTrades } = require("../domain/closedTrade.mapper");
-
+const { ANALYTICS_SNAPSHOT_VALID_MS } = require("../constants/analyticsSnapshot.constants");
+const { RECENT_TRADE_SNAPSHOT_BYPASS_MS } = require("../constants/systemConvergence.constants");
+const { sendSuccess } = require("../utils/response.helper");
 
 /**
  * GET /analysis/summary
@@ -15,12 +17,20 @@ const getAnalysisSummary = async (req, res, next) => {
   try {
     const userId = req.user._id;
     const User = require("../models/user.model");
-    const user = await User.findById(userId);
+    const user = await User.findById(userId).lean();
 
-    
-    // PHASE 3: Snapshot First
-    const SNAPSHOT_VALID_WINDOW = 12 * 60 * 60 * 1000;
-    const hasValidSnapshot = user.analyticsSnapshot && (Date.now() - new Date(user.analyticsSnapshot.lastUpdated).getTime() < SNAPSHOT_VALID_WINDOW);
+    // PHASE 3: Snapshot First (TTL aligned with portfolio + recent-trade bypass)
+    const snapshotMs = user.analyticsSnapshot?.lastUpdated
+      ? new Date(user.analyticsSnapshot.lastUpdated).getTime()
+      : 0;
+    const lastActMs = user.lastTradeActivityAt ? new Date(user.lastTradeActivityAt).getTime() : 0;
+    const recentTradeWindow = lastActMs && Date.now() - lastActMs < RECENT_TRADE_SNAPSHOT_BYPASS_MS;
+    const tradeNewerThanSnapshot = lastActMs && lastActMs > snapshotMs;
+    const snapshotBypassed = Boolean(recentTradeWindow || tradeNewerThanSnapshot);
+    const hasValidSnapshot =
+      !snapshotBypassed &&
+      user.analyticsSnapshot &&
+      Date.now() - snapshotMs < ANALYTICS_SNAPSHOT_VALID_MS;
     
     if (hasValidSnapshot) {
       const logger = require("../utils/logger");
@@ -31,25 +41,43 @@ const getAnalysisSummary = async (req, res, next) => {
       });
 
 
-      return res.status(200).json({
+      return sendSuccess(res, req, {
         success: true,
         data: {
-          patterns: user.analyticsSnapshot.tags.map(t => ({ type: t, confidence: 100 })),
+          patterns: (user.analyticsSnapshot.tags || []).map((t) => ({
+            type: t,
+            confidence: null,
+          })),
           disciplineScore: user.analyticsSnapshot.disciplineScore,
           progression: { trend: user.analyticsSnapshot.trend, narrative: "Recent sessions show consistent protocol adherence." }
         },
-        meta: { source: "snapshot", timestamp: user.analyticsSnapshot.lastUpdated }
+        meta: {
+          source: "snapshot",
+          timestamp: user.analyticsSnapshot.lastUpdated,
+          analyticsSnapshotValidMs: ANALYTICS_SNAPSHOT_VALID_MS,
+          systemStateVersion: user.systemStateVersion ?? 0,
+          snapshotBypassed,
+          snapshotBypassReason: snapshotBypassed
+            ? recentTradeWindow
+              ? "RECENT_TRADE_WINDOW"
+              : "TRADE_AFTER_SNAPSHOT"
+            : undefined,
+        },
       });
 
     }
 
     // Fetch ALL trades for the user to perform high-fidelity pairing
-    const rawTrades = await Trade.find({ user: userId }).sort({ createdAt: 1 });
+    const rawTrades = await Trade.find({ user: userId }).sort({ createdAt: 1 }).lean();
 
     const normalizedTrades = rawTrades.map((trade) => normalizeTrade(trade));
 
     if (normalizedTrades.length < 10) {
-      return res.status(200).json({ success: false, error: "INSUFFICIENT_DATA" });
+      return sendSuccess(res, req, {
+        success: false,
+        error: "INSUFFICIENT_DATA",
+        meta: { systemStateVersion: user.systemStateVersion ?? 0 },
+      });
     }
 
     // 1. Pairing Engine (FIFO Algorithm)
@@ -63,7 +91,7 @@ const getAnalysisSummary = async (req, res, next) => {
     const behaviorOutput = analyzeBehavior(closedTrades);
 
     if (!behaviorOutput.success) {
-      return res.status(200).json({
+      return sendSuccess(res, req, {
         ...behaviorOutput,
         journalInsights
       });
@@ -75,7 +103,7 @@ const getAnalysisSummary = async (req, res, next) => {
     // 5. Analyze User Progression (Recent vs Past)
     const progressionOutput = analyzeProgression(closedTrades);
 
-    res.status(200).json({
+    sendSuccess(res, req, {
       success: true,
       data: {
         ...behaviorOutput,
@@ -83,7 +111,13 @@ const getAnalysisSummary = async (req, res, next) => {
         journalInsights,
         progression: progressionOutput.success ? progressionOutput.progression : { trend: "INSUFFICIENT_DATA", narrative: "Continue trading to unlock performance progression tracking." }
       },
-      meta: { timestamp: new Date(), source: "compute" }
+      meta: {
+        timestamp: new Date(),
+        source: "compute",
+        analyticsSnapshotValidMs: ANALYTICS_SNAPSHOT_VALID_MS,
+        systemStateVersion: user.systemStateVersion ?? 0,
+        snapshotBypassed,
+      },
     });
 
 

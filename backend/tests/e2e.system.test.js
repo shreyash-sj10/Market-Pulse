@@ -24,9 +24,13 @@ let user;
 jest.mock("../src/services/marketData.service", () => ({
   validateSymbol: jest.fn().mockResolvedValue({ isValid: true, symbol: "E2E_AUDIT_STOCK" }),
   getMarketIndices: jest.fn().mockResolvedValue([]),
-  resolvePrice: jest.fn().mockResolvedValue({ pricePaise: 1000000, source: "REAL", isFallback: false }),
+  resolvePrice: jest.fn(),
   getLivePrices: jest.fn().mockResolvedValue({ "E2E_AUDIT_STOCK": { pricePaise: 1000000 } }),
   getStockSnapshot: jest.fn().mockResolvedValue({ pricePaise: 1000000, symbol: "E2E_AUDIT_STOCK", changePercent: 0, volume: 1000, trend: "SIDEWAYS", source: "REAL" })
+}));
+
+jest.mock("../src/services/price.engine", () => ({
+  getPrice: jest.fn().mockResolvedValue({ pricePaise: 1000000, source: "LIVE" }),
 }));
 
 // MOCK REDIS & BULLMQ (Disable async infrastructure for deterministic E2E check)
@@ -216,6 +220,7 @@ describe("🚀 PHASE 1-5: SYSTEM END-TO-END VALIDATION", () => {
         pricePaise: 1000000,
         stopLossPaise: 950000,
         targetPricePaise: 1200000,
+        preTradeEmotion: "CALM",
         preTradeToken: preToken,
         userThinking: "Executing plan.",
         decisionContext: { stage: "EXECUTION" }
@@ -231,7 +236,7 @@ describe("🚀 PHASE 1-5: SYSTEM END-TO-END VALIDATION", () => {
       .send({
         symbol: SYMBOL,
         side: "SELL",
-        pricePaise: 1100000,
+        pricePaise: 1000000,
         quantity: 10,
         userThinking: "Target reached."
       });
@@ -248,7 +253,9 @@ describe("🚀 PHASE 1-5: SYSTEM END-TO-END VALIDATION", () => {
         symbol: SYMBOL,
         side: "SELL",
         quantity: 10,
-        pricePaise: 1100000,
+        pricePaise: 1000000,
+        preTradeEmotion: "DISCIPLINED",
+        preTradeToken: sellToken,
         userThinking: "Closing for profit.",
         decisionContext: { stage: "EXIT" }
       });

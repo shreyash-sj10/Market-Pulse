@@ -46,8 +46,17 @@ const normalizeTrade = (rawTrade) => {
     symbol: raw.symbol || null,
     type,
     side: type,
+    productType: raw.productType || "DELIVERY",
     status: raw.status || "EXECUTED",
-    reflectionStatus: raw.reflectionStatus || (raw.type === "SELL" && raw.status === "EXECUTED_PENDING_REFLECTION" ? "PENDING" : (raw.type === "SELL" ? "DONE" : null)),
+    reflectionStatus:
+      raw.reflectionStatus === "FAILED"
+        ? "FAILED"
+        : raw.reflectionStatus ||
+          (raw.type === "SELL" && raw.status === "EXECUTED_PENDING_REFLECTION"
+            ? "PENDING"
+            : raw.type === "SELL"
+              ? "DONE"
+              : null),
     queuedAt: raw.queuedAt || null,
     executionTime: raw.executionTime || null,
     quantity: toNullableNumber(raw.quantity) ?? 0,
@@ -58,6 +67,7 @@ const normalizeTrade = (rawTrade) => {
     rr,
     intent: raw.entryPlan?.intent || raw.intent || raw.parsedIntent?.strategy || raw.rawIntent || null,
     reasoning: raw.entryPlan?.reasoning || raw.reasoning || raw.userThinking || raw.reason || null,
+    preTradeEmotion: raw.preTradeEmotion || null,
     decision: {
       verdict: decisionVerdict,
       score: decisionScore,

@@ -16,7 +16,7 @@ export function deriveTradeOutcome(
   const risk = snapshot.risk;
   const riskStatus = (risk?.status ?? "").toUpperCase();
 
-  if (v === "BLOCK" || risk?.verdict === "BLOCK" || riskStatus === "FAIL" || riskStatus === "INVALID") {
+  if (v === "BLOCK" || v === "AVOID" || risk?.verdict === "BLOCK" || risk?.verdict === "AVOID" || riskStatus === "FAIL" || riskStatus === "INVALID" || riskStatus === "UNAVAILABLE") {
     return {
       outcome: "blocked",
       message:

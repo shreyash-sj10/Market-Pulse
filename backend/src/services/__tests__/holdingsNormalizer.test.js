@@ -16,14 +16,14 @@ describe("holdings normalizer", () => {
     });
   });
 
-  it("formats holdings as [{ symbol, quantity, avgPrice }]", () => {
+  it("formats holdings as [{ symbol, quantity, avgPricePaise }]", () => {
     const holdingsMap = new Map([
       ["INFY_NS", { quantity: 3, avgCost: 152080 }],
     ]);
 
     const arr = toHoldingsArray(holdingsMap);
     expect(arr).toEqual([
-      { symbol: "INFY.NS", quantity: 3, avgPrice: 152080, stopLossPaise: null, targetPricePaise: null },
+      { symbol: "INFY.NS", quantity: 3, avgPricePaise: 152080, stopLossPaise: null, targetPricePaise: null },
     ]);
   });
 

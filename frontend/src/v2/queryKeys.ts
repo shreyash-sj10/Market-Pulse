@@ -3,6 +3,8 @@ export const queryKeys = {
   portfolioSummary: ["portfolio-summary"] as const,
   journal: ["journal"] as const,
   profile: ["profile"] as const,
+  /** Full GET /users/profile envelope (data + meta) for behavioral Profile page */
+  userProfileEnvelope: ["user-profile-envelope"] as const,
   trace: ["trace"] as const,
   /** Home attention rail: portfolio + market snapshot */
   attention: ["attention"] as const,

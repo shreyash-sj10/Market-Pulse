@@ -12,6 +12,8 @@ export interface ClosedTrade {
   verdict:     string | null;
   closedAt:    string | null;
   reflection?: string | null;
+  /** Self-reported mood on the opening leg, when stored. */
+  preTradeEmotionAtEntry?: string | null;
 }
 
 function closedAtToIso(v: unknown): string | null {
@@ -39,6 +41,7 @@ async function fetchClosedTrades(): Promise<ClosedTrade[]> {
     const actual = e.actual as Record<string, unknown> | undefined;
     const exitPaise = Number(e.exitPricePaise ?? actual?.exitPaise ?? 0);
     const surface = ls(e);
+    const mood = e.preTradeEmotionAtEntry;
     return {
       tradeId: String(e.tradeId ?? `${e.symbol}-${e.closedAt}`),
       symbol: String(e.symbol ?? ""),
@@ -47,6 +50,8 @@ async function fetchClosedTrades(): Promise<ClosedTrade[]> {
       pricePaise: exitPaise,
       pnlPaise: e.pnlPaise != null ? Number(e.pnlPaise) : null,
       pnlPct: e.pnlPct != null ? Number(e.pnlPct) : null,
+      preTradeEmotionAtEntry:
+        mood != null && String(mood).trim() ? String(mood).trim().toUpperCase() : null,
       verdict:
         e.verdict != null
           ? String(e.verdict)

@@ -1,6 +1,14 @@
+/**
+ * P1-C — Process-local background loop (setInterval). Safe with **one** API instance.
+ * Multiple Railway/web replicas each run this poller → duplicate claims / work (mitigated by
+ * idempotent handlers where possible). Scale-out: dedicated worker dyno, Redis locks, or
+ * BullMQ repeatable jobs. See `docs/BACKGROUND_WORKERS_SCALE.md`.
+ */
 const Outbox = require("../models/outbox.model");
 const { tradeQueue } = require("../queue/queue");
 const logger = require("../utils/logger");
+const { runWithTrace } = require("../context/traceContext");
+const { persistUserAnalyticsSnapshot } = require("../services/analytics.service");
 
 const POLL_MS = Number(process.env.OUTBOX_POLL_MS || 5000);
 const BATCH_SIZE = Number(process.env.OUTBOX_BATCH_SIZE || 50);
@@ -9,6 +17,8 @@ const MAX_BACKOFF_MS = Number(process.env.OUTBOX_BACKOFF_MAX_MS || 5 * 60 * 1000
 const RETRY_ALERT_THRESHOLD = Number(process.env.OUTBOX_RETRY_ALERT_THRESHOLD || 5);
 const PENDING_CRITICAL_THRESHOLD = Number(process.env.OUTBOX_PENDING_CRITICAL_THRESHOLD || 500);
 const STUCK_PROCESSING_MS = Number(process.env.OUTBOX_STUCK_PROCESSING_MS || 60 * 1000);
+/** Max failures for `USER_ANALYTICS_SNAPSHOT` before marking outbox row FAILED (then operator / DLQ). */
+const ANALYTICS_SNAPSHOT_MAX_RETRY = Math.max(1, Number(process.env.ANALYTICS_SNAPSHOT_MAX_RETRY || 3));
 let workerTimer = null;
 
 const computeBackoffMs = (attempts) => {
@@ -97,6 +107,70 @@ const markCompleted = async (job, latencyMs) => {
   );
 };
 
+/**
+ * Synchronous path: portfolio analytics (no BullMQ). Uses `retryCount` for bounded retries.
+ */
+const processUserAnalyticsSnapshotOutboxJob = async (job) => {
+  const startMs = Date.now();
+  const userId = job.payload?.userId;
+  const traceId = job.payload?.traceId || `outbox-${String(job._id)}`;
+  try {
+    await runWithTrace({ traceId, userId: userId || null }, () => persistUserAnalyticsSnapshot(userId));
+    await markCompleted(job, Date.now() - startMs);
+    logger.info({
+      action: "USER_ANALYTICS_SNAPSHOT_OUTBOX_COMPLETED",
+      jobId: String(job._id),
+      userId: String(userId),
+      retryCount: job.retryCount ?? 0,
+      latencyMs: Date.now() - startMs,
+    });
+  } catch (err) {
+    const latencyMs = Date.now() - startMs;
+    const retryCount = (job.retryCount ?? 0) + 1;
+    const hardFail = retryCount > ANALYTICS_SNAPSHOT_MAX_RETRY;
+    await Outbox.updateOne(
+      { _id: job._id, status: "PROCESSING" },
+      {
+        $set: hardFail
+          ? {
+              status: "FAILED",
+              failedAt: new Date(),
+              processingStartedAt: null,
+              lastError: err.message,
+              latencyMs,
+              retryCount,
+            }
+          : {
+              status: "PENDING",
+              retryCount,
+              nextAttemptAt: new Date(Date.now() + computeBackoffMs(Math.max(1, retryCount))),
+              processingStartedAt: null,
+              lastError: err.message,
+              latencyMs,
+            },
+      }
+    );
+    if (hardFail) {
+      logger.error({
+        action: "USER_ANALYTICS_SNAPSHOT_OUTBOX_EXHAUSTED",
+        jobId: String(job._id),
+        userId: String(userId),
+        retryCount,
+        message: err.message,
+      });
+    } else {
+      logger.warn({
+        action: "USER_ANALYTICS_SNAPSHOT_OUTBOX_RETRY_SCHEDULED",
+        jobId: String(job._id),
+        userId: String(userId),
+        retryCount,
+        nextBackoffMs: computeBackoffMs(Math.max(1, retryCount)),
+        message: err.message,
+      });
+    }
+  }
+};
+
 const markFailedOrRetry = async (job, error, latencyMs) => {
   const willRetry = job.attempts < job.maxAttempts;
   const nextAttemptAt = new Date(Date.now() + computeBackoffMs(job.attempts));
@@ -123,6 +197,7 @@ const markFailedOrRetry = async (job, error, latencyMs) => {
   );
 
   const logPayload = {
+    traceId: job.payload?.traceId,
     jobId: String(job._id),
     jobType: job.type,
     status: willRetry ? "PENDING" : "FAILED",
@@ -140,36 +215,53 @@ const markFailedOrRetry = async (job, error, latencyMs) => {
 };
 
 const processSingleJob = async (job) => {
+  if (job.type === "USER_ANALYTICS_SNAPSHOT") {
+    await processUserAnalyticsSnapshotOutboxJob(job);
+    return;
+  }
+
   const startMs = Date.now();
+  const traceId = job.payload?.traceId || `outbox-${String(job._id)}`;
   try {
-    const queueResult = await tradeQueue.add(job.type, {
-      ...job.payload,
-      outboxJobId: String(job._id),
-    }, {
-      removeOnComplete: true,
-      removeOnFail: false,
-      attempts: 1,
-    });
+    const isHeavyAsyncJob =
+      job.type === "TRADE_CLOSED" || job.type === "USER_ANALYTICS_RECALIBRATE";
+    const queueResult = await runWithTrace(
+      { traceId, userId: job.payload?.userId || null },
+      () =>
+        tradeQueue.add(
+          job.type,
+          {
+            ...job.payload,
+            outboxJobId: String(job._id),
+          },
+          {
+            removeOnComplete: true,
+            removeOnFail: false,
+            attempts: isHeavyAsyncJob ? 5 : 1,
+            backoff: isHeavyAsyncJob ? { type: "exponential", delay: 4000 } : undefined,
+          }
+        )
+    );
     const latencyMs = Date.now() - startMs;
-    if (queueResult?.status === "PROCESSED_SYNCHRONOUSLY") {
-      await markCompleted(job, latencyMs);
-      logger.info({
-        action: "OUTBOX_JOB_COMPLETED",
-        jobId: String(job._id),
-        jobType: job.type,
-        status: "COMPLETED",
-        attempts: job.attempts,
-        latency: latencyMs,
-        error: null,
-      });
-      return;
-    }
+
+    // H-01 FIX: Always mark the outbox job COMPLETED after a successful queue.add().
+    // Previously, only PROCESSED_SYNCHRONOUSLY results called markCompleted(); all
+    // other successful enqueues left the job in PROCESSING state. After
+    // STUCK_PROCESSING_MS the recovery loop re-set it to PENDING and re-enqueued
+    // the job, creating an infinite duplication loop for every SELL trade.
+    await markCompleted(job, latencyMs);
+
+    const action =
+      queueResult?.status === "PROCESSED_SYNCHRONOUSLY"
+        ? "OUTBOX_JOB_COMPLETED"
+        : "OUTBOX_JOB_ENQUEUED_AND_COMPLETED";
 
     logger.info({
-      action: "OUTBOX_JOB_ENQUEUED",
+      action,
+      traceId,
       jobId: String(job._id),
       jobType: job.type,
-      status: "PROCESSING",
+      status: "COMPLETED",
       attempts: job.attempts,
       latency: latencyMs,
       error: null,
@@ -222,7 +314,17 @@ const startOutboxWorker = () => {
   if (workerTimer) return;
   workerTimer = setInterval(processOutbox, POLL_MS);
   processOutbox().catch(() => null);
-  logger.info("[Outbox Worker] Polling started.");
+  logger.info({
+    service: "outbox.worker",
+    step: "POLLING_STARTED",
+    status: "SUCCESS",
+    data: { pollMs: POLL_MS },
+    timestamp: new Date().toISOString(),
+  });
 };
 
-module.exports = { startOutboxWorker, processOutbox };
+module.exports = {
+  startOutboxWorker,
+  processOutbox,
+  __testables: { processUserAnalyticsSnapshotOutboxJob },
+};

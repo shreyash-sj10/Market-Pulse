@@ -15,3 +15,8 @@ export const getMe = async () => {
   const response = await api.get("/users/me");
   return normalizeResponse(response);
 };
+
+export const logoutUser = async () => {
+  const response = await api.post("/auth/logout");
+  return normalizeResponse(response);
+};

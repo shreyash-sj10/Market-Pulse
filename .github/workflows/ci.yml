@@ -45,10 +45,12 @@ jobs:
         run: npm test --if-present
         working-directory: backend
         env:
+          NODE_ENV: test
+          REQUIRE_DB_TESTS: "1"
+          MONGO_URI: mongodb://localhost:27017/tradingsim_test
           MONGODB_URI: mongodb://localhost:27017/tradingsim_test
           JWT_SECRET: ci_test_jwt_secret
           JWT_REFRESH_SECRET: ci_test_refresh_secret
-          NODE_ENV: test
 
   frontend-ci:
     name: Frontend Build Check

@@ -14,6 +14,8 @@ export type JournalLogVm = {
   id: string;
   symbol: string;
   dateLabel: string;
+  /** Mood at opening leg when recorded (self-report). */
+  preTradeEmotion?: string | null;
   behaviorTags: ("impulsive" | "systematic")[];
   centerKind: "mistake" | "observation";
   centerPrimary: string;
@@ -460,6 +462,7 @@ export type JournalRowSource = {
   symbol: string;
   sortTime: number;
   dateLabel: string;
+  preTradeEmotion?: string | null;
   mistake: string;
   correction: string;
   insight: string;
@@ -497,6 +500,7 @@ export function journalRowToLogVm(row: JournalRowSource): JournalLogVm {
     id: `${row.symbol || "?"}-${row.sortTime}`,
     symbol: row.symbol || "—",
     dateLabel: row.dateLabel,
+    preTradeEmotion: row.preTradeEmotion ?? null,
     behaviorTags,
     centerKind,
     centerPrimary,

@@ -1,5 +1,15 @@
-const { isMarketOpen } = require("../utils/marketHours.util");
+const {
+  isMarketOpen,
+  getMarketClockState,
+  isAfterMarketClose,
+  isSquareoffWindowEligible,
+  getSquareoffMinutesIst,
+} = require("../utils/marketHours.util");
 
 module.exports = {
-  isMarketOpen
+  isMarketOpen,
+  getMarketClockState,
+  isAfterMarketClose,
+  isSquareoffWindowEligible,
+  getSquareoffMinutesIst,
 };

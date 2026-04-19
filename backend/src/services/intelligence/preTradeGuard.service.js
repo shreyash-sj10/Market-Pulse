@@ -1,5 +1,7 @@
 const newsEngine = require("../news/news.engine");
 const Trade = require("../../models/trade.model");
+const { normalizeTrade } = require("../../domain/trade.contract");
+const { mapToClosedTrades } = require("../../domain/closedTrade.mapper");
 const adaptiveEngine = require("./adaptiveEngine.service");
 const { explainDecision } = require("../aiExplanation.service");
 const { issueDecisionToken } = require("./preTradeAuthority.store");
@@ -12,23 +14,43 @@ const {
 const { isValidStatus } = require("../../constants/intelligenceStatus");
 const { SYSTEM_CONFIG } = require("../../config/system.config");
 const logger = require("../../utils/logger");
+const AppError = require("../../utils/AppError");
 
 /**
  * PRE-TRADE DECISION SNAPSHOT ENGINE
  */
-const getBehavioralFlags = async (user) => {
+const getBehavioralFlags = async (user, currentSymbol) => {
   const cfg = SYSTEM_CONFIG.intelligence.preTrade;
   // PHASE 2 FIX: Derive revenge window from the single canonical config value.
   // behavior.engine.js also uses cfg.behavior.revengeWindowMinutes — same value.
   const revengeWindowMs = SYSTEM_CONFIG.behavior.revengeWindowMinutes * 60 * 1000;
-  const lastTrades = await Trade.find({ user: user._id }).sort({ createdAt: -1 }).limit(5);
+  const lastTrades = await Trade.find({ user: user._id }).sort({ createdAt: -1 }).limit(10);
   const flags = [];
-  
-  if (lastTrades.length > 0) {
-    const last = lastTrades[0];
-    if (last.pnlPaise < 0 && (Date.now() - new Date(last.createdAt).getTime() < revengeWindowMs)) {
-      flags.push("REVENGE_TRADING_RISK");
+
+  // H-02 FIX: Only check SELL trades for pnlPaise — BUY trades have pnlPaise=null,
+  // and `null < 0` evaluates to false in JS, silently skipping the revenge check.
+  // H-03 FIX: Only flag revenge for the SAME symbol (mirrors behavior.engine.js
+  // PHASE 4 fix). A loss on RELIANCE should not block a new trade on INFY.
+  const normalizedCurrentSymbol = currentSymbol
+    ? String(currentSymbol).toUpperCase().trim().replace(/\.(NS|BO)$/, "")
+    : null;
+
+  const lastRelevantSell = lastTrades.find((t) => {
+    if (t.type !== "SELL") return false;
+    if (typeof t.pnlPaise !== "number") return false;
+    if (normalizedCurrentSymbol) {
+      const tradeSymbol = String(t.symbol || "").toUpperCase().trim().replace(/\.(NS|BO)$/, "");
+      if (tradeSymbol !== normalizedCurrentSymbol) return false;
     }
+    return true;
+  });
+
+  if (
+    lastRelevantSell &&
+    lastRelevantSell.pnlPaise < 0 &&
+    Date.now() - new Date(lastRelevantSell.createdAt).getTime() < revengeWindowMs
+  ) {
+    flags.push("REVENGE_TRADING_RISK");
   }
   return flags;
 };
@@ -36,7 +58,7 @@ const getBehavioralFlags = async (user) => {
 const checkTradeRisk = async (tradeRequest, user) => {
   const cfg = SYSTEM_CONFIG.intelligence.preTrade;
   const { 
-    symbol, type, quantity, userThinking, pricePaise, stopLossPaise, targetPricePaise,
+    symbol, type, quantity, userThinking, pricePaise, stopLossPaise, targetPricePaise, productType,
   } = tradeRequest;
   const finalPrice = Math.round(Number(pricePaise || 0));
   const finalSL = stopLossPaise === undefined || stopLossPaise === null ? null : Math.round(Number(stopLossPaise));
@@ -55,8 +77,15 @@ const checkTradeRisk = async (tradeRequest, user) => {
   const marketStatus = newsResponse?.status || (consensus ? "VALID" : "UNAVAILABLE");
 
   // LAYER 2: BEHAVIORAL ANALYSIS
-  const behavioralFlags = await getBehavioralFlags(user);
+  const behavioralFlags = await getBehavioralFlags(user, symbol);
   const adaptiveProfile = await adaptiveEngine.getAdaptiveProfile(user._id);
+
+  const history = await Trade.find({ user: user._id })
+    .sort({ createdAt: -1 })
+    .limit(100)
+    .lean();
+  const chronHistory = [...history].reverse();
+  const closedTrades = mapToClosedTrades(chronHistory.map((t) => normalizeTrade(t)));
 
   // LAYER 3: ENTRY ENGINE (Decision ownership, deterministic inputs only)
   const entryDecisionBase = evaluateEntryDecision({
@@ -73,6 +102,7 @@ const checkTradeRisk = async (tradeRequest, user) => {
     behaviorContext: {
       status: "VALID",
       flags: behavioralFlags,
+      closedTrades,
     },
   });
 
@@ -97,11 +127,12 @@ const checkTradeRisk = async (tradeRequest, user) => {
     behaviorContext: {
       status: "VALID",
       flags: behavioralFlags,
+      closedTrades,
     },
   });
 
   if (type === "BUY" && entryDecision.planValidation && !entryDecision.planValidation.isValid) {
-    throw new Error(entryDecision.planValidation.errorCode);
+    throw new AppError(entryDecision.planValidation.errorCode || "INVALID_TRADE_PLAN", 400);
   }
 
   const rr = type === "BUY" ? entryDecision.rr : 0;
@@ -111,6 +142,7 @@ const checkTradeRisk = async (tradeRequest, user) => {
   // PHASE 1 FIX: Issue token FIRST — AI must never block trade authorization.
   const authority = await issueDecisionToken({
     symbol,
+    productType,
     pricePaise: finalPrice,
     quantity,
     stopLossPaise: finalSL,
@@ -119,15 +151,27 @@ const checkTradeRisk = async (tradeRequest, user) => {
     userId: user._id,
   });
 
+  const marketAlignment =
+    marketStatus === "UNAVAILABLE" || consensus?.verdict == null
+      ? "UNAVAILABLE"
+      : consensus.verdict === type
+        ? "ALIGNED"
+        : "CONFLICTED";
+
   // AI runs in the BACKGROUND — fire-and-forget. Token is already issued.
   const decisionSignals = {
     verdict,
     score: finalScore,
+    marketAlignment,
+    ruleVerdict: verdict,
     marketSignals: { direction: consensus?.verdict, confidence: consensus?.confidence },
     behaviorSignals: { risk: adapted.adaptedRiskLevel, score: 100 - (behavioralFlags.length * cfg.behavioralScorePenaltyPerFlag) },
     riskSignals: { level: verdict === "BUY" ? "LOW" : "HIGH", score: finalScore },
   };
-  explainDecision(decisionSignals).catch(() => null); // Non-blocking: result not awaited
+  // Non-blocking: explainDecision may be missing or sync under tests; never assume a Promise.
+  Promise.resolve()
+    .then(() => explainDecision(decisionSignals))
+    .catch(() => null);
 
   logger.info({
     action: "PRE_TRADE_AUDIT",
@@ -146,6 +190,8 @@ const checkTradeRisk = async (tradeRequest, user) => {
     token: authority.token,
     expiresAt: authority.expiresAt,
     snapshot: {
+       /** Required by intelligence.route for deriveDecisionState / clients. */
+       verdict,
        market: {
           direction: consensus?.verdict ?? null,
           impact: consensus?.impact ?? null,
@@ -186,9 +232,11 @@ const checkTradeRisk = async (tradeRequest, user) => {
              reasoning: behavioralFlags.length === 0 ? "No active behavioral biases detected." : `Detected: ${behavioralFlags.join(", ").replace(/_/g, " ")}. Emotional friction is high.`
           },
           rrQuality: {
-             score: rr >= cfg.optimalRrThreshold ? cfg.rrOptimalScore : rr >= cfg.lowRrThreshold ? cfg.rrAcceptableScore : cfg.rrPoorScore,
-             status: rr >= cfg.optimalRrThreshold ? "OPTIMAL" : rr >= cfg.lowRrThreshold ? "ACCEPTABLE" : "POOR",
-             reasoning: `Reward-to-Risk ratio of ${rr} ${rr >= cfg.lowRrThreshold ? "meets" : "fails"} professional capital preservation standards.`
+             score: rr == null ? null : rr >= cfg.optimalRrThreshold ? cfg.rrOptimalScore : rr >= cfg.lowRrThreshold ? cfg.rrAcceptableScore : cfg.rrPoorScore,
+             status: rr == null ? "UNAVAILABLE" : rr >= cfg.optimalRrThreshold ? "OPTIMAL" : rr >= cfg.lowRrThreshold ? "ACCEPTABLE" : "POOR",
+             reasoning: rr == null
+               ? "Reward-to-Risk ratio unavailable — insufficient market data to complete risk evaluation."
+               : `Reward-to-Risk ratio of ${rr} ${rr >= cfg.lowRrThreshold ? "meets" : "fails"} professional capital preservation standards.`
           }
        },
        setup: {
@@ -206,11 +254,11 @@ const checkTradeRisk = async (tradeRequest, user) => {
        },
        risk: {
           score: finalScore,
-          rr,
+          rr: rr ?? null,
           verdict,
           level: verdict === "BUY" ? "OPTIMAL" : verdict === "WAIT" ? "CAUTION" : "EXTREME",
           status: entryDecision.status || "VALID",
-          reason: entryDecision.reason,
+          reason: entryDecision.reason || (entryDecision.reasons?.[0] ?? null),
        },
        bias: null,
        // AI explanation computed async in background after token issuance.

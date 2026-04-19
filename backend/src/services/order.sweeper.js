@@ -1,3 +1,7 @@
+/**
+ * P1-C — Process-local `setInterval` sweeper (started from `server.js`). Same multi-instance
+ * caveats as outbox / SL monitor / execution executor. See `docs/BACKGROUND_WORKERS_SCALE.md`.
+ */
 const Trade = require("../models/trade.model");
 const User = require("../models/user.model");
 const { runInTransaction } = require("../utils/transaction");

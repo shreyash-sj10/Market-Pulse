@@ -4,10 +4,15 @@ const Trade = require("../models/trade.model");
 const marketService = require("./marketData.service");
 const tradeService = require("./trade.service");
 const logger = require("../utils/logger");
+const { buildSystemRequestId } = require("../utils/systemRequestId");
+const { acquirePreLock } = require("../utils/systemPreLock");
 const { issueDecisionToken } = require("./intelligence/preTradeAuthority.store");
-
+const { isMarketOpen, isSquareoffWindowEligible } = require("./marketHours.service");
 
 /**
+ * P1-C — Process-local background loop (setInterval). One web instance = one monitor.
+ * Multiple replicas run duplicate scans. See `docs/BACKGROUND_WORKERS_SCALE.md`.
+ *
  * Periodically monitors all user holdings and executes Stop Loss orders
  * if the current market quote drops below the defined SL threshold.
  */
@@ -17,18 +22,18 @@ class StopLossMonitor {
     this.isProcessing = false;
   }
 
-  async start(intervalMs = 30000) { // Default 30 seconds
+  async start(intervalMs = 30000) {
     if (this.interval) return;
-    
-    console.log(`[SL-Monitor] Starting Stop Loss Monitoring every ${intervalMs}ms...`);
-    
+
+    logger.info({ event: "SL_MONITOR_START", intervalMs });
+
     this.interval = setInterval(async () => {
       if (this.isProcessing) return;
       this.isProcessing = true;
       try {
         await this.checkAllStopLosses();
       } catch (err) {
-        console.error("[SL-Monitor] Error in monitoring cycle:", err.message);
+        logger.error({ event: "SL_MONITOR_CYCLE_ERROR", message: err.message });
       } finally {
         this.isProcessing = false;
       }
@@ -44,6 +49,9 @@ class StopLossMonitor {
 
   async checkAllStopLosses() {
     try {
+      if (!isMarketOpen()) return;
+      if (isSquareoffWindowEligible()) return;
+
       // 1. Find all users who have at least one holding
       // In MongoDB, checking if a Map field has at least one entry can be done by checking size of object keys if stored as object,
       // but Mongoose Map is stored as a subdocument object. A simple existence check is usually enough to start.
@@ -75,20 +83,41 @@ class StopLossMonitor {
           const currentQuotePaise = resolvedQuote?.pricePaise;
           if (!currentQuotePaise) continue;
 
-          const latestEntry = await Trade.findOne({ user: user._id, symbol, type: "BUY" }).sort({ createdAt: -1 });
-          if (!latestEntry) continue;
+          // Aggregate SL/target across ALL open BUY trades for this holding.
+          // Using minimum SL (most conservative — triggers earliest to protect full position)
+          // and minimum target (take profit at first achieved target level).
+          // This correctly handles averaged positions where different buys have different levels.
+          const openBuyTrades = await Trade.find({
+            user: user._id,
+            symbol,
+            type: "BUY",
+            status: { $in: ["EXECUTED", "EXECUTED_PENDING_REFLECTION"] },
+          }).select("stopLossPaise targetPricePaise").lean();
 
-          const stopLossPaise = latestEntry.stopLossPaise;
-          const targetPricePaise = latestEntry.targetPricePaise;
+          if (!openBuyTrades.length) continue;
+
+          const validSLs = openBuyTrades
+            .map((t) => t.stopLossPaise)
+            .filter((sl) => sl && sl > 0);
+          const validTargets = openBuyTrades
+            .map((t) => t.targetPricePaise)
+            .filter((tp) => tp && tp > 0);
+
+          // No stop loss set on any open trade — nothing to monitor.
+          if (!validSLs.length && !validTargets.length) continue;
+
+          const stopLossPaise = validSLs.length ? Math.min(...validSLs) : null;
+          const targetPricePaise = validTargets.length ? Math.min(...validTargets) : null;
           let triggerHit = false;
           let exitReason = "";
           let strategyType = "";
 
+          /** Reserve quantity already tied up in an in-flight sell (not legacy "PENDING"). */
           const pendingSells = await Trade.find({
             user: user._id,
             symbol,
             type: "SELL",
-            status: "PENDING"
+            status: { $in: ["PENDING_EXECUTION", "PROCESSING"] },
           });
 
           const pendingSellQuantity = pendingSells.reduce((sum, trade) => sum + (trade.quantity || 0), 0);
@@ -111,10 +140,35 @@ class StopLossMonitor {
 
           if (triggerHit) {
             logger.info(`[Guardian] ${strategyType} Tripped for ${user.email} | ${symbol} at ${currentQuotePaise} (${resolvedQuote.source})`);
-            
+
+            const idemType = strategyType === "STOP LOSS" ? "SL" : "TARGET";
+            const requestId = buildSystemRequestId({
+              type: idemType,
+              userId: user._id,
+              symbol,
+            });
+            const lockKey = `lock:${requestId}`;
+            const slCooldownKey = `SL_LOCK:${userId}:${symbol}`;
             try {
+              const cooldownOk = await acquirePreLock(slCooldownKey, 30);
+              if (!cooldownOk) {
+                logger.info({ event: "SL_COOLDOWN_ACTIVE", userId, symbol });
+                continue;
+              }
+
+              const acquired = await acquirePreLock(lockKey);
+              if (!acquired) {
+                logger.info(`[Guardian] Pre-lock busy for ${lockKey}, skipping duplicate worker tick.`);
+                continue;
+              }
+
+              if (idemType === "SL") {
+                logger.info({ event: "SL_TRIGGERED", userId, symbol });
+              }
+
               const authority = await issueDecisionToken({
                 symbol,
+                productType: data.tradeType,
                 pricePaise: currentQuotePaise,
                 quantity: availableQuantity,
                 stopLossPaise: null,
@@ -125,12 +179,13 @@ class StopLossMonitor {
 
               await tradeService.executeSellTrade(user, {
                 symbol,
+                productType: data.tradeType,
                 quantity: availableQuantity,
                 pricePaise: currentQuotePaise,
                 token: authority.token,
-                requestId: `${user._id}:${symbol}:${Date.now()}`,
+                requestId,
                 reason: exitReason,
-                userThinking: `The AI Guardian automatically closed this position as the ${strategyType.toLowerCase()} threshold was breached. This action preserves your capital and adheres to your predefined risk parameters.`
+                userThinking: `The AI Guardian automatically closed this position as the ${strategyType.toLowerCase()} threshold was breached. This action preserves your capital and adheres to your predefined risk parameters.`,
               });
             } catch (sellErr) {
               logger.error(`[Guardian] Sell execution failure for ${symbol}: ${sellErr.message}`);

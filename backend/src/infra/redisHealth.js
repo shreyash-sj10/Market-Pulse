@@ -1,3 +1,5 @@
+const logger = require("../utils/logger");
+
 let redisAvailable = true;
 let warned = false;
 
@@ -6,7 +8,13 @@ const setRedisDown = () => {
 
   // Use a throttle to prevent spam even if reset multiple times
   if (!warned) {
-    console.warn("⚠ Redis unavailable — running in degraded mode");
+    logger.warn({
+      service: "redisHealth",
+      step: "REDIS_UNAVAILABLE",
+      status: "WARN",
+      data: { message: "Redis unavailable — degraded mode" },
+      timestamp: new Date().toISOString(),
+    });
     warned = true;
     
     // Auto-reset warned flag after 5 mins to allow periodic "still down" reminders

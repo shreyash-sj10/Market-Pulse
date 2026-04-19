@@ -1,5 +1,3 @@
-import type { ReactNode } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
 import type { MarketStock } from "../../../hooks/useMarketExplorer";
 import type { MarketDecisionAction } from "../sortMarketScan";
 import { formatMarketPrice, marketExchangeLabel } from "../marketsFormat";
@@ -9,21 +7,10 @@ export type MarketRowProps = {
   stock: MarketStock;
   decisionAction: MarketDecisionAction;
   active: boolean;
-  expanded: boolean;
   onSelect: () => void;
-  onToggleExpand: () => void;
-  expandContent?: ReactNode;
 };
 
-export default function MarketRow({
-  stock,
-  decisionAction,
-  active,
-  expanded,
-  onSelect,
-  onToggleExpand,
-  expandContent,
-}: MarketRowProps) {
+export default function MarketRow({ stock, decisionAction, active, onSelect }: MarketRowProps) {
   const sig = scannerSignalFromStock(stock);
   const chgCls = stock.changePercent >= 0 ? "market-feed__chg--up" : "market-feed__chg--down";
   const trendCls =
@@ -57,21 +44,11 @@ export default function MarketRow({
           {stock.changePercent > 0 ? "+" : ""}
           {stock.changePercent.toFixed(2)}%
         </div>
-        <div className={`market-feed__cell market-feed__cell--signal ${sig.cls}`}>{sig.label}</div>
+        <div className="market-feed__cell market-feed__cell--signal">
+          <span className={`scanner-signal-tag ${sig.cls}`}>{sig.action}</span>
+        </div>
         <div className={`market-feed__cell market-feed__cell--trend ${trendCls}`}>{stock.trend}</div>
-        <button
-          type="button"
-          className="market-feed__expand"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleExpand();
-          }}
-          aria-label={expanded ? "Collapse detail" : "Expand detail"}
-        >
-          {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-        </button>
       </div>
-      {expanded && expandContent ? <div className="market-feed__expand-body">{expandContent}</div> : null}
     </div>
   );
 }

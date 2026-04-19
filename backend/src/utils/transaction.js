@@ -1,4 +1,5 @@
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
+const logger = require("./logger");
 
 /**
  * Execute a block of code within a Mongoose transaction with automatic retry
@@ -8,7 +9,7 @@ const mongoose = require('mongoose');
  *                          Receives 'session' as an argument.
  * @param {number} retries - Max number of retries (default 3).
  */
-const runInTransaction = async (work, retries = 3) => {
+const runInTransaction = async (work, retries = 8) => {
   let attempt = 0;
   
   while (attempt < retries) {
@@ -23,15 +24,29 @@ const runInTransaction = async (work, retries = 3) => {
       if (session.inTransaction()) {
         await session.abortTransaction();
       }
-      
-      const isTransient = error.hasErrorLabel && error.hasErrorLabel('TransientTransactionError');
+
+      const hasTransientLabel =
+        typeof error?.hasErrorLabel === "function" &&
+        (error.hasErrorLabel("TransientTransactionError") ||
+          error.hasErrorLabel("UnknownTransactionCommitResult"));
+      /** WiredTiger write races on the same document (e.g. concurrent BUY reserve same user). */
+      const isWriteConflict =
+        error?.code === 112 || /write conflict/i.test(String(error?.message || ""));
+
+      const isTransient = hasTransientLabel || isWriteConflict;
       attempt++;
-      
+
       if (isTransient && attempt < retries) {
-        console.warn(`[Transaction] Transient error, retrying attempt ${attempt + 1}...`);
+        logger.warn({
+          service: "transaction",
+          step: "TRANSACTION_RETRY",
+          status: "WARN",
+          data: { attempt, message: error?.message, code: error?.code },
+          timestamp: new Date().toISOString(),
+        });
         continue;
       }
-      
+
       throw error;
     } finally {
       session.endSession();

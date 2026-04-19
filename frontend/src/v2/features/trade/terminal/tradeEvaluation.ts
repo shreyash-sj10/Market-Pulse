@@ -32,9 +32,12 @@ export function buildTradeEvaluation(result: PreTradeResult): TradeEvaluation {
   const riskStatus = (snap.risk?.status || "").toUpperCase();
   const hardBlocked =
     v === "BLOCK" ||
+    v === "AVOID" ||
     snap.risk?.verdict === "BLOCK" ||
+    snap.risk?.verdict === "AVOID" ||
     riskStatus === "FAIL" ||
     riskStatus === "INVALID" ||
+    riskStatus === "UNAVAILABLE" ||
     !token;
 
   const messages: string[] = [];

@@ -17,6 +17,12 @@ const outboxSchema = new mongoose.Schema({
     default: "PENDING",
     index: true,
   },
+  /** Analytics snapshot jobs: increments on processing failure (cap separate from `attempts`). */
+  retryCount: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
   attempts: {
     type: Number,
     default: 0,

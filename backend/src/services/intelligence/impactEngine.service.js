@@ -161,7 +161,7 @@ const processSignal = async (rawItem, userContext = {}) => {
 
     return enriched;
   } catch (error) {
-    console.error(`[IntelligencePipeline] Critical failure at stage X: ${error.message}`);
+    require("../../utils/logger").error({ event: "IMPACT_ENGINE_FAILURE", message: error.message });
     return null;
   }
 };

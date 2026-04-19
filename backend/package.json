@@ -12,11 +12,18 @@
     "test:coverage": "jest --coverage --runInBand --forceExit tests/unit src/middlewares/__tests__ src/services/__tests__",
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
+    "verify:env": "node scripts/verify-env.js",
     "migrate:strict": "node scripts/strictMigration.js",
     "migrate:holdings": "node scripts/migrateHoldingsToCollection.js",
+    "migrate:holding-trade-type": "node scripts/migrateHoldingTradeType.js",
     "seed:portfolio": "node scripts/seedPortfolioDemo.js"
   },
   "jest": {
+    "globalSetup": "<rootDir>/tests/global/jest-mongo-global-setup.js",
+    "globalTeardown": "<rootDir>/tests/global/jest-mongo-global-teardown.js",
+    "setupFilesAfterEnv": [
+      "<rootDir>/tests/setup/jest-env-mongo.js"
+    ],
     "testEnvironment": "node",
     "testMatch": [
       "**/__tests__/**/*.test.js",
@@ -106,11 +113,16 @@
     "decimal.js": "^10.6.0",
     "dotenv": "^17.2.3",
     "express": "^4.22.1",
+    "express-mongo-sanitize": "^2.2.0",
     "express-rate-limit": "^8.3.2",
+    "helmet": "^8.1.0",
     "ioredis": "^5.10.1",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.1.2",
     "morgan": "^1.10.1",
+    "p-limit": "^3.1.0",
+    "p-queue": "^6.6.2",
+    "rate-limit-redis": "^4.3.1",
     "redis": "^5.11.0",
     "uuid": "^13.0.0",
     "winston": "^3.19.0",
@@ -120,6 +132,8 @@
   },
   "devDependencies": {
     "jest": "^30.3.0",
+    "kill-port": "^2.0.1",
+    "mongodb-memory-server": "^10.4.3",
     "nodemon": "^3.1.11",
     "supertest": "^7.2.2"
   }

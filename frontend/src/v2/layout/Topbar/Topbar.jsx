@@ -2,10 +2,7 @@ import { LogOut } from "lucide-react";
 import { useAuth } from "../../../features/auth/AuthContext.jsx";
 import { useTickerData } from "../../hooks/useTickerData";
 import { usePortfolioSummary } from "../../hooks/usePortfolioSummary";
-import { formatINR, fromPaise } from "../../../utils/currency.utils";
-import { openDecisionPanel } from "../../trade-flow";
-import { useNavigate } from "react-router-dom";
-import { ROUTES } from "../../routing/routes";
+import { formatINR } from "../../../utils/currency.utils";
 
 function TickerBand({ items }) {
   if (!items || items.length === 0) return null;
@@ -37,23 +34,12 @@ function TickerBand({ items }) {
 }
 
 export default function Topbar() {
-  const { logout }  = useAuth();
-  const { ticker }  = useTickerData();
-  const { summary } = usePortfolioSummary();
-  const navigate    = useNavigate();
+  const { logout } = useAuth();
+  const { ticker } = useTickerData();
+  const { summary, isLoading: summaryLoading } = usePortfolioSummary();
 
-  const balanceRaw = summary?.balancePaise ?? 0;
-  const balance    = balanceRaw > 0 ? formatINR(balanceRaw) : "—";
-
-  function handleExecute() {
-    navigate(ROUTES.markets);
-    setTimeout(() => {
-      openDecisionPanel("", {
-        decision: { action: "GUIDE", confidence: 0, reason: "" },
-        warnings: [],
-      });
-    }, 100);
-  }
+  const balancePaise = Number(summary?.balancePaise ?? 0);
+  const cashDisplay = summaryLoading ? "…" : formatINR(Number.isFinite(balancePaise) ? balancePaise : 0);
 
   return (
     <header className="topbar">
@@ -75,17 +61,10 @@ export default function Topbar() {
         </span>
         <span
           className="topbar-balance"
-          title="Cash only (withdrawable). Home → Net equity adds the market value of open positions."
+          title="Cash only (withdrawable). Net equity on Home includes open positions."
         >
-          Cash {balance}
+          Cash <span className="topbar-balance__amount">{cashDisplay}</span>
         </span>
-        <button
-          type="button"
-          className="topbar-btn-execute"
-          onClick={handleExecute}
-        >
-          + Execute
-        </button>
         <button
           type="button"
           className="topbar-btn-icon"

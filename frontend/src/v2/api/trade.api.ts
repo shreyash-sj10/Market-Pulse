@@ -2,12 +2,15 @@ import api from "./api.js";
 
 export interface PreTradeParams {
   side: "BUY" | "SELL";
+  productType?: "DELIVERY" | "INTRADAY";
   symbol: string;
   quantity: number;
   pricePaise: number;
   stopLossPaise?: number;
   targetPricePaise?: number;
   userThinking?: string;
+  /** Optional at evaluate — forwarded when set for richer behaviour context. */
+  preTradeEmotion?: string;
 }
 
 export interface PreTradeResult {
@@ -40,6 +43,7 @@ export interface PreTradeResult {
 
 export interface ExecuteTradeParams {
   side: "BUY" | "SELL";
+  productType?: "DELIVERY" | "INTRADAY";
   symbol: string;
   quantity: number;
   pricePaise: number;
@@ -49,17 +53,35 @@ export interface ExecuteTradeParams {
   decisionContext?: Record<string, unknown>;
   /** Recorded on the trade / trace path (optional but recommended). */
   userThinking?: string;
+  /** Required at execution — persisted for behavioural analytics. */
+  preTradeEmotion: string;
+  /** Stable per user action; retries MUST reuse the same key until a terminal response. */
+  idempotencyKey?: string;
 }
 
 export interface ExecuteTradeResult {
   success: boolean;
   state: string;
   data: {
+    tradeId?: string | null;
     symbol: string;
     side: string;
+    productType?: "DELIVERY" | "INTRADAY";
     quantity: number;
     pricePaise: number;
+    executionPricePaise?: number;
+    totalValuePaise?: number;
     status: string;
+    updatedBalance?: number;
+    executionBalance?: number;
+    currentBalance?: number;
+    reflectionStatus?: string | null;
+  };
+  meta?: {
+    systemStateVersion?: number;
+    /** Present when replay used trade fallback — balances may diverge. */
+    replayApproximateBalance?: boolean;
+    traceId?: string;
   };
 }
 
@@ -67,6 +89,7 @@ export interface ExecuteTradeResult {
 export async function runPreTrade(params: PreTradeParams): Promise<PreTradeResult> {
   const body: Record<string, unknown> = {
     side:         params.side,
+    productType:  params.productType ?? "DELIVERY",
     symbol:       params.symbol,
     quantity:     params.quantity,
     pricePaise:   params.pricePaise,
@@ -77,6 +100,9 @@ export async function runPreTrade(params: PreTradeParams): Promise<PreTradeResul
     body.stopLossPaise     = params.stopLossPaise;
     body.targetPricePaise  = params.targetPricePaise;
   }
+  if (params.preTradeEmotion) {
+    body.preTradeEmotion = params.preTradeEmotion;
+  }
 
   const res = await api.post("/intelligence/pre-trade", body);
   return res.data as PreTradeResult;
@@ -84,11 +110,12 @@ export async function runPreTrade(params: PreTradeParams): Promise<PreTradeResul
 
 /** Step 2: Execute the trade after pre-trade approval */
 export async function executeTrade(params: ExecuteTradeParams): Promise<ExecuteTradeResult> {
-  const idempotencyKey = crypto.randomUUID();
+  const idempotencyKey = params.idempotencyKey ?? crypto.randomUUID();
   const route = params.side === "BUY" ? "/trades/buy" : "/trades/sell";
 
   const body: Record<string, unknown> = {
     side:            params.side,
+    productType:     params.productType ?? "DELIVERY",
     symbol:          params.symbol,
     quantity:        params.quantity,
     pricePaise:      params.pricePaise,
@@ -96,6 +123,7 @@ export async function executeTrade(params: ExecuteTradeParams): Promise<ExecuteT
     decisionContext: params.decisionContext ?? { source: "NOESIS_PANEL", version: "v2" },
     userThinking:
       params.userThinking?.trim() || "Trade confirmed via NOESIS execution workspace",
+    preTradeEmotion: params.preTradeEmotion,
   };
 
   if (params.side === "BUY") {
@@ -110,4 +138,29 @@ export async function executeTrade(params: ExecuteTradeParams): Promise<ExecuteT
     },
   });
   return res.data as ExecuteTradeResult;
+}
+
+/** Poll async execution / reflection pipeline status (additive observability). */
+export async function getTradeExecutionStatus(tradeId: string) {
+  const res = await api.get(`/trades/execution-status/${tradeId}`);
+  return res.data as {
+    success: boolean;
+    data: {
+      tradeId: string;
+      tradeStatus: string;
+      reflectionStatus: string | null;
+      executionDerivedStatus: string;
+      outboxJobs: Array<{
+        id: string;
+        type: string;
+        status: string;
+        attempts: number;
+        maxAttempts: number;
+        lastError: string | null;
+        updatedAt?: string;
+        processingStartedAt?: string | null;
+      }>;
+    };
+    meta?: { traceId?: string; lastUpdated?: string };
+  };
 }

@@ -1,4 +1,5 @@
 import type { DecisionCardProps } from "../../components/decision/DecisionCard";
+import type { PendingOrderSummary } from "../../hooks/usePortfolioSummary";
 import { formatEntryInr } from "../home/mapHomeViewModel";
 
 export type PlanTier = "breach" | "at-risk" | "within-plan";
@@ -35,6 +36,7 @@ export type ClosedStripTrade = {
   pnlPaise: number | null;
   side: string;
   closedAt?: string | null;
+  preTradeEmotionAtEntry?: string | null;
 };
 
 type ClosedProps = {
@@ -43,7 +45,56 @@ type ClosedProps = {
   formatPnlInr: (paise: number) => string;
 };
 
-/** Closed history: same rhythm as active strips, neutral system readout (no risk tier). */
+/** Queued order (after-hours): same strip layout as active rows. */
+type PendingProps = {
+  order: PendingOrderSummary;
+  formatPriceInr: (paise: number) => string;
+  formatNotionalInr: (paise: number) => string;
+};
+
+/** Queued execution (e.g. order placed outside market hours). */
+export function PortfolioPendingStrip({ order, formatPriceInr, formatNotionalInr }: PendingProps) {
+  const base = (order.symbol || "").split(".")[0] || order.symbol;
+  const when = order.createdAt
+    ? new Date(order.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })
+    : "—";
+  const notional = order.totalValuePaise ?? 0;
+  const side = (order.side || "").toUpperCase();
+
+  return (
+    <article
+      className="portfolio-decision-strip portfolio-decision-strip--pending"
+      aria-label={`Pending order ${base}`}
+    >
+      <div className="portfolio-decision-strip__accent" aria-hidden />
+      <div className="portfolio-decision-strip__body">
+        <div className="portfolio-decision-strip__left">
+          <div className="portfolio-decision-strip__symbol">{base}</div>
+          <div className="portfolio-decision-strip__entry">
+            {side} · {order.quantity}u @ {formatPriceInr(order.pricePaise)}
+          </div>
+          <p className="portfolio-decision-strip__context portfolio-decision-strip__context--muted">
+            Submitted {when} — executes when the cash session is open.
+            {order.preTradeEmotion ? (
+              <span className="portfolio-strip-mood" title="Self-reported mood when you placed this order">
+                {" "}
+                · Mood: {order.preTradeEmotion}
+              </span>
+            ) : null}
+          </p>
+        </div>
+        <div className="portfolio-decision-strip__center">
+          <span className="portfolio-strip-badge portfolio-strip-badge--pending">Queued</span>
+          <div className="portfolio-strip__pnl portfolio-strip__pnl--flat" style={{ fontSize: "var(--text-sm)" }}>
+            {notional > 0 ? formatNotionalInr(notional) : "—"}
+          </div>
+        </div>
+        <div className="portfolio-decision-strip__right" />
+      </div>
+    </article>
+  );
+}
+
 export function PortfolioClosedStrip({ trade, formatExitInr, formatPnlInr }: ClosedProps) {
   const pnl = trade.pnlPct;
   const pnlPos = pnl != null && pnl > 0;
@@ -77,6 +128,12 @@ export function PortfolioClosedStrip({ trade, formatExitInr, formatPnlInr }: Clo
           <p className="portfolio-decision-strip__context portfolio-decision-strip__context--muted">
             Closed {date}
             {pnlMoney ? ` · ${pnlMoney}` : ""}
+            {trade.preTradeEmotionAtEntry ? (
+              <span className="portfolio-strip-mood" title="Self-reported mood when you opened">
+                {" "}
+                · Mood @ open: {trade.preTradeEmotionAtEntry}
+              </span>
+            ) : null}
           </p>
         </div>
         <div className="portfolio-decision-strip__center">

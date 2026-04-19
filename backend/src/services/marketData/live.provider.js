@@ -1,38 +1,27 @@
 const axios = require('axios');
 const YahooFinance = require('yahoo-finance2').default;
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
+const { getQuoteCache, setQuoteCache } = require("../../utils/marketQuoteCache");
+const { toYahooSymbol } = require("../../utils/symbol.utils");
+const logger = require("../../utils/logger");
 
-// Caching layer
-const cache = new Map();
-const CACHE_TTL = 30000; // 30 seconds
+const finnhubApiKey = () =>
+  process.env.FINNHUB_API_KEY || process.env.VITE_FINNHUB_API_KEY;
 
-/**
- * LIVE PROVIDER
- * Primary: Yahoo Finance (supports Indian stocks natively with .NS)
- * Fallback: Finnhub
- */
-/**
- * SYMBOL NORMALIZER
- * Logic: 
- * - If index (^), future (=F), or currency (=X), use as-is (uppercase).
- * - If already has dot (.), assume it has exchange suffix (uppercase).
- * - Otherwise, default to National Stock Exchange (.NS).
- */
-const toYahooSymbol = (symbol) => {
-  const s = symbol.toUpperCase().trim();
-  if (s.startsWith('^') || s.includes('.') || s.endsWith('=F') || s.endsWith('=X')) {
-    return s;
-  }
-  return `${s}.NS`;
+/** Indian equities on Finnhub use NSE:SYMBOL (INR). */
+const toFinnhubSymbol = (symbol) => {
+  const s = String(symbol || "").toUpperCase().trim();
+  const base = s.split(".")[0];
+  if (!base || base.startsWith("^") || base.includes("=F") || base.includes("=X")) return base;
+  return `NSE:${base}`;
 };
 
 const resolvePrice = async (symbol) => {
   const normalizedSymbol = toYahooSymbol(symbol);
-  
-  // 1. Check Cache
-  const cached = cache.get(normalizedSymbol);
-  if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
-    return { ...cached.data, source: 'CACHE' };
+
+  const cached = await getQuoteCache(normalizedSymbol);
+  if (cached?.tier === "HOT") {
+    return { ...cached.data, source: "CACHE" };
   }
 
   // 2. Try Primary (Yahoo)
@@ -44,36 +33,45 @@ const resolvePrice = async (symbol) => {
 
     const data = {
       symbol: quote.symbol,
-      pricePaise: Math.round(validPrice * 100), // Store as Paise
+      pricePaise: Math.round(validPrice * 100), // INR paise
       changePercent: Number((quote.regularMarketChangePercent || 0).toFixed(2)),
       source: 'REAL',
       isFallback: false
     };
-    cache.set(normalizedSymbol, { data, timestamp: Date.now() });
+    await setQuoteCache(normalizedSymbol, data);
     return data;
   } catch (primaryError) {
-    console.warn(`[LiveProvider] Primary fail for ${normalizedSymbol}, trying fallback.`);
+    logger.warn({
+      event: "LIVE_PROVIDER_YAHOO_FALLBACK",
+      symbol: normalizedSymbol,
+      message: primaryError?.message,
+    });
     
     // 3. Try Fallback (Finnhub)
     try {
-      const finnhubKey = process.env.VITE_FINNHUB_API_KEY;
-      const cleanSymbol = symbol.split('.')[0]; 
-      const res = await axios.get(`https://finnhub.io/api/v1/quote?symbol=${cleanSymbol}&token=${finnhubKey}`);
+      const key = finnhubApiKey();
+      if (!key) throw new Error("FINNHUB_API_KEY_MISSING");
+      const fhSym = toFinnhubSymbol(symbol);
+      const res = await axios.get(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(fhSym)}&token=${key}`);
       
       if (!res.data.c) throw new Error('NO_DATA_FROM_FALLBACK');
 
       const data = {
         symbol: normalizedSymbol,
-        pricePaise: Math.round(res.data.c * 100), // Store as Paise
+        pricePaise: Math.round(res.data.c * 100), // Finnhub NSE quote is INR; store paise
         changePercent: Number((res.data.dp || 0).toFixed(2)),
         source: 'FALLBACK',
         isFallback: true
       };
       
-      cache.set(normalizedSymbol, { data, timestamp: Date.now() });
+      await setQuoteCache(normalizedSymbol, data);
       return data;
     } catch (fallbackError) {
-      console.error(`[LiveProvider] CRITICAL: All providers failed for ${normalizedSymbol}`);
+      logger.error({
+        event: "LIVE_PROVIDER_ALL_FAILED",
+        symbol: normalizedSymbol,
+        message: fallbackError?.message,
+      });
       throw new Error(`MARKET_DATA_UNAVAILABLE: ${normalizedSymbol}`);
     }
   }
@@ -92,14 +90,15 @@ const getLivePricesBatch = async (symbols) => {
   const results = {};
   const needed = [];
 
-  normalizedSymbols.forEach(s => {
-    const cached = cache.get(s);
-    if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
+  for (const s of normalizedSymbols) {
+    /* eslint-disable no-await-in-loop */
+    const cached = await getQuoteCache(s);
+    if (cached?.tier === "HOT") {
       results[s] = cached.data;
     } else {
       needed.push(s);
     }
-  });
+  }
 
   if (needed.length === 0) return results;
 
@@ -109,23 +108,26 @@ const getLivePricesBatch = async (symbols) => {
     const quotesArray = Array.isArray(quotes) ? quotes : [quotes];
 
     quotesArray.forEach(quote => {
-      const sym = (quote.symbol || "").toUpperCase();
+      const symKey = toYahooSymbol(quote.symbol || "");
       const validPrice = quote.regularMarketPrice || quote.ask || quote.bid || quote.previousClose || 0;
       const pricePaise = Math.round(validPrice * 100);
       
       const data = {
-        symbol: sym,
+        symbol: symKey,
         pricePaise,
         changePercent: Number((quote.regularMarketChangePercent || 0).toFixed(2)),
         source: 'REAL',
         isFallback: false
       };
       
-      cache.set(sym, { data, timestamp: Date.now() });
-      results[sym] = data;
+      void setQuoteCache(symKey, data);
+      results[symKey] = data;
     });
   } catch (err) {
-    console.error(`[LiveProvider] Batch fetch failed:`, err.message);
+    logger.error({
+      event: "LIVE_PROVIDER_BATCH_FAILED",
+      message: err.message,
+    });
     // Fallback one by one if batch fails (safest)
     for (const s of needed) {
       try {

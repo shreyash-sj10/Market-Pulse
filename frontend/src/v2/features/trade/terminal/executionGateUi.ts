@@ -81,8 +81,10 @@ export function executeButtonLabel(
   policy: TradingSystemPolicy,
 ): string {
   if (!canExecute) {
-    if (evaluation?.status === "BLOCKED") return "BLOCKED — FIX INPUTS";
-    if (evaluation?.status === "ADJUST") return "BLOCKED — FIX INPUTS";
+    const msg = evaluation?.messages?.[0] ?? "";
+    if (msg.toUpperCase().includes("MARKET_DATA") || msg.toUpperCase().includes("INSUFFICIENT")) {
+      return "BLOCKED — INSUFFICIENT MARKET DATA";
+    }
     return "BLOCKED — FIX INPUTS";
   }
   const rs = evaluation?.riskScore;

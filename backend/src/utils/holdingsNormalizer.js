@@ -22,7 +22,9 @@ const toHoldingsArray = (holdings) => {
   return Object.entries(holdingsObject).map(([safeSymbol, data]) => ({
     symbol: safeSymbol.includes("_") ? safeSymbol.replace(/_/g, ".") : safeSymbol,
     quantity: Number(data?.quantity) || 0,
-    avgPricePaise: Math.round(Number(data?.avgCostPaise) || 0),
+    avgPricePaise: Math.round(
+      Number(data?.avgCostPaise ?? data?.avgCost ?? data?.avgPricePaise) || 0
+    ),
     stopLossPaise: Number(data?.stopLossPaise) || null,
     targetPricePaise: Number(data?.targetPricePaise) || null,
   }));

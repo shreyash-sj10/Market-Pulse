@@ -63,12 +63,13 @@ describe("Reflection Stress Integrity Test", () => {
     console.log(`[STRESS_TEST] Verified ${closed.length} closed trade mappings via FIFO.`);
   });
 
-  it("Should throw STATE_CORRUPTION_DETECTED on orphan sales", () => {
-     const orphanTrade = [
-         { id: 'sell-1', symbol: 'ORPHAN', type: 'SELL', quantity: 10, pricePaise: 500, createdAt: new Date() }
-     ];
-     
-     assert.throws(() => mapToClosedTrades(orphanTrade), /STATE_CORRUPTION_DETECTED/);
+  it("skips orphan SELL rows (no prior BUY in slice) without throwing", () => {
+    const orphanTrade = [
+      { id: "sell-1", symbol: "ORPHAN", type: "SELL", quantity: 10, pricePaise: 500, createdAt: new Date() },
+    ];
+
+    const closed = mapToClosedTrades(orphanTrade);
+    assert.deepStrictEqual(closed, []);
   });
 });
 

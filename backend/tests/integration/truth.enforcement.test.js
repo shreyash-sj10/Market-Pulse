@@ -27,15 +27,15 @@ describe("truth enforcement", () => {
     expect(result.reason).toBe("AI_UNAVAILABLE");
   });
 
-  it("blocks entry decision on partial input", () => {
+  it("discounts missing market data without blocking when behavior profile is valid", () => {
     const result = evaluateEntryDecision({
       plan: { side: "BUY", pricePaise: 10000, stopLossPaise: 9000, targetPricePaise: 12000 },
       marketContext: { status: "UNAVAILABLE", reason: "NO_MARKET_SIGNALS" },
-      behaviorContext: { status: "VALID", flags: [] },
+      behaviorContext: { status: "VALID", flags: [], closedTrades: [] },
     });
 
-    expect(result.verdict).toBe("BLOCK");
-    expect(result.reasons).toContain("INSUFFICIENT_DATA");
+    expect(["ALLOW", "CAUTION"]).toContain(result.verdict);
+    expect(result.reasons).toContain("MARKET_DATA_UNAVAILABLE");
   });
 
   it("contains no fake default confidence or score constants in intelligence paths", () => {

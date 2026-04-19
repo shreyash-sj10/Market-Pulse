@@ -14,11 +14,18 @@ describe("behavior.engine determinism and detection", () => {
         holdTime: ms(30),
       },
       {
-        symbol: "BBB.NS",
-        entryTime: t0 + ms(45),
-        exitTime: t0 + ms(90),
+        symbol: "AAA.NS",
+        entryTime: t0 + ms(35),
+        exitTime: t0 + ms(80),
         pnlPaise: 200,
         holdTime: ms(45),
+      },
+      {
+        symbol: "BBB.NS",
+        entryTime: t0 + ms(120),
+        exitTime: t0 + ms(180),
+        pnlPaise: 50,
+        holdTime: ms(60),
       },
     ];
 
@@ -59,10 +66,41 @@ describe("behavior.engine determinism and detection", () => {
         pnlPaise: -200,
         holdTime: ms(50),
       },
+      {
+        symbol: "CONSISTENT.NS",
+        entryTime: start + ms(150),
+        exitTime: start + ms(200),
+        pnlPaise: 100,
+        holdTime: ms(50),
+      },
     ];
 
     const resultA = analyzeBehavior(closedTrades);
     const resultB = analyzeBehavior(closedTrades);
     expect(resultA).toEqual(resultB);
+  });
+
+  it("does not emit a grounded profile for very small closed-trade samples", () => {
+    const start = Date.now();
+    const closedTrades = [
+      {
+        symbol: "SMALL.NS",
+        entryTime: start,
+        exitTime: start + ms(40),
+        pnlPaise: 100,
+        holdTime: ms(40),
+      },
+      {
+        symbol: "SMALL.NS",
+        entryTime: start + ms(60),
+        exitTime: start + ms(100),
+        pnlPaise: 50,
+        holdTime: ms(40),
+      },
+    ];
+    const result = analyzeBehavior(closedTrades);
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe("INSUFFICIENT_BEHAVIOR_HISTORY");
+    expect(result.disciplineScore).toBeNull();
   });
 });

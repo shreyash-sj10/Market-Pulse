@@ -6,9 +6,11 @@ const authMiddleware = require('../middlewares/auth.middleware');
 const { toHoldingsObject } = require('../utils/holdingsNormalizer');
 const Holding = require("../models/holding.model");
 const preTradeGuard = require('../services/intelligence/preTradeGuard.service');
-const { validateTradePayload } = require("../middlewares/validateTradePayload");
+const { validatePreTradePayload } = require("../middlewares/validateTradePayload");
 const { deriveIntelligenceState, deriveDecisionState } = require("../utils/systemState");
 const { adaptPreTrade } = require("../adapters/preTrade.adapter");
+const logger = require("../utils/logger");
+const { sendSuccess } = require("../utils/response.helper");
 
 const intelligenceLimiter = rateLimit({
   windowMs: Number(process.env.INTELLIGENCE_RATE_LIMIT_WINDOW_MS || 60 * 1000),
@@ -38,8 +40,14 @@ const refreshQueue = new Map();
 const refreshBasketIntelligence = async (category, basket, holdings) => {
   // Deduplicate inflight refreshes for the same category
   if (refreshQueue.has(category)) {
-     console.log(`[PERF] Intelligence refresh already in progress for ${category}, joining queue.`);
-     return refreshQueue.get(category);
+    logger.info({
+      service: "intelligence.route",
+      step: "INTELLIGENCE_REFRESH_DEDUPE",
+      status: "INFO",
+      data: { category },
+      timestamp: new Date().toISOString(),
+    });
+    return refreshQueue.get(category);
   }
 
   const refreshPromise = (async () => {
@@ -49,7 +57,13 @@ const refreshBasketIntelligence = async (category, basket, holdings) => {
       intelligenceCache.set("intelligence", category, structured);
       return structured;
     } catch (error) {
-      console.error(`[IntelligenceRefresh] Error for ${category}:`, error);
+      logger.error({
+        service: "intelligence.route",
+        step: "INTELLIGENCE_REFRESH_ERROR",
+        status: "FAILURE",
+        data: { category, message: error?.message },
+        timestamp: new Date().toISOString(),
+      });
       return null;
     } finally {
       refreshQueue.delete(category);
@@ -78,7 +92,7 @@ router.get('/news', authMiddleware, intelligenceLimiter, async (req, res, next) 
     const cached = intelligenceCache.get("intelligence", category);
     if (cached) {
       const state = deriveIntelligenceState({ signals: cached?.signals || [] });
-      res.json({ success: true, state, data: { ...cached, state } });
+      sendSuccess(res, req,{ success: true, state, data: { ...cached, state } });
       // Non-blocking refresh
       setTimeout(() => refreshBasketIntelligence(category, basket, holdings), 0);
       return;
@@ -87,7 +101,7 @@ router.get('/news', authMiddleware, intelligenceLimiter, async (req, res, next) 
     // Fallback sync compute
     const result = await refreshBasketIntelligence(category, basket, holdings);
     const state = deriveIntelligenceState({ signals: result?.signals || [] });
-    res.json({ success: true, state, data: { ...(result || {}), state } });
+    sendSuccess(res, req,{ success: true, state, data: { ...(result || {}), state } });
   } catch (error) {
     next(error);
   }
@@ -111,14 +125,14 @@ router.get('/portfolio', authMiddleware, intelligenceLimiter, async (req, res, n
     const cached = intelligenceCache.get("intelligence", category);
     if (cached) {
       const state = deriveIntelligenceState({ signals: cached?.signals || [] });
-      res.json({ success: true, state, data: { ...cached, state } });
+      sendSuccess(res, req,{ success: true, state, data: { ...cached, state } });
       setTimeout(() => refreshBasketIntelligence(category, basket, holdings), 0);
       return;
     }
 
     const result = await refreshBasketIntelligence(category, basket, holdings);
     const state = deriveIntelligenceState({ signals: result?.signals || [] });
-    res.json({ success: true, state, data: { ...(result || {}), state } });
+    sendSuccess(res, req,{ success: true, state, data: { ...(result || {}), state } });
   } catch (error) {
     next(error);
   }
@@ -142,14 +156,14 @@ router.get('/global', authMiddleware, intelligenceLimiter, async (req, res, next
     const cached = intelligenceCache.get("intelligence", category);
     if (cached) {
       const state = deriveIntelligenceState({ signals: cached?.signals || [] });
-      res.json({ success: true, state, data: { ...cached, state } });
+      sendSuccess(res, req,{ success: true, state, data: { ...cached, state } });
       setTimeout(() => refreshBasketIntelligence(category, globalBasket, holdings), 0);
       return;
     }
 
     const result = await refreshBasketIntelligence(category, globalBasket, holdings);
     const state = deriveIntelligenceState({ signals: result?.signals || [] });
-    res.json({ success: true, state, data: { ...(result || {}), state } });
+    sendSuccess(res, req,{ success: true, state, data: { ...(result || {}), state } });
   } catch (error) {
     next(error);
   }
@@ -162,15 +176,13 @@ router.get('/timeline', authMiddleware, intelligenceLimiter, async (req, res, ne
     const timeline = await timelineService.getTimelineMap(req.user._id);
     const signals = timeline || [];
     const state = deriveIntelligenceState({ signals });
-    res.json({ success: true, state, data: { signals, state } });
+    sendSuccess(res, req,{ success: true, state, data: { signals, state } });
   } catch (error) {
     next(error);
   }
 });
 
-const logger = require("../utils/logger");
-
-router.post('/pre-trade', authMiddleware, intelligenceLimiter, validateTradePayload, async (req, res, next) => {
+router.post('/pre-trade', authMiddleware, intelligenceLimiter, validatePreTradePayload, async (req, res, next) => {
   const startTime = Date.now();
   try {
     const riskReport = await preTradeGuard.checkTradeRisk(req.body, req.user);
@@ -178,11 +190,12 @@ router.post('/pre-trade', authMiddleware, intelligenceLimiter, validateTradePayl
     logger.info({
       action: "PRE_TRADE_AUDIT_COMPLETE",
       userId: req.user._id,
+      traceId: req.traceId || req.requestId,
       requestId: req.requestId,
       symbol: req.body.symbol,
       verdict: riskReport.authority?.verdict,
       latency: Date.now() - startTime,
-      status: "SUCCESS"
+      status: "SUCCESS",
     });
 
     const snapshot = riskReport?.snapshot || {};
@@ -198,7 +211,7 @@ router.post('/pre-trade', authMiddleware, intelligenceLimiter, validateTradePayl
       Boolean(riskReport?.authority?.verdict);
     const state = deriveDecisionState({ hasRequiredInputs, isValidated });
 
-    res.json({ 
+    sendSuccess(res, req,{ 
       success: true, 
       state, 
       data: adaptPreTrade(riskReport) 
@@ -207,10 +220,11 @@ router.post('/pre-trade', authMiddleware, intelligenceLimiter, validateTradePayl
     logger.error({
       action: "PRE_TRADE_AUDIT_FAIL",
       userId: req.user?._id,
+      traceId: req.traceId || req.requestId,
       requestId: req.requestId,
       message: error.message,
       latency: Date.now() - startTime,
-      status: "FAIL"
+      status: "FAIL",
     });
     next(error);
   }
@@ -221,7 +235,7 @@ const adaptiveEngine = require('../services/intelligence/adaptiveEngine.service'
 router.get('/profile', authMiddleware, intelligenceLimiter, async (req, res, next) => {
   try {
     const profile = await adaptiveEngine.getAdaptiveProfile(req.user._id);
-    res.json({ success: true, data: profile });
+    sendSuccess(res, req,{ success: true, data: profile });
   } catch (error) {
     next(error);
   }
@@ -231,7 +245,7 @@ const judgmentEngine = require('../services/intelligence/judgmentEngine.service'
 router.post('/judge-trade', authMiddleware, intelligenceLimiter, async (req, res, next) => {
   try {
     const judgment = await judgmentEngine.generateJudgment(req.body, req.user);
-    res.json({ success: true, data: judgment });
+    sendSuccess(res, req,{ success: true, data: judgment });
   } catch (error) {
     next(error);
   }

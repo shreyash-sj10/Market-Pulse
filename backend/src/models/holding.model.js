@@ -14,6 +14,13 @@ const holdingSchema = new mongoose.Schema(
       uppercase: true,
       trim: true,
     },
+    tradeType: {
+      type: String,
+      enum: ["DELIVERY", "INTRADAY"],
+      required: true,
+      uppercase: true,
+      trim: true,
+    },
     quantity: {
       type: Number,
       required: true,
@@ -37,7 +44,10 @@ const holdingSchema = new mongoose.Schema(
   }
 );
 
-holdingSchema.index({ userId: 1, symbol: 1 }, { unique: true, name: "userId_1_symbol_1" });
+holdingSchema.index(
+  { userId: 1, symbol: 1, tradeType: 1 },
+  { unique: true, name: "idx_user_symbol_type_uniq" }
+);
 
 const Holding = mongoose.model("Holding", holdingSchema);
 module.exports = Holding;

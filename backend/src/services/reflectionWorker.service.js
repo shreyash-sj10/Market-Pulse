@@ -1,17 +1,15 @@
 const eventBus = require("../utils/eventBus");
 const Trade = require("../models/trade.model");
 const User = require("../models/user.model");
+const Outbox = require("../models/outbox.model");
+const { REFLECTION_MAX_ATTEMPTS } = require("../constants/systemConvergence.constants");
 const { analyzeReflection } = require("../engines/reflection.engine");
-const { analyzeBehavior } = require("./behavior.engine");
-const { analyzeProgression } = require("./progression.engine");
-const { calculateSkillScore } = require("./skill.engine");
-const { normalizeTrade } = require("../domain/trade.contract");
-const { mapToClosedTrades } = require("../domain/closedTrade.mapper");
 const { runInTransaction } = require("../utils/transaction");
-const { generateReflectionSummary, translateBehavior } = require("./aiExplanation.service");
+const { generateReflectionSummary } = require("./aiExplanation.service");
 const { generateLesson } = require("./lessonGenerator");
-const { generatePatternInsight } = require("./patternInsight.service");
 const { translateTags } = require("../utils/behaviorTranslator");
+const { getTraceId } = require("../context/traceContext");
+const { persistUserAnalyticsSnapshot } = require("./analytics.service");
 const logger = require("../utils/logger");
 
 const processTradeClosedEvent = async ({ tradeId, userId }) => {
@@ -24,107 +22,130 @@ const processTradeClosedEvent = async ({ tradeId, userId }) => {
   try {
     await runInTransaction(async (session) => {
       const trade = await Trade.findById(tradeId).session(session);
-    if (!trade) return;
-    
-    // Idempotency guard: DONE status means this job already completed, skip entirely
-    if (trade.reflectionStatus === "DONE") return;
-    
-    const user = await User.findById(userId).session(session);
-    if (!user) return;
-    
-    const entryTrade = await Trade.findById(trade.entryTradeId).session(session);
-    
-    // PHASE 4 FIX: Explicitly resolve entry price with fallback chain.
-    // entryTrade.entryPlan may store the price as entryPricePaise or pricePaise.
-    // We override it explicitly instead of relying on blind spread to avoid silent 0.
-    const safeEntryPrice =
-      entryTrade?.entryPlan?.entryPricePaise ??
-      entryTrade?.entryPlan?.pricePaise ??
-      entryTrade?.pricePaise ??
-      0;
+      if (!trade) return;
 
-    // Core Reflection
-    const reflection = analyzeReflection({
-      ...entryTrade?.entryPlan,
-      entryPricePaise: safeEntryPrice,      // explicit override — always present
-      exitPricePaise: trade.pricePaise,
-      pnlPaise: trade.pnlPaise
-    });
-    trade.learningOutcome = {
-      verdict: reflection.verdict,
-      insight: reflection.insight,
-      improvementSuggestion: reflection.improvement
-    };
-    trade.decisionSnapshot = {
-      verdict: reflection.verdict,
-      score: Math.max(0, 100 - (reflection.deviationScore || 0)),
-      pillars: {
-        market: { verdict: "N/A" },
-        behavior: { verdict: reflection.verdict },
-        risk: { verdict: "EXIT" },
-        rr: { verdict: "N/A" }
-      }
-    };
-    trade.intelligenceTimeline = {
-      postTrade: { outcome: reflection.executionPattern, behavioralFlags: reflection.tags }
-    };
-    trade.trace.timeline.push({ stage: "REFLECTION_COMPLETED", metadata: { verdict: reflection.verdict } });
+      // Idempotency guard: terminal reflection states — skip entirely
+      if (trade.reflectionStatus === "DONE" || trade.reflectionStatus === "FAILED") return;
 
-    // PHASE 5: Generate exactly ONE lesson per trade (deterministic — no AI)
-    const lesson = generateLesson(trade, reflection);
-    trade.lesson = lesson;
+      if (!(await User.exists({ _id: userId }).session(session))) return;
 
-    // PHASE 6: Attach human-readable behavior translations (deterministic)
-    trade.behaviorTranslation = translateTags(reflection.tags || []);
+      const entryTrade = await Trade.findById(trade.entryTradeId).session(session);
     
-    const history = await Trade.find({ user: user._id }).sort({ createdAt: 1 }).session(session);
-    const normalizedHistory = history.map(t => normalizeTrade(t));
-    const closed = mapToClosedTrades(normalizedHistory);
-    
-    // PHASE 2+3 FIX: Pure reflections[] — every element is a reflection output, never a raw ClosedTrade.
-    // The previous shortcut `ct.learningOutcome ? ct : analyzeReflection(ct)` injected raw ClosedTrade
-    // objects (which have no deviationScore field), silently contributing 0 to discipline scoring.
-    // Per-trade try/catch prevents a single bad input from crashing the whole transaction.
-    const reflections = closed.map(ct => {
-      try {
-        return analyzeReflection(ct);
-      } catch (e) {
-        logger.warn({ action: "REFLECTION_SKIPPED", tradeId: ct.id, reason: e.message });
-        return null;
-      }
-    }).filter(Boolean); // Strip nulls — failed trades excluded from scoring cleanly
-    const behavior = analyzeBehavior(closed);
-    const progression = analyzeProgression(closed);
-    const skill = calculateSkillScore(closed, reflections, behavior, progression);
+      // PHASE 4 FIX: Explicitly resolve entry price with fallback chain.
+      const safeEntryPrice =
+        entryTrade?.entryPlan?.entryPricePaise ??
+        entryTrade?.entryPlan?.pricePaise ??
+        entryTrade?.pricePaise ??
+        0;
 
-    user.analyticsSnapshot = {
-      skillScore: skill.score,
-      disciplineScore: behavior.disciplineScore || skill.breakdown.discipline,
-      trend: progression.trend || "STABLE",
-      tags: [...new Set([...(behavior.patterns || []).map(p => p.type), ...skill.strengths, ...skill.weaknesses])],
-      lastUpdated: new Date(),
-      // PHASE 7: Attach deterministic pattern insight to snapshot
-      patternInsight: generatePatternInsight({
-        tags: [...new Set([...(behavior.patterns || []).map(p => p.type), ...skill.strengths, ...skill.weaknesses])],
-        totalTrades: closed.length,
-        winRate: behavior.winRate || 0,
-        avgPnlPct: behavior.avgPnlPct || 0,
-        disciplineScore: behavior.disciplineScore || skill.breakdown?.discipline || 0,
-      }),
-    };
-    
-    trade.status = "COMPLETE";
-    trade.reflectionStatus = "DONE";
-    
+      const reflection = analyzeReflection({
+        ...entryTrade?.entryPlan,
+        entryPricePaise: safeEntryPrice,
+        exitPricePaise: trade.pricePaise,
+        pnlPaise: trade.pnlPaise,
+      });
+      trade.learningOutcome = {
+        verdict: reflection.verdict,
+        insight: reflection.insight,
+        improvementSuggestion: reflection.improvement,
+      };
+      trade.decisionSnapshot = {
+        verdict: reflection.verdict,
+        score: Math.max(0, 100 - (reflection.deviationScore || 0)),
+        pillars: {
+          market: { verdict: "N/A" },
+          behavior: { verdict: reflection.verdict },
+          risk: { verdict: "EXIT" },
+          rr: { verdict: "N/A" },
+        },
+      };
+      trade.intelligenceTimeline = {
+        postTrade: { outcome: reflection.executionPattern, behavioralFlags: reflection.tags },
+      };
+      trade.trace.timeline.push({
+        stage: "REFLECTION_COMPLETED",
+        metadata: { verdict: reflection.verdict },
+      });
+
+      const lesson = generateLesson(trade, reflection);
+      trade.lesson = lesson;
+
+      trade.behaviorTranslation = translateTags(reflection.tags || []);
+
+      trade.status = "COMPLETE";
+      trade.reflectionStatus = "DONE";
+
       await trade.save({ session });
-      await user.save({ session });
     });
+
+    try {
+      const traceId = getTraceId();
+      await Outbox.create([
+        {
+          type: "USER_ANALYTICS_SNAPSHOT",
+          payload: {
+            userId: String(userId),
+            tradeId: String(tradeId),
+            ...(traceId ? { traceId } : {}),
+          },
+          status: "PENDING",
+          nextAttemptAt: new Date(),
+          retryCount: 0,
+        },
+      ]);
+    } catch (enqueueErr) {
+      logger.error({
+        action: "ANALYTICS_OUTBOX_ENQUEUE_FAILED",
+        userId: String(userId),
+        message: enqueueErr?.message || String(enqueueErr),
+      });
+      try {
+        await persistUserAnalyticsSnapshot(userId);
+      } catch (persistErr) {
+        logger.error({
+          action: "ANALYTICS_OUTBOX_FALLBACK_FAILED",
+          userId: String(userId),
+          message: persistErr?.message || String(persistErr),
+        });
+      }
+    }
   } catch (e) {
     logger.error("Reflection worker failed", e);
-    throw e; // MUST rethrow for queue retry
+    try {
+      const t = await Trade.findByIdAndUpdate(
+        tradeId,
+        { $inc: { reflectionJobAttempts: 1 } },
+        { new: true }
+      ).select("reflectionJobAttempts");
+      const n = t?.reflectionJobAttempts ?? REFLECTION_MAX_ATTEMPTS;
+      if (n >= REFLECTION_MAX_ATTEMPTS) {
+        await Trade.findByIdAndUpdate(tradeId, {
+          $set: { reflectionStatus: "FAILED" },
+        });
+        logger.error({
+          action: "REFLECTION_PERMANENTLY_FAILED",
+          tradeId,
+          attempts: n,
+          message: e?.message || String(e),
+        });
+        return;
+      }
+    } catch (markErr) {
+      logger.error({ action: "REFLECTION_FAILURE_MARK_ERROR", tradeId, message: markErr?.message });
+    }
+    throw e;
   }
 
   logger.info(`[Observability] [ReflectionWorker] deterministic reflection time: ${Date.now() - _start}ms`);
+
+  try {
+    await User.findByIdAndUpdate(userId, {
+      $inc: { systemStateVersion: 1 },
+      $set: { lastTradeActivityAt: new Date() },
+    });
+  } catch (verErr) {
+    logger.warn({ action: "REFLECTION_VERSION_BUMP_SKIPPED", userId, message: verErr?.message });
+  }
 
   // ─── PHASE 2: AI POST-PROCESSING (Non-Blocking, NOT part of retry loop) ──────
   // This block is intentionally outside runInTransaction.
@@ -145,7 +166,9 @@ const processTradeClosedEvent = async ({ tradeId, userId }) => {
         exitPrice: exitPricePaise,
         pnlPct: finishedTrade.pnlPct || 0,
         behaviorTag: finishedTrade.learningOutcome?.verdict || "UNKNOWN",
-        deviation: finishedTrade.learningOutcome?.improvementSuggestion || "None"
+        deviation: finishedTrade.learningOutcome?.improvementSuggestion || "None",
+        preTradeEmotionEntry: entryTrade?.preTradeEmotion || null,
+        preTradeEmotionExit: finishedTrade.preTradeEmotion || null,
       });
 
       if (aiSummary && aiSummary.meta) {

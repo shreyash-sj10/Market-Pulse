@@ -8,6 +8,7 @@ const { analyzeBehavior } = require('../services/behavior.engine');
 const { analyzeProgression } = require('../services/progression.engine');
 const { calculateSkillScore } = require('../services/skill.engine');
 const { normalizeTrade } = require('../domain/trade.contract');
+const { sendSuccess } = require("../utils/response.helper");
 
 /**
  * GET /api/metrics/skill-progress
@@ -43,8 +44,8 @@ router.get('/skill-progress', authMiddleware, async (req, res, next) => {
        });
     }
 
-    res.json({ 
-      success: true, 
+    sendSuccess(res, req, {
+      success: true,
       data: progress,
       meta: { totalClosed: allClosed.length, windowSize: windowedClosed.length }
     });
@@ -71,7 +72,7 @@ router.get('/behavior', authMiddleware, async (req, res, next) => {
       disciplineScore: behavior.disciplineScore || 100
     };
 
-    res.json({ success: true, data });
+    sendSuccess(res, req, { success: true, data });
   } catch (error) {
     next(error);
   }
@@ -104,7 +105,7 @@ router.get('/outcomes', authMiddleware, async (req, res, next) => {
       else if (v === "LUCKY_PROFIT") outcomes.luckyProfit++;
     });
 
-    res.json({ success: true, data: outcomes });
+    sendSuccess(res, req, { success: true, data: outcomes });
   } catch (error) {
     next(error);
   }

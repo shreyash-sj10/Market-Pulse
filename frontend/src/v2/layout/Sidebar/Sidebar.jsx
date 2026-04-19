@@ -1,3 +1,4 @@
+import { useCallback, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../../../features/auth/AuthContext.jsx";
 import { ROUTES } from "../../routing/routes";
@@ -8,6 +9,7 @@ import {
   BookOpen,
   User,
   Activity,
+  PanelLeft,
 } from "lucide-react";
 
 const NAV_ITEMS = [
@@ -21,6 +23,13 @@ const NAV_ITEMS = [
 
 export default function Sidebar() {
   const { user } = useAuth();
+  const [hovered, setHovered] = useState(false);
+  const [pinned, setPinned] = useState(false);
+
+  const expanded = pinned || hovered;
+  const togglePin = useCallback(() => {
+    setPinned((p) => !p);
+  }, []);
 
   const displayName  = user?.name ?? user?.email?.split("@")[0] ?? "Operator";
   const initials     = displayName.slice(0, 2).toUpperCase();
@@ -29,9 +38,13 @@ export default function Sidebar() {
   const appVersion   = import.meta.env.VITE_APP_VERSION ?? "v2";
 
   return (
-    <aside className="sidebar">
-      <div className="sidebar__brand">
-        <div className="sidebar__logo">NOESIS</div>
+    <aside
+      className={`sidebar ${expanded ? "sidebar--expanded" : "sidebar--collapsed"}`}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <div className="sidebar__brand" aria-label={expanded ? undefined : "NOESIS"}>
+        <div className="sidebar__logo">{expanded ? "NOESIS" : "N"}</div>
         <div className="sidebar__tagline">Terminal {appVersion}</div>
       </div>
 
@@ -40,6 +53,7 @@ export default function Sidebar() {
           <NavLink
             key={key}
             to={to}
+            title={label}
             className={({ isActive }) =>
               isActive ? "sidebar-link is-active" : "sidebar-link"
             }
@@ -48,6 +62,16 @@ export default function Sidebar() {
             <span className="sidebar-link__label">{label}</span>
           </NavLink>
         ))}
+        <button
+          type="button"
+          className={`sidebar-rail-toggle ${pinned ? "sidebar-rail-toggle--pinned" : ""}`}
+          onClick={togglePin}
+          aria-pressed={pinned}
+          title={pinned ? "Unpin sidebar (collapse when not hovered)" : "Pin sidebar open"}
+        >
+          <PanelLeft size={16} aria-hidden />
+          <span className="sidebar-rail-toggle__label">{pinned ? "Unpin" : "Pin"}</span>
+        </button>
       </nav>
 
       <div className="sidebar__user">

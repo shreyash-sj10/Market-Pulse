@@ -63,7 +63,7 @@ const generateJudgment = async (tradeRequest, user) => {
       const aiResult = await model.generateContent(prompt);
       summary = aiResult.response.text();
     } catch (e) {
-      console.warn("AI Summarization failed, falling back to deterministic.");
+      require("../../utils/logger").warn({ event: "JUDGMENT_ENGINE_AI_FALLBACK", message: e?.message });
     }
   }
 

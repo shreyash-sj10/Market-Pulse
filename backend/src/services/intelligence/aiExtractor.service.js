@@ -77,7 +77,7 @@ const extractSignals = async (headline, summary) => {
 
     return JSON.parse(result.response.text());
   } catch (err) {
-    console.warn("[Intelligence:AI] Falling back to keyword engine:", err.message);
+    require("../../utils/logger").warn({ event: "AI_EXTRACTOR_FALLBACK", message: err.message });
     return keywordFallback(`${headline} ${summary}`);
   }
 };

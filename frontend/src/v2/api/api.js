@@ -1,4 +1,9 @@
 import axios from "axios";
+import { normalizeApiError } from "../lib/normalizeApiError.js";
+import { getAccessToken, setAccessToken, clearAccessToken } from "./accessTokenStore.js";
+
+/** CSRF for refresh header: sessionStorage backup when API cookies are not readable (cross-origin SPA). */
+const CSRF_SESSION_KEY = "auth.csrfToken";
 
 /**
  * Backend mounts all routes under /api. Env may be origin only (http://host:port) or full base including /api.
@@ -14,20 +19,33 @@ function resolveApiBaseUrl() {
 
 const BASE_URL = resolveApiBaseUrl();
 const isDev = import.meta.env.DEV;
-let refreshPromise = null;
+const TRACE_STORAGE_KEY = "api.trace.id";
+
 const createRequestId = () =>
   (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
     ? crypto.randomUUID()
     : `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-const api = axios.create({
-  baseURL: BASE_URL,
-  withCredentials: true,
-  headers: {
-    "Cache-Control": "no-cache",
-    Pragma: "no-cache",
-  },
-});
+/** L-01: Stable trace id per browser tab session; request id stays unique per HTTP call. */
+const getOrCreateTraceId = () => {
+  if (typeof sessionStorage === "undefined") return createRequestId();
+  try {
+    let tid = sessionStorage.getItem(TRACE_STORAGE_KEY);
+    if (!tid) {
+      tid = createRequestId();
+      sessionStorage.setItem(TRACE_STORAGE_KEY, tid);
+    }
+    return tid;
+  } catch {
+    return createRequestId();
+  }
+};
+
+/**
+ * M-05: Single in-flight refresh — all concurrent 401 handlers await the same promise
+ * so refresh is not re-issued until the first completes (avoids token rotation races).
+ */
+let refreshInFlight = null;
 
 const getCookieValue = (name) => {
   if (typeof document === "undefined") return null;
@@ -39,15 +57,90 @@ const getCookieValue = (name) => {
   return decodeURIComponent(cookie.slice(name.length + 1));
 };
 
+export function getCsrfForRefresh() {
+  if (typeof sessionStorage === "undefined") {
+    return getCookieValue("csrfToken");
+  }
+  try {
+    return sessionStorage.getItem(CSRF_SESSION_KEY) || getCookieValue("csrfToken");
+  } catch {
+    return getCookieValue("csrfToken");
+  }
+}
+
+export function setStoredCsrfToken(t) {
+  if (typeof sessionStorage === "undefined" || !t) return;
+  try {
+    sessionStorage.setItem(CSRF_SESSION_KEY, t);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function clearStoredCsrfToken() {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    sessionStorage.removeItem(CSRF_SESSION_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+const refreshAccessToken = (csrfToken) => {
+  if (!refreshInFlight) {
+    refreshInFlight = axios
+      .post(
+        `${BASE_URL}/auth/refresh`,
+        {},
+        {
+          withCredentials: true,
+          headers: { "x-csrf-token": csrfToken },
+        },
+      )
+      .then(({ data }) => {
+        const newToken = data.token;
+        setAccessToken(newToken);
+        if (data.csrfToken) {
+          setStoredCsrfToken(data.csrfToken);
+        }
+        return newToken;
+      })
+      .finally(() => {
+        refreshInFlight = null;
+      });
+  }
+  return refreshInFlight;
+};
+
+/** Silent refresh using HttpOnly refresh cookie + CSRF (cookie or sessionStorage). Path A bootstrap. */
+export function bootstrapAccessTokenFromCookies() {
+  const csrfToken = getCsrfForRefresh();
+  if (!csrfToken) {
+    return Promise.resolve(null);
+  }
+  return refreshAccessToken(csrfToken);
+}
+
+const api = axios.create({
+  baseURL: BASE_URL,
+  withCredentials: true,
+  headers: {
+    "Cache-Control": "no-cache",
+    Pragma: "no-cache",
+  },
+});
+
 // Request interceptor to add token
 api.interceptors.request.use(
   (config) => {
     const requestId = createRequestId();
-    const token = localStorage.getItem("token");
+    const traceId = getOrCreateTraceId();
+    const token = getAccessToken();
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
     config.headers["x-request-id"] = requestId;
+    config.headers["x-trace-id"] = traceId;
     config.headers["Cache-Control"] = "no-cache";
     config.headers.Pragma = "no-cache";
     config.metadata = { requestId, startedAt: Date.now() };
@@ -69,10 +162,18 @@ api.interceptors.request.use(
 // Response interceptor to handle 401 and refresh token silently
 api.interceptors.response.use(
   (response) => {
+    const tid =
+      response.headers?.["x-trace-id"] ||
+      response.headers?.["X-Trace-Id"] ||
+      response.headers?.["x-request-id"] ||
+      response.config?.metadata?.requestId;
+    if (response.config?.metadata) {
+      response.config.metadata.traceId = tid;
+    }
     if (isDev) {
       const elapsed = Date.now() - (response.config?.metadata?.startedAt || Date.now());
       console.log("[API:RES]", {
-        id: response.headers?.["x-request-id"] || response.config?.metadata?.requestId,
+        id: tid,
         method: response.config?.method?.toUpperCase(),
         url: response.config?.url,
         status: response.status,
@@ -83,8 +184,23 @@ api.interceptors.response.use(
     return response;
   },
   async (error) => {
-    console.error("API Error", error);
     const originalRequest = error.config;
+    const norm = normalizeApiError(error);
+    error.traceId = norm.traceId;
+    error.apiError = norm;
+    const st = error.response?.status;
+    if (typeof window !== "undefined" && st >= 400 && st !== 401) {
+      window.dispatchEvent(
+        new CustomEvent("app:api-error", {
+          detail: {
+            message: norm.message,
+            traceId: norm.traceId,
+            retryable: norm.retryable,
+            status: norm.status,
+          },
+        })
+      );
+    }
     if (isDev) {
       const elapsed = Date.now() - (originalRequest?.metadata?.startedAt || Date.now());
       console.log("[API:ERR]", {
@@ -105,43 +221,34 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && originalRequest && !originalRequest._retry && !isAuthPath) {
       originalRequest._retry = true;
 
-      const csrfToken = getCookieValue("csrfToken");
+      const csrfToken = getCsrfForRefresh();
       if (!csrfToken) {
-        localStorage.removeItem("token");
-        localStorage.removeItem("user");
+        clearAccessToken();
+        clearStoredCsrfToken();
+        try {
+          localStorage.removeItem("user");
+        } catch {
+          /* ignore */
+        }
         window.location.href = "/login";
         return Promise.reject(error);
       }
 
       try {
-        if (!refreshPromise) {
-          refreshPromise = axios.post(
-            `${BASE_URL}/auth/refresh`,
-            {},
-            {
-              withCredentials: true,
-              headers: { "x-csrf-token": csrfToken },
-            },
-          );
-        }
-        const { data } = await refreshPromise;
-
-        const newToken = data.token;
-        localStorage.setItem("token", newToken);
-        window.dispatchEvent(new StorageEvent("storage", { key: "token", newValue: newToken }));
-
-        // Mutate original request header and retry it safely
+        const newToken = await refreshAccessToken(csrfToken);
         originalRequest.headers.Authorization = `Bearer ${newToken}`;
         return api(originalRequest);
       } catch (err) {
         console.error("API Error", err);
-        // Refresh token failed or expired -> kill session
-        localStorage.removeItem("token");
-        localStorage.removeItem("user");
+        clearAccessToken();
+        clearStoredCsrfToken();
+        try {
+          localStorage.removeItem("user");
+        } catch {
+          /* ignore */
+        }
         window.location.href = "/login";
         return Promise.reject(err);
-      } finally {
-        refreshPromise = null;
       }
     }
 

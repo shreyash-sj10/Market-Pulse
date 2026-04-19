@@ -1,14 +1,23 @@
 require("dotenv").config(); // Load environment variables
 const app = require("./app"); // Import the Express app
 const connectDB = require("./config/db"); // Import the database connection function
+const logger = require("./utils/logger");
 const stopLossMonitor = require("./services/stopLossMonitor.service");
-const { startSquareOff } = require("./services/squareoff.service");
+const { startSquareOffQueueOrPoll } = require("./queue/squareoff.schedule");
 const { startOutboxWorker } = require("./workers/outbox.worker");
 const { startSweeper } = require("./services/sweeper.service");
 const { startExecutionExecutor } = require("./services/execution.executor");
+const { startMarketCalendarWorker } = require("./workers/marketCalendar.worker");
 const { isRedisAvailable } = require("./infra/redisHealth");
+const runtimeState = require("./infra/runtimeState");
 
 const PORT = process.env.PORT || 8080; // Define the port
+
+/**
+ * P1-C: Outbox, stop-loss monitor, execution executor, and sweeper are started in-process.
+ * Deploy **one** web instance until background work uses BullMQ-only or distributed locks.
+ * @see docs/BACKGROUND_WORKERS_SCALE.md
+ */
 
 /**
  * Start the server
@@ -20,24 +29,73 @@ const startStopLossMonitor = async () => {
 const startServer = async () => {
   try {
     await connectDB(); // Connect to MongoDB
-    await startStopLossMonitor();
-    startSquareOff();
-    startOutboxWorker();
 
-    // Existing worker startup preserved as reliability wiring.
+    // Calendar worker must start BEFORE market-sensitive services so that
+    // isMarketOpen() has a populated cache when the SL monitor first ticks.
+    // startMarketCalendarWorker() awaits the first DB cache read (fast) and
+    // runs the Docker sync asynchronously in background (non-blocking).
+    if (process.env.NODE_ENV !== "test") {
+      await startMarketCalendarWorker();
+      runtimeState.mark("marketCalendarWorker", true);
+    }
+
+    await startStopLossMonitor();
+    runtimeState.mark("stopLossMonitor", true);
+    await startSquareOffQueueOrPoll();
+    startOutboxWorker();
+    runtimeState.mark("outboxWorker", true);
+
+    if (process.env.NODE_ENV !== "test") {
+      logger.info({
+        service: "server",
+        step: "BACKGROUND_WORKERS_P1C",
+        status: "INFO",
+        data: {
+          message:
+            "Process-local timers active (outbox, SL monitor, sweeper, execution executor). Use a single web instance or read docs/BACKGROUND_WORKERS_SCALE.md before horizontal scale.",
+        },
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Pending-order workers do not require Redis and must remain active in degraded mode.
+    if (process.env.NODE_ENV !== "test") {
+      startSweeper();
+      runtimeState.mark("sweeper", true);
+      startExecutionExecutor();
+      runtimeState.mark("executionExecutor", true);
+    }
+
+    // Reflection worker is Redis-backed and remains optional in degraded mode.
     if (isRedisAvailable() && process.env.NODE_ENV !== "test") {
       require("./queue/workers/reflection.worker");
-      startSweeper();
-      startExecutionExecutor();
     } else if (process.env.NODE_ENV !== "test") {
-      console.warn("Background Redis-dependent workers are in safe degraded mode (Redis unavailable).");
+      logger.warn({
+        service: "server",
+        step: "WORKER_STARTUP",
+        status: "WARN",
+        data: { message: "Redis-dependent workers in degraded mode (Redis unavailable)." },
+        timestamp: new Date().toISOString(),
+      });
     }
 
     app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
+      logger.info({
+        service: "server",
+        step: "LISTEN",
+        status: "SUCCESS",
+        data: { port: PORT },
+        timestamp: new Date().toISOString(),
+      });
     });
   } catch (error) {
-    console.error("Failed to start server:", error);
+    logger.error({
+      service: "server",
+      step: "START_FAILED",
+      status: "FAILURE",
+      data: { message: error.message },
+      timestamp: new Date().toISOString(),
+    });
     process.exit(1); // Exit with failure
   }
 };

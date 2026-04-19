@@ -1,4 +1,5 @@
 const axios = require('axios');
+const logger = require("../../utils/logger");
 
 /**
  * NEWS PROVIDER
@@ -7,14 +8,15 @@ const axios = require('axios');
  */
 const getNews = async (symbol) => {
   const normalizedSymbol = symbol.split('.')[0];
-  const finnhubKey = process.env.VITE_FINNHUB_API_KEY;
+  const finnhubKey = process.env.FINNHUB_API_KEY || process.env.VITE_FINNHUB_API_KEY;
+  const finnhubSymbol = normalizedSymbol.startsWith("^") ? normalizedSymbol : `NSE:${normalizedSymbol}`;
 
   try {
     // Current date and 7 days back
     const to = new Date().toISOString().split('T')[0];
     const from = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-    const res = await axios.get(`https://finnhub.io/api/v1/company-news?symbol=${normalizedSymbol}&from=${from}&to=${to}&token=${finnhubKey}`);
+    const res = await axios.get(`https://finnhub.io/api/v1/company-news?symbol=${encodeURIComponent(finnhubSymbol)}&from=${from}&to=${to}&token=${finnhubKey}`);
     
     const rawNews = res.data || [];
     
@@ -49,7 +51,11 @@ const getNews = async (symbol) => {
       source: 'FINNHUB_NEWS'
     };
   } catch (error) {
-    console.error(`[NewsProvider] Fail for ${symbol}:`, error.message);
+    logger.error({
+      event: "NEWS_PROVIDER_FINNHUB_FAILED",
+      symbol,
+      message: error.message,
+    });
     throw new Error(`NEWS_DATA_UNAVAILABLE: ${symbol}`);
   }
 };

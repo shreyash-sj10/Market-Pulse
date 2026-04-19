@@ -32,7 +32,7 @@ const getNews = async (symbol) => {
       summary: "" // Yahoo search news often lacks full summary in search result
     }));
   } catch (error) {
-    console.warn(`[NewsProvider:Yahoo] Failed for ${symbol}: ${error.message}`);
+    require("../../utils/logger").warn({ event: "NEWS_PROVIDER_YAHOO_FAIL", symbol, message: error.message });
     throw error;
   }
 };

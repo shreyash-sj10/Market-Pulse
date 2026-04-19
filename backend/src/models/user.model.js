@@ -56,6 +56,12 @@ const userSchema = new mongoose.Schema(
       tags: { type: [String], default: [] },
       lastUpdated: { type: Date, default: Date.now }
     },
+    /** Set when `persistUserAnalyticsSnapshot` succeeds — UI can show “updating insights…” until this catches up. */
+    analyticsLastUpdatedAt: { type: Date, default: null },
+    /** Bumped on trade commit and on reflection completion — clients compare for stale UI. */
+    systemStateVersion: { type: Number, default: 0 },
+    /** Last time a trade execution committed (for snapshot bypass). */
+    lastTradeActivityAt: { type: Date, default: null },
 
   },
   {

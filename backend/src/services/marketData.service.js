@@ -1,27 +1,24 @@
+const PQueue = require("p-queue").default;
 const YahooFinance = require('yahoo-finance2').default;
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 const AppError = require('../utils/AppError');
 const { SYSTEM_CONFIG } = require("../config/system.config");
-
-// Simple in-memory cache
-const cache = new Map();
-const CACHE_TTL = SYSTEM_CONFIG.marketData.quoteCacheTtlMs;
+const { getQuoteCache, setQuoteCache } = require("../utils/marketQuoteCache");
+const { normalizeSymbol } = require("../utils/symbol.utils");
+const logger = require("../utils/logger");
 
 const { toPaise, enforcePaise} = require('../utils/paise');
 
-// Phase 7: Rate Limit Guard (Respect 5 calls/min for external sources)
-const throttleDelay = 12000; // 12s per call ensures < 5 per min
-let lastExternalCallTime = 0;
-
-const respectRateLimit = async () => {
-  const now = Date.now();
-  const waitTime = lastExternalCallTime + throttleDelay - now;
-  if (waitTime > 0) {
-    console.log(`[RateLimit] Throttling external request for ${waitTime}ms...`);
-    await new Promise(res => setTimeout(res, waitTime));
-  }
-  lastExternalCallTime = Date.now();
-};
+/**
+ * Throttle single-symbol Yahoo fetches (trade validation, resolvePrice, etc.).
+ * Market explorer uses batched `yahooFinance.quote` in `getBulkSnapshots` without this queue
+ * so the scanner is not serialized to one HTTP call every 12s.
+ */
+const externalQuoteQueue = new PQueue({
+  concurrency: 1,
+  intervalCap: 1,
+  interval: 12000,
+});
 
 const symbolHash = (symbol = "") => {
   let h = 0;
@@ -54,13 +51,6 @@ const buildSyntheticQuote = (symbol, index = 0) => {
   };
 };
 
-const normalizeSymbol = (symbol) => {
-  if (!symbol) return null;
-  const s = symbol.toUpperCase().trim();
-  if (s.endsWith('.NS') || s.endsWith('.BO')) return s;
-  return `${s}.NS`;
-};
-
 /**
  * 1. UNIFIED SCHEMA MAPPING
  */
@@ -70,7 +60,11 @@ const normalizeQuote = (raw) => {
   // 1. CURRENCY VALIDATION (Hard Layer)
   // Only allow INR assets to prevent valuation distortion (USD vs INR)
   if (raw.currency && raw.currency !== 'INR') {
-    console.warn(`[IntegrityWall] Rejecting asset ${raw.symbol} due to currency mismatch: ${raw.currency}`);
+    logger.warn({
+      event: "MARKET_DATA_CURRENCY_REJECT",
+      symbol: raw.symbol,
+      currency: raw.currency,
+    });
     return null;
   }
 
@@ -110,15 +104,13 @@ const validateQuote = (quote) => {
 const getStockSnapshot = async (symbol) => {
   const apiSymbol = normalizeSymbol(symbol);
 
-  // 1. Check Cache
-  const cached = cache.get(apiSymbol);
-  if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
+  const cached = await getQuoteCache(apiSymbol);
+  if (cached?.tier === "HOT") {
     return cached.data;
   }
 
   try {
-    await respectRateLimit();
-    const raw = await yahooFinance.quote(apiSymbol);
+    const raw = await externalQuoteQueue.add(() => yahooFinance.quote(apiSymbol));
     const quote = normalizeQuote(raw);
 
     if (!validateQuote(quote)) {
@@ -128,25 +120,28 @@ const getStockSnapshot = async (symbol) => {
     // Deterministic Trend Logic
     quote.trend = quote.changePercent > 1 ? "BULLISH" : quote.changePercent < -1 ? "BEARISH" : "SIDEWAYS";
 
-    // Store in cache
-    cache.set(apiSymbol, { data: quote, timestamp: Date.now() });
+    await setQuoteCache(apiSymbol, quote);
 
     return quote;
   } catch (error) {
-    console.error(`[HardenedPipeline] Fetch error for ${apiSymbol}:`, error.message);
+    logger.error({
+      event: "MARKET_DATA_SNAPSHOT_FETCH_ERROR",
+      symbol: apiSymbol,
+      message: error.message,
+    });
     throw new AppError("MARKET_DATA_UNAVAILABLE", 503);
   }
 };
 
 const resolvePrice = async (symbol) => {
   const apiSymbol = normalizeSymbol(symbol);
-  const cached = cache.get(apiSymbol);
+  const cached = await getQuoteCache(apiSymbol);
   const hasCachedQuote = Boolean(
     cached?.data &&
     Number.isInteger(cached.data.pricePaise) &&
     cached.data.pricePaise > 100
   );
-  if (hasCachedQuote && (Date.now() - cached.timestamp) < CACHE_TTL) {
+  if (cached?.tier === "HOT" && hasCachedQuote) {
     return {
       pricePaise: cached.data.pricePaise,
       source: "CACHE",
@@ -164,8 +159,7 @@ const resolvePrice = async (symbol) => {
       isStale: false,
     };
   } catch (error) {
-    // Strict fallback chain: CACHE -> STALE -> REJECT
-    if (hasCachedQuote) {
+    if (hasCachedQuote && (cached?.tier === "STALE" || cached?.tier === "HOT")) {
       return {
         pricePaise: cached.data.pricePaise,
         source: "STALE",
@@ -222,6 +216,7 @@ const getBulkSnapshots = async (symbols = []) => {
           const normalized = normalizeQuote(q);
           if (validateQuote(normalized)) {
             normalized.trend = normalized.changePercent > 1 ? "BULLISH" : normalized.changePercent < -1 ? "BEARISH" : "SIDEWAYS";
+            void setQuoteCache(normalizeSymbol(normalized.symbol), normalized);
             return normalized;
           }
           return null;
@@ -231,7 +226,11 @@ const getBulkSnapshots = async (symbols = []) => {
       if (String(error?.message || "").includes("MISSING_REQUIRED_FIELD:regularMarketPrice")) {
         throw error;
       }
-      console.error(`[DataPipeline] Chunk fetch failed for ${apiSymbols.join(',')}:`, error.message);
+      logger.error({
+        event: "MARKET_DATA_CHUNK_FETCH_FAILED",
+        symbols: apiSymbols.join(","),
+        message: error.message,
+      });
       // Fallback for individual symbols in this chunk
       const individualResults = await Promise.all(chunk.map(async (s) => {
         try {
@@ -309,7 +308,10 @@ const getExploreData = async (limit = 64, offset = 0, search = "", segment = "al
   if (collected.length === 0) {
     const seed = symbols.slice(offset, offset + Math.min(limit, BATCH));
     if (!search && offset === 0) {
-      console.warn("[MarketExplorer] Live provider unavailable, serving deterministic synthetic universe.");
+      logger.warn({
+        event: "MARKET_EXPLORER_SYNTHETIC_FALLBACK",
+        message: "Live provider unavailable, serving deterministic synthetic universe.",
+      });
     }
     const stocks = seed.map((s, idx) => buildSyntheticQuote(normalizeSymbol(s), idx))
       .filter((st) => matchesExploreSegment(st, segment))
@@ -394,7 +396,11 @@ const getHistorical = async (symbol, period = "1mo") => {
       isFallback: false,
     };
   } catch (error) {
-    console.error(`[DataPipeline] History fail for ${apiSymbol}:`, error.message);
+    logger.error({
+      event: "MARKET_DATA_HISTORY_FAILED",
+      symbol: apiSymbol,
+      message: error.message,
+    });
     // Graceful Degradation: Return empty state instead of crashing
     return {
       prices: [],
@@ -459,7 +465,10 @@ const getMarketIndices = async () => {
       isFallback: false,
     }));
   } catch (error) {
-    console.error("[MarketDataService] Indices fail:", error.message);
+    logger.error({
+      event: "MARKET_INDICES_FETCH_FAILED",
+      message: error.message,
+    });
     return [];
   }
 };
@@ -495,7 +504,10 @@ const getTickerData = async () => {
         isFallback:    false,
       }));
   } catch (error) {
-    console.error('[MarketDataService] Ticker fail:', error.message);
+    logger.error({
+      event: "MARKET_TICKER_FETCH_FAILED",
+      message: error.message,
+    });
     // Deterministic synthetic fallback so the UI never shows empty
     return TICKER_SYMBOLS.map((sym) => ({
       symbol:        sym,

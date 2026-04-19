@@ -1,0 +1,12 @@
+{
+  "name": "stock-trading-platform",
+  "private": true,
+  "description": "Root scripts for production-style install/build/start (no workspace hoisting).",
+  "scripts": {
+    "install:all": "npm install --prefix backend && npm install --prefix frontend",
+    "build": "npm run build --prefix frontend",
+    "start": "npm start --prefix backend",
+    "verify:env": "node backend/scripts/verify-env.js",
+    "smoke:docs": "node -e \"console.log('Run against a live API: login, trade, portfolio, journal, profile. See README Production build section.'); process.exit(0)\""
+  }
+}

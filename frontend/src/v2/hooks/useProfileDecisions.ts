@@ -99,7 +99,9 @@ export function useProfileDecisions(): DecisionListStatus {
   const q = useQuery({
     queryKey: queryKeys.profile,
     queryFn:  loadProfile,
-    staleTime: 0,
+    staleTime: 20_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
   });
 
   if (q.isPending && !q.data) {
