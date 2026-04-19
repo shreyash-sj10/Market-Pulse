@@ -134,7 +134,7 @@ describe("entry.engine uncovered branch scenarios", () => {
       expect(result.verdict).toBe("BLOCK");
       expect(result.reasons.filter((reason) => reason === "REVENGE_TRADING_RISK")).toHaveLength(1);
     } finally {
-      if (previousVetoFloor == null) delete process.env.ENTRY_BEHAVIOR_VETO_FLOOR;
+      if (previousVetoFloor === undefined) delete process.env.ENTRY_BEHAVIOR_VETO_FLOOR;
       else process.env.ENTRY_BEHAVIOR_VETO_FLOOR = previousVetoFloor;
     }
   });

@@ -52,6 +52,7 @@ const evaluateExit = (input = {}) => {
   let deviationScore = 100;
   const notes = [];
 
+  // Prices are normalized to paise integers, so exact match is deterministic here.
   if (stopLossPaise && exitPricePaise === stopLossPaise) {
     exitType = "STOP_LOSS_HIT";
     deviationScore = 100;

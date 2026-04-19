@@ -13,7 +13,7 @@ describe("exit.engine branch coverage", () => {
     ).toThrow("INVALID_EXIT_INPUT: entry/exit prices are required");
   });
 
-  it("treats exit below stop loss as LATE_EXIT", () => {
+  it("classifies loss beyond stop loss as LATE_EXIT", () => {
     const result = evaluateExit({
       entryPlan: { entryPricePaise: 10000, stopLossPaise: 9000, targetPricePaise: 12000 },
       exitPricePaise: 8500,
