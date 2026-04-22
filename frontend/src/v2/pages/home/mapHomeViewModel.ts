@@ -5,7 +5,7 @@
 import type { DecisionCardProps } from "../../components/decision/DecisionCard";
 import type { PortfolioSummary } from "../../hooks/usePortfolioSummary";
 import type { TraceLine } from "../../hooks/useTraceData";
-import { formatINR, fromPaise } from "../../../utils/currency.utils.js";
+import { formatINR, formatSignedINR, fromPaise } from "../../../utils/currency.utils.js";
 
 export type SystemStateVM = {
   netEquityDisplay: string;
@@ -14,34 +14,64 @@ export type SystemStateVM = {
   riskStatusSub: string;
 };
 
-export type NextActionVariant = "loading" | "first_trade" | "review_attention" | "stable";
+export type SystemStatusVM = {
+  marketStatus: "OPEN" | "CLOSED";
+  marketReason: string;
+  dataStatus: "LIVE" | "DELAYED";
+  dataReason: string;
+  executionStatus: "READY" | "ACTION REQUIRED";
+  executionReason: string;
+};
+
+export type NextActionVariant = "loading" | "new_user" | "learning" | "active" | "review";
 
 export type NextActionVM =
-  | { variant: "loading" }
   | {
-      variant: "first_trade";
+      variant: "loading";
       headline: string;
       sub: string;
-      ctaExplore: true;
+      reasoning: string;
     }
   | {
-      variant: "review_attention";
+      variant: "new_user";
       headline: string;
       sub: string;
+      reasoning: string;
+      ctaLabel: string;
+    }
+  | {
+      variant: "learning";
+      headline: string;
+      sub: string;
+      reasoning: string;
+      ctaLabel: string;
+    }
+  | {
+      variant: "active";
+      headline: string;
+      sub: string;
+      reasoning: string;
+      ctaLabel: string;
+    }
+  | {
+      variant: "review";
+      headline: string;
+      sub: string;
+      reasoning: string;
       topItem: DecisionCardProps;
-      ctaReview: true;
+      ctaLabel: string;
     }
-  | {
-      variant: "stable";
-      headline: string;
-      sub: string;
-    };
 
 export type BehaviorInsightVM =
-  | { kind: "empty"; message: string }
+  | {
+      kind: "insufficient";
+      missing: string;
+      nextStep: string;
+    }
   | {
       kind: "insight";
-      mistake: string;
+      pattern: string;
+      impact: string;
       correction: string;
     };
 
@@ -65,15 +95,13 @@ export function sortAttentionByUrgency(items: DecisionCardProps[]): DecisionCard
 }
 
 function formatMoneyPaise(paise: number): string {
-  if (!Number.isFinite(paise)) return "—";
+  if (!Number.isFinite(paise)) return "Not enough data yet";
   return formatINR(Math.round(paise));
 }
 
 function signedPaise(paise: number): string {
-  if (!Number.isFinite(paise)) return "—";
-  if (paise === 0) return formatINR(0);
-  const sign = paise > 0 ? "+" : "";
-  return sign + formatINR(Math.abs(Math.round(paise)));
+  if (!Number.isFinite(paise)) return "Not enough data yet";
+  return formatSignedINR(Math.round(paise));
 }
 
 export function buildSystemState(
@@ -85,19 +113,19 @@ export function buildSystemState(
 ): SystemStateVM {
   if (portfolioLoading) {
     return {
-      netEquityDisplay: "—",
-      unrealizedPnlDisplay: "—",
-      riskStatusHeadline: "—",
-      riskStatusSub: "Loading account…",
+      netEquityDisplay: "Preparing your workspace",
+      unrealizedPnlDisplay: "Preparing your workspace",
+      riskStatusHeadline: "Preparing your workspace",
+      riskStatusSub: "Pulling live account and risk context.",
     };
   }
 
   if (summaryFetchFailed || !accountSummary) {
     return {
-      netEquityDisplay: "—",
-      unrealizedPnlDisplay: "—",
+      netEquityDisplay: "Not enough data yet",
+      unrealizedPnlDisplay: "Not enough data yet",
       riskStatusHeadline: "Unavailable",
-      riskStatusSub: "Portfolio summary could not be loaded.",
+      riskStatusSub: "Portfolio summary is not available right now.",
     };
   }
 
@@ -116,11 +144,11 @@ export function buildSystemState(
   let riskHead = "Stable";
   let riskSub = "No items in your review queue.";
   if (hasBlock) {
-    riskHead = "Action needed";
+    riskHead = "Action required";
     riskSub = "At least one holding is in a blocked risk band.";
   } else if (hasGuide) {
-    riskHead = "Review suggested";
-    riskSub = "Guidance available on one or more holdings.";
+    riskHead = "Action required";
+    riskSub = "Guidance is available on one or more holdings.";
   } else if (positionCount === 0) {
     riskHead = "No exposure";
     riskSub = "Open a position to activate portfolio risk signals.";
@@ -139,35 +167,66 @@ export function buildNextAction(
   attentionLoading: boolean,
   positionItems: DecisionCardProps[],
   sortedAttention: DecisionCardProps[],
+  profileItems: DecisionCardProps[],
 ): NextActionVM {
   if (portfolioLoading || attentionLoading) {
-    return { variant: "loading" };
-  }
-
-  if (positionItems.length === 0) {
     return {
-      variant: "first_trade",
-      headline: "Start your first trade",
-      sub: "You have no open positions. Explore the market scanner to place an order.",
-      ctaExplore: true,
+      variant: "loading",
+      headline: "Preparing your workspace",
+      sub: "Syncing portfolio, behavior, and risk signals.",
+      reasoning: "This prevents acting on partial data.",
     };
   }
 
-  if (sortedAttention.length > 0) {
+  if (positionItems.length > 0 && sortedAttention.length > 0) {
     const top = sortedAttention[0];
     return {
-      variant: "review_attention",
-      headline: "Review required",
-      sub: `Highest priority: ${top.title} (${top.decision.action}, ${top.decision.confidence}% confidence).`,
+      variant: "review",
+      headline: "Action required",
+      sub: `Review ${top.title} first: ${top.decision.action} at ${top.decision.confidence}% confidence.`,
+      reasoning: "This item currently has the highest risk impact in your open book.",
       topItem: top,
-      ctaReview: true,
+      ctaLabel: "Review top risk",
+    };
+  }
+
+  if (positionItems.length > 0) {
+    return {
+      variant: "active",
+      headline: "Portfolio is active",
+      sub: "Your positions are currently within policy limits.",
+      reasoning: "Continue monitoring for regime shifts or sudden volatility.",
+      ctaLabel: "Inspect positions",
+    };
+  }
+
+  const activityCount = profileItems.length;
+  if (activityCount === 0) {
+    return {
+      variant: "new_user",
+      headline: "No trade history detected",
+      sub: "You are at setup stage with no completed or active trades yet.",
+      reasoning: "The system needs your first trade cycle to start generating personalized guidance.",
+      ctaLabel: "Open market scanner",
+    };
+  }
+
+  if (activityCount < 3) {
+    return {
+      variant: "learning",
+      headline: "Learning phase in progress",
+      sub: `Only ${activityCount} trade signal${activityCount === 1 ? "" : "s"} observed so far.`,
+      reasoning: "More trade outcomes are needed before behavior and risk baselines become reliable.",
+      ctaLabel: "Place next planned trade",
     };
   }
 
   return {
-    variant: "stable",
-    headline: "System stable — no action required",
-    sub: "Your open positions are within the current risk policy. Check back if the market moves sharply.",
+    variant: "learning",
+    headline: "No active positions",
+    sub: "Your account is currently flat.",
+    reasoning: "Create a planned position to re-activate live decision guidance.",
+    ctaLabel: "Explore setups",
   };
 }
 
@@ -178,20 +237,74 @@ export function takeAttentionSlice(sorted: DecisionCardProps[], max: number): De
 export function buildBehaviorInsight(profileItems: DecisionCardProps[]): BehaviorInsightVM {
   const first = profileItems[0];
   if (!first) {
-    return { kind: "empty", message: "No behavioral risks detected" };
+    return {
+      kind: "insufficient",
+      missing: "Not enough data yet. The behavior model needs more completed trade outcomes.",
+      nextStep: "Close at least 3 planned trades with journal notes to unlock pattern analysis.",
+    };
   }
-  const mistake = first.title?.trim() || "";
+  const pattern = first.title?.trim() || "";
+  const impact = first.decision.reason?.trim() || "";
   const correction =
     (typeof first.meta?.journalInsight === "string" && first.meta.journalInsight.trim()) ||
-    first.decision.reason ||
+    impact ||
     "";
-  if (!mistake && !correction) {
-    return { kind: "empty", message: "No behavioral risks detected" };
+  if (!pattern && !impact && !correction) {
+    return {
+      kind: "insufficient",
+      missing: "Not enough data yet. Current behavior signals are too weak.",
+      nextStep: "Record the setup thesis and exit reason for your next few trades.",
+    };
   }
   return {
     kind: "insight",
-    mistake: mistake || "Pattern note",
-    correction: correction || "—",
+    pattern: pattern || "Execution drift under volatility",
+    impact: impact || "This behavior can reduce expectancy when risk increases.",
+    correction: correction || "Follow your predefined invalidation level before changing position size.",
+  };
+}
+
+export function buildSystemStatus(
+  portfolioLoading: boolean,
+  attentionLoading: boolean,
+  hasAnyError: boolean,
+  sortedAttention: DecisionCardProps[],
+): SystemStatusVM {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  const weekday = parts.find((p) => p.type === "weekday")?.value ?? "Mon";
+  const hour = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
+  const minute = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
+  const totalMinutes = hour * 60 + minute;
+  const isWeekday = !["Sat", "Sun"].includes(weekday);
+  const openMinutes = 9 * 60 + 15;
+  const closeMinutes = 15 * 60 + 30;
+  const isMarketOpen = isWeekday && totalMinutes >= openMinutes && totalMinutes < closeMinutes;
+
+  const hasUrgent = sortedAttention.some(
+    (item) => item.decision.action === "BLOCK" || item.decision.action === "GUIDE",
+  );
+  const isDataDelayed = portfolioLoading || attentionLoading || hasAnyError;
+
+  return {
+    marketStatus: isMarketOpen ? "OPEN" : "CLOSED",
+    marketReason: isMarketOpen
+      ? "NSE cash session is live (IST)."
+      : "Outside NSE cash trading session (IST).",
+    dataStatus: isDataDelayed ? "DELAYED" : "LIVE",
+    dataReason: isDataDelayed
+      ? "Feeds are syncing or partially unavailable."
+      : "Portfolio and risk feeds are synced.",
+    executionStatus: hasUrgent ? "ACTION REQUIRED" : "READY",
+    executionReason: hasUrgent
+      ? "At least one position needs review before next execution."
+      : "No blocking risk signal is active.",
   };
 }
 

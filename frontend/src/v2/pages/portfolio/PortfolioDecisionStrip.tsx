@@ -17,9 +17,9 @@ function systemContextLine(tier: PlanTier): string {
 }
 
 function statusLabel(tier: PlanTier): string {
-  if (tier === "breach") return "Breach";
-  if (tier === "at-risk") return "At risk";
-  return "Within plan";
+  if (tier === "breach") return "Execution Locked";
+  if (tier === "at-risk") return "Needs Review";
+  return "Controlled";
 }
 
 type Props = {
@@ -78,7 +78,7 @@ export function PortfolioPendingStrip({ order, formatPriceInr, formatNotionalInr
             {order.preTradeEmotion ? (
               <span className="portfolio-strip-mood" title="Self-reported mood when you placed this order">
                 {" "}
-                · Mood: {order.preTradeEmotion}
+                · Behavior: {order.preTradeEmotion}
               </span>
             ) : null}
           </p>
@@ -95,6 +95,46 @@ export function PortfolioPendingStrip({ order, formatPriceInr, formatNotionalInr
   );
 }
 
+function behaviorLabel(raw: string | null | undefined): string {
+  if (!raw) return "Not logged";
+  const value = raw.trim().toUpperCase();
+  if (["CALM", "DISCIPLINED", "CONFIDENT"].includes(value)) return "Calm / Disciplined";
+  if (["UNCERTAIN", "ANXIOUS"].includes(value)) return "Uncertain / Tense";
+  if (["FOMO", "EXCITED"].includes(value)) return "Impulse risk";
+  if (["REVENGE", "FRUSTRATED"].includes(value)) return "Tilt / Recovery";
+  return value;
+}
+
+function alignmentLabel(verdict: string | null | undefined): string {
+  const v = (verdict || "").toUpperCase();
+  if (v === "ACT") return "Controlled";
+  if (v === "GUIDE") return "Needs review";
+  if (v === "BLOCK") return "Execution Locked";
+  return "Unknown";
+}
+
+function estimateEntryPricePaise(trade: ClosedStripTrade): number | null {
+  if (trade.pnlPct == null || !Number.isFinite(trade.pnlPct)) return null;
+  const denominator = 1 + trade.pnlPct / 100;
+  if (!Number.isFinite(denominator) || denominator <= 0) return null;
+  return Math.round(trade.pricePaise / denominator);
+}
+
+function closedInsight(trade: ClosedStripTrade): string {
+  const pnl = trade.pnlPct ?? null;
+  const verdict = (trade.verdict || "").toUpperCase();
+  const behavior = (trade.preTradeEmotionAtEntry || "").toUpperCase();
+  const disciplinedBehavior = ["CALM", "DISCIPLINED", "CONFIDENT"].includes(behavior);
+  const impulsiveBehavior = ["FOMO", "EXCITED", "REVENGE", "FRUSTRATED"].includes(behavior);
+
+  if (pnl != null && pnl > 1 && disciplinedBehavior && verdict === "ACT") return "Disciplined execution";
+  if (pnl != null && pnl < 0 && impulsiveBehavior) return "Low edge trade";
+  if (pnl != null && pnl < 0 && verdict === "GUIDE") return "Premature exit";
+  if (pnl != null && pnl > 0 && verdict === "ACT") return "Controlled follow-through";
+  if (verdict === "BLOCK") return "Execution Locked warning breached before close";
+  return "Review setup quality and exit timing";
+}
+
 export function PortfolioClosedStrip({ trade, formatExitInr, formatPnlInr }: ClosedProps) {
   const pnl = trade.pnlPct;
   const pnlPos = pnl != null && pnl > 0;
@@ -108,10 +148,12 @@ export function PortfolioClosedStrip({ trade, formatExitInr, formatPnlInr }: Clo
           : "portfolio-strip__pnl portfolio-strip__pnl--flat";
   const pnlStr = pnl == null ? "—" : `${pnlPos ? "+" : ""}${pnl.toFixed(2)}%`;
   const date = trade.closedAt ? new Date(trade.closedAt).toLocaleDateString("en-IN") : "—";
-  const pnlMoney =
-    trade.pnlPaise != null
-      ? `${trade.pnlPaise >= 0 ? "+" : ""}${formatPnlInr(trade.pnlPaise)}`
-      : null;
+  const pnlMoney = trade.pnlPaise != null ? formatPnlInr(trade.pnlPaise) : null;
+  const entryPaise = estimateEntryPricePaise(trade);
+  const behavior = behaviorLabel(trade.preTradeEmotionAtEntry);
+  const alignment = alignmentLabel(trade.verdict);
+  const insight = closedInsight(trade);
+  const entryDisplay = entryPaise != null ? formatExitInr(entryPaise) : "—";
 
   return (
     <article
@@ -123,21 +165,20 @@ export function PortfolioClosedStrip({ trade, formatExitInr, formatPnlInr }: Clo
         <div className="portfolio-decision-strip__left">
           <div className="portfolio-decision-strip__symbol">{trade.symbol}</div>
           <div className="portfolio-decision-strip__entry">
-            {formatExitInr(trade.pricePaise)} · {trade.quantity}u · {trade.side}
+            Entry vs Exit · {entryDisplay} → {formatExitInr(trade.pricePaise)}
+          </div>
+          <div className="portfolio-decision-strip__entry">
+            Result · {pnlStr} {pnlMoney ? `(${pnlMoney})` : ""}
+          </div>
+          <div className="portfolio-decision-strip__entry">
+            Behavior · {behavior} · Alignment · {alignment}
           </div>
           <p className="portfolio-decision-strip__context portfolio-decision-strip__context--muted">
-            Closed {date}
-            {pnlMoney ? ` · ${pnlMoney}` : ""}
-            {trade.preTradeEmotionAtEntry ? (
-              <span className="portfolio-strip-mood" title="Self-reported mood when you opened">
-                {" "}
-                · Mood @ open: {trade.preTradeEmotionAtEntry}
-              </span>
-            ) : null}
+            Closed {date} · System insight: {insight}
           </p>
         </div>
         <div className="portfolio-decision-strip__center">
-          <span className="portfolio-strip-badge portfolio-strip-badge--closed">Recorded</span>
+          <span className="portfolio-strip-badge portfolio-strip-badge--closed">Completed</span>
           <div className={pnlCls}>{pnlStr}</div>
         </div>
         <div className="portfolio-decision-strip__right" />
@@ -182,7 +223,7 @@ export default function PortfolioDecisionStrip({ item, onReview }: Props) {
         </div>
         <div className="portfolio-decision-strip__right">
           <button type="button" className="portfolio-strip__cta" onClick={onReview}>
-            Review trade
+            Open terminal
           </button>
         </div>
       </div>

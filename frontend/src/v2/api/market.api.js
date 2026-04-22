@@ -1,7 +1,7 @@
 import axios from "axios";
 import api from "./api.js";
 import { getIndianStockPrice } from "./indianMarket.api.js";
-import { formatINR, getExchangeRate } from "../../utils/currency.utils.js";
+import { getExchangeRate } from "../../utils/currency.utils.js";
 import { normalizeResponse } from "../contracts/contract.js";
 
 // Finnhub is used for US stocks and historical sparklines
@@ -21,7 +21,7 @@ export const fetchNiftyConstituents = async () => {
       name: `${item.name} (${item.sector})`,
       sector: item.sector
     }));
-  } catch (error) {
+  } catch {
     console.warn("Fallback used", { source: "market" });
     return [
       { symbol: "RELIANCE.NS", name: "Reliance Industries Ltd", sector: "Energy" },
@@ -110,7 +110,7 @@ export const getMarketIndices = async () => {
   try {
     const res = await api.get("/market/indices");
     return normalizeResponse(res);
-  } catch (error) {
+  } catch {
     return { success: false, data: { indices: [] }, degraded: true };
   }
 };
@@ -121,7 +121,7 @@ export const validateSymbol = async (symbol) => {
   try {
     const res = await api.get(`/market/validate?symbol=${symbol}`);
     return normalizeResponse(res);
-  } catch (error) {
+  } catch {
     return { isValid: false };
   }
 };
@@ -179,7 +179,7 @@ export const getHistoricalPrices = async (symbol, timeframe = "1mo") => {
     const period = periodMap[timeframe] || "1mo";
     const res = await api.get(`/market/history?symbol=${symbol}&period=${period}`);
     return normalizeResponse(res);
-  } catch (error) {
+  } catch {
     return {
       success: false,
       data: { prices: [], isSynthetic: false, isFallback: true, source: "FALLBACK" },
@@ -223,7 +223,7 @@ export const getExplorerData = async (limit = 16, offset = 0, query = "") => {
   try {
     const res = await api.get(`/market/explore?limit=${limit}&offset=${offset}&query=${query}`);
     return normalizeResponse(res);
-  } catch (error) {
+  } catch {
     throw new Error("Market data unavailable");
   }
 };
@@ -232,7 +232,7 @@ export const getMarketNews = async (symbol = null) => {
   try {
     const res = await api.get(`/market/news${symbol ? `?symbol=${symbol}` : ''}`);
     return normalizeResponse(res);
-  } catch (error) {
+  } catch {
     return { success: false, state: "PARTIAL", status: "UNAVAILABLE", signals: [] };
   }
 };
@@ -241,7 +241,7 @@ export const getPortfolioNews = async () => {
   try {
     const res = await api.get("/market/news/portfolio");
     return normalizeResponse(res);
-  } catch (error) {
+  } catch {
     return { success: false, state: "PARTIAL", status: "UNAVAILABLE", signals: [] };
   }
 };

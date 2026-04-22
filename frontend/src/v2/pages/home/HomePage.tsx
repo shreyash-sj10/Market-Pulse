@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import AppLayout from "../../layout/AppLayout/AppLayout.jsx";
 import { useHomeViewModel } from "./useHomeViewModel";
@@ -6,15 +6,10 @@ import { openDecisionPanel } from "../../trade-flow";
 import { ROUTES } from "../../routing/routes";
 import MetricBlock from "./components/MetricBlock";
 import NextActionPanel from "./components/NextActionPanel";
-import AttentionCard from "./components/AttentionCard";
 import PositionRow from "./components/PositionRow";
 import BehaviorInsight from "./components/BehaviorInsight";
-import EventLog from "./components/EventLog";
-import {
-  attentionCtaLabel,
-  positionStatusFromDecision,
-  formatEntryInr,
-} from "./mapHomeViewModel";
+import SystemStatusBar from "./components/SystemStatusBar";
+import { positionStatusFromDecision, formatEntryInr } from "./mapHomeViewModel";
 import type { DecisionCardProps } from "../../components/decision/DecisionCard";
 
 function openPanelFromItem(item: DecisionCardProps): void {
@@ -29,129 +24,130 @@ export default function HomePage() {
   const vm = useHomeViewModel();
   const navigate = useNavigate();
   const [behaviorAck, setBehaviorAck] = useState(false);
+  const rankedPositions = useMemo(() => {
+    const rank: Record<string, number> = { BLOCK: 3, GUIDE: 2, ACT: 1 };
+    return [...vm.positions].sort((a, b) => (rank[b.decision.action] ?? 0) - (rank[a.decision.action] ?? 0));
+  }, [vm.positions]);
 
   const onReviewNext = useCallback(() => {
-    if (vm.nextAction.variant === "review_attention") {
+    if (vm.nextAction.variant === "review") {
       openPanelFromItem(vm.nextAction.topItem);
     }
   }, [vm.nextAction]);
 
+  const onHeroPrimaryAction = useCallback(() => {
+    navigate(ROUTES.portfolio);
+  }, [navigate]);
+
+  const pnlInterpretation = vm.loading.portfolio
+    ? "Preparing your workspace"
+    : vm.systemState.unrealizedPnlDisplay.startsWith("-")
+      ? "Slight drawdown vs entries"
+      : vm.systemState.unrealizedPnlDisplay.startsWith("+")
+        ? "Favorable move vs entries"
+        : vm.systemState.unrealizedPnlDisplay.includes("Not enough data")
+          ? "Not enough data yet to assess live P&L"
+          : "Flat vs entries across open positions";
+
   return (
     <AppLayout>
-      <div className="home-terminal">
-        {/* SECTION 1 — SYSTEM STATE */}
-        <section className="home-terminal__metrics" aria-label="Account state">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 p-4 md:p-8">
+        <SystemStatusBar model={vm.systemStatus} />
+
+        <NextActionPanel model={vm.nextAction} onReview={onReviewNext} onPrimaryAction={onHeroPrimaryAction} />
+
+        <section className="grid gap-4 md:grid-cols-3" aria-label="Account metrics">
           <MetricBlock
             label="Net equity"
             value={vm.systemState.netEquityDisplay}
-            sub="Total account value"
+            interpretation={
+              vm.loading.portfolio
+                ? "Preparing your workspace"
+                : "Total account value across cash and open holdings"
+            }
+            isLoading={vm.loading.portfolio}
           />
           <MetricBlock
             label="Unrealized P&L"
             value={vm.systemState.unrealizedPnlDisplay}
-            sub="Open positions vs entry"
+            interpretation={pnlInterpretation}
+            isLoading={vm.loading.portfolio}
           />
           <MetricBlock
-            label="Risk / status"
+            label="Risk state"
             value={vm.systemState.riskStatusHeadline}
-            sub={vm.systemState.riskStatusSub}
-            valueTone="status"
+            interpretation={vm.systemState.riskStatusSub}
+            isLoading={vm.loading.portfolio}
           />
         </section>
 
-        {/* SECTION 2 — NEXT ACTION */}
-        <NextActionPanel model={vm.nextAction} onReview={onReviewNext} />
-
-        <div className="home-terminal__grid">
-          <div className="home-terminal__main">
-            {/* SECTION 3 — ATTENTION (conditional) */}
-            {vm.attentionTop3.length > 0 ? (
-              <section className="home-panel" aria-label="Attention queue">
-                <header className="home-panel__head">
-                  <h2 className="home-panel__title">Attention required</h2>
-                  <p className="home-panel__lead">
-                    Sorted by urgency (BLOCK → GUIDE → ACT). Showing up to three items.
-                  </p>
-                </header>
-                <div className="home-panel__stack">
-                  {vm.attentionTop3.map((item, idx) => (
-                    <AttentionCard
-                      key={`${item.title}-${item.decision.action}-${idx}`}
-                      tag={item.decision.action}
-                      symbol={item.title}
-                      reason={item.decision.reason}
-                      confidence={item.decision.confidence}
-                      ctaLabel={attentionCtaLabel(item.decision.action)}
-                      onAction={() => openPanelFromItem(item)}
+        <div className="grid gap-8 lg:grid-cols-[2fr_1fr]">
+          <section className="space-y-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-6" aria-label="Open positions">
+            <header className="space-y-2">
+              <h2 className="text-base font-semibold tracking-tight text-slate-100">Active positions</h2>
+              <p className="text-sm leading-relaxed text-slate-400">
+                Highest risk first. Focus on the position that needs action before scanning for new trades.
+              </p>
+            </header>
+            {rankedPositions.length === 0 ? (
+              <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+                <p className="text-sm font-medium text-slate-100">No active positions right now</p>
+                <p className="mt-2 text-sm leading-relaxed text-slate-400">
+                  Without an open position, live execution and risk feedback cannot be generated.
+                </p>
+                <p className="mt-2 text-sm leading-relaxed text-cyan-300">
+                  Recommended action: open a planned starter position from the market scanner.
+                </p>
+                <button
+                  type="button"
+                  className="mt-4 min-h-10 rounded-lg bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
+                  onClick={() => navigate(ROUTES.markets)}
+                >
+                  Open market scanner
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {rankedPositions.map((row) => {
+                  const pnl = row.meta?.pnlPct ?? 0;
+                  const pnlStr = `${pnl > 0 ? "+" : ""}${pnl.toFixed(2)}%`;
+                  const status = positionStatusFromDecision(row.decision.action);
+                  const riskNote =
+                    status === "At risk"
+                      ? "Risk threshold breached. Review and adjust exposure."
+                      : status === "Guided"
+                        ? "Guidance available. Verify thesis before adding size."
+                        : "Within current policy guardrails.";
+                  return (
+                    <PositionRow
+                      key={row.title}
+                      symbol={row.title}
+                      entryDisplay={formatEntryInr(row.meta?.avgPricePaise)}
+                      statusLabel={status}
+                      pnlPctDisplay={pnlStr}
+                      riskNote={riskNote}
+                      actionLabel={status === "At risk" ? "Review risk now" : "Open decision brief"}
+                      onReview={() => openPanelFromItem(row)}
                     />
-                  ))}
-                </div>
-              </section>
-            ) : null}
+                  );
+                })}
+              </div>
+            )}
+          </section>
 
-            {/* SECTION 4 — ACTIVE POSITIONS */}
-            <section className="home-panel" aria-label="Open positions">
-              <header className="home-panel__head">
-                <h2 className="home-panel__title">Active positions</h2>
-                <p className="home-panel__lead">Symbol · entry · status · P&amp;L — all from your portfolio feed.</p>
-              </header>
-              {vm.positions.length === 0 ? (
-                <div className="home-empty-pos">
-                  <p className="home-empty-pos__text">You have no active positions</p>
-                  <button
-                    type="button"
-                    className="home-empty-pos__cta"
-                    onClick={() => navigate(ROUTES.markets)}
-                  >
-                    Explore Markets
-                  </button>
-                </div>
-              ) : (
-                <div className="home-pos-head" aria-hidden>
-                  <span>Symbol</span>
-                  <span>Entry</span>
-                  <span>Status</span>
-                  <span>P&amp;L %</span>
-                  <span />
-                </div>
-              )}
-              {vm.positions.map((row) => {
-                const pnl = row.meta?.pnlPct ?? 0;
-                const pnlStr = `${pnl > 0 ? "+" : ""}${pnl.toFixed(2)}%`;
-                return (
-                  <PositionRow
-                    key={row.title}
-                    symbol={row.title}
-                    entryDisplay={formatEntryInr(row.meta?.avgPricePaise)}
-                    statusLabel={positionStatusFromDecision(row.decision.action)}
-                    pnlPctDisplay={pnlStr}
-                    onReview={() => openPanelFromItem(row)}
-                  />
-                );
-              })}
-            </section>
-          </div>
-
-          {/* SECTION 5 — CONTEXT */}
-          <aside className="home-terminal__aside" aria-label="Context">
-            <section className="home-panel home-panel--compact">
-              <header className="home-panel__head">
-                <h2 className="home-panel__title">Behavior insight</h2>
-                <p className="home-panel__lead">From your profile learning feed.</p>
+          <aside className="space-y-4" aria-label="Behavior insight">
+            <section className="space-y-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-6">
+              <header className="space-y-2">
+                <h2 className="text-base font-semibold tracking-tight text-slate-100">Behavior insight</h2>
+                <p className="text-sm leading-relaxed text-slate-400">
+                  This panel explains behavior patterns, impact, and the correction to apply on the next trade.
+                </p>
               </header>
               <BehaviorInsight
                 model={vm.behaviorInsight}
                 acknowledged={behaviorAck}
                 onAcknowledge={() => setBehaviorAck(true)}
               />
-            </section>
-
-            <section className="home-panel home-panel--compact">
-              <header className="home-panel__head">
-                <h2 className="home-panel__title">Event log</h2>
-                <p className="home-panel__lead">Trace stream from the server.</p>
-              </header>
-              <EventLog entries={vm.eventLogs} />
             </section>
           </aside>
         </div>

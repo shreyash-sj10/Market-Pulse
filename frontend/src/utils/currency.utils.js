@@ -16,7 +16,7 @@ export const initCurrency = async () => {
       return currencyStatus;
     }
     throw new Error("INR_RATE_NOT_FOUND");
-  } catch (error) {
+  } catch {
     if (Number.isFinite(currentExchangeRate)) {
       currencyStatus = { isFallback: true, isSynthetic: false, source: "ENV_DEFAULT" };
       console.warn("[Currency] Live sync failed. Using explicit ENV fallback rate.");
@@ -43,6 +43,22 @@ export const formatINR = (paise) => {
     currency: "INR",
     maximumFractionDigits: 2,
   }).format(val / 100);
+};
+
+/**
+ * Signed INR formatter for P&L-like values.
+ * - Positive: "+₹X"
+ * - Negative: "-₹X" (from Intl formatter)
+ * - Zero:     "₹0.00" by default (or +₹0.00 when opted in)
+ */
+export const formatSignedINR = (paise, options = {}) => {
+  const val = Number(paise);
+  if (!Number.isFinite(val)) return "₹0.00";
+
+  const { showPlusForZero = false } = options;
+  if (val > 0) return `+${formatINR(val)}`;
+  if (val < 0) return formatINR(val);
+  return showPlusForZero ? `+${formatINR(0)}` : formatINR(0);
 };
 
 export const getExchangeRate = () => {

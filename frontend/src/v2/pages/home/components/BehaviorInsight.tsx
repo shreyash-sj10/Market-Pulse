@@ -13,27 +13,48 @@ export default function BehaviorInsight({
 }: BehaviorInsightProps) {
   if (acknowledged) {
     return (
-      <div className="home-behavior">
-        <p className="home-behavior__note">Note dismissed for this session.</p>
+      <div>
+        <p className="rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm leading-relaxed text-slate-400">
+          Note dismissed for this session.
+        </p>
       </div>
     );
   }
 
-  if (model.kind === "empty") {
+  if (model.kind === "insufficient") {
     return (
-      <div className="home-behavior">
-        <p className="home-behavior__empty">{model.message}</p>
+      <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Missing</p>
+          <p className="mt-2 text-sm leading-relaxed text-slate-200">{model.missing}</p>
+        </div>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Next step</p>
+          <p className="mt-2 text-sm leading-relaxed text-cyan-300">{model.nextStep}</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="home-behavior">
-      <p className="home-behavior__label">Focus</p>
-      <p className="home-behavior__mistake">{model.mistake}</p>
-      <p className="home-behavior__label home-behavior__label--sub">Correction</p>
-      <p className="home-behavior__correction">{model.correction}</p>
-      <button type="button" className="home-behavior__ack" onClick={onAcknowledge}>
+    <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Pattern</p>
+        <p className="mt-2 text-sm font-medium leading-relaxed text-slate-100">{model.pattern}</p>
+      </div>
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Impact</p>
+        <p className="mt-2 text-sm leading-relaxed text-slate-300">{model.impact}</p>
+      </div>
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Correction</p>
+        <p className="mt-2 text-sm leading-relaxed text-cyan-300">{model.correction}</p>
+      </div>
+      <button
+        type="button"
+        className="min-h-10 rounded-lg border border-slate-700 px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-cyan-400 hover:text-cyan-300"
+        onClick={onAcknowledge}
+      >
         Acknowledge
       </button>
     </div>

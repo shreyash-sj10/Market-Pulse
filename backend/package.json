@@ -16,7 +16,8 @@
     "migrate:strict": "node scripts/strictMigration.js",
     "migrate:holdings": "node scripts/migrateHoldingsToCollection.js",
     "migrate:holding-trade-type": "node scripts/migrateHoldingTradeType.js",
-    "seed:portfolio": "node scripts/seedPortfolioDemo.js"
+    "seed:portfolio": "node scripts/seedPortfolioDemo.js",
+    "simulate": "tsx src/simulation/cli.ts"
   },
   "jest": {
     "globalSetup": "<rootDir>/tests/global/jest-mongo-global-setup.js",
@@ -135,6 +136,7 @@
     "kill-port": "^2.0.1",
     "mongodb-memory-server": "^10.4.3",
     "nodemon": "^3.1.11",
-    "supertest": "^7.2.2"
+    "supertest": "^7.2.2",
+    "tsx": "^4.21.0"
   }
 }

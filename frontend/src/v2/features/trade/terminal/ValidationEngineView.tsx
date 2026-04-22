@@ -18,7 +18,7 @@ export default function ValidationEngineView({
   return (
     <section className="trade-terminal-section">
       <DecisionResult outcome={outcome} message={effectiveMessage} />
-      <p className="trade-terminal-kicker trade-terminal-check-heading">SYSTEM CHECK</p>
+      <p className="trade-terminal-kicker trade-terminal-check-heading">Execution readiness</p>
       <RiskValidator {...riskProps} />
     </section>
   );

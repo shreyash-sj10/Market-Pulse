@@ -7,11 +7,10 @@ import { usePortfolioSummary } from "../../hooks/usePortfolioSummary";
 import { useClosedPositions } from "../../hooks/useClosedPositions";
 import { useTraceData } from "../../hooks/useTraceData";
 import { TRADE_SUCCESS_SESSION_KEY } from "../../trade-flow";
-import { formatINR, fromPaise } from "../../../utils/currency.utils";
+import { formatINR, formatSignedINR, fromPaise } from "../../../utils/currency.utils";
 import type { DecisionCardProps } from "../../components/decision/DecisionCard";
 import DecisionPanel from "../../features/trade/DecisionPanel";
 import type { TradePanelContext } from "../../trade-flow";
-import MetricBlock from "../home/components/MetricBlock";
 import EventLog from "../home/components/EventLog";
 import { buildEventLogs } from "../home/mapHomeViewModel";
 import PortfolioDecisionStrip, { PortfolioClosedStrip, PortfolioPendingStrip } from "./PortfolioDecisionStrip";
@@ -19,7 +18,7 @@ import { buildPortfolioSessionLogs } from "./portfolioSessionLogs";
 import { ROUTES } from "../../routing/routes";
 import type { PortfolioSummary } from "../../hooks/usePortfolioSummary";
 
-type PortfolioTab = "Active Positions" | "Pending Orders" | "Closed History";
+type PortfolioTab = "DEPLOYED" | "QUEUED" | "COMPLETED";
 
 function exposurePct(netEquityPaise: number, investedPaise: number): number | null {
   if (!Number.isFinite(netEquityPaise) || netEquityPaise <= 0) return null;
@@ -34,17 +33,76 @@ function activeRiskPct(items: DecisionCardProps[]): number | null {
   return Math.round((sum / items.length) * 10) / 10;
 }
 
-type IntelBlock = { concentration: string; weak: string; sentimentShift: string };
+type SystemInsightBlock = {
+  id: string;
+  title: string;
+  state: string;
+  interpretation: string;
+  action: string;
+  tone: "neutral" | "good" | "warn" | "bad";
+};
 
-function buildPortfolioIntel(items: DecisionCardProps[], summary: PortfolioSummary): IntelBlock {
+function exposureBand(exposure: number | null): { label: string; tone: SystemInsightBlock["tone"] } {
+  if (exposure == null) return { label: "No Exposure", tone: "neutral" };
+  if (exposure >= 75) return { label: "High Exposure", tone: "warn" };
+  if (exposure >= 40) return { label: "Medium Exposure", tone: "neutral" };
+  return { label: "Low Exposure", tone: "good" };
+}
+
+function riskStateLabel(breachCount: number, atRiskCount: number, deployedCount: number): string {
+  if (breachCount > 0) return "Execution Locked";
+  if (atRiskCount > 0) return "Controlled (Elevated)";
+  if (deployedCount > 0) return "Controlled";
+  return "Ready to Deploy";
+}
+
+function buildPortfolioIntel(
+  items: DecisionCardProps[],
+  summary: PortfolioSummary,
+  exposure: number | null,
+): SystemInsightBlock[] {
+  const blocks: SystemInsightBlock[] = [];
+  const exp = exposureBand(exposure);
+
+  blocks.push({
+    id: "capital-deployment",
+    title: "Capital deployment",
+    state: exp.label,
+    interpretation:
+      exp.label === "High Exposure"
+        ? "Most deployable capital is already committed across open lines."
+        : exp.label === "Medium Exposure"
+          ? "Capital is partially deployed with room for selective adds."
+          : exp.label === "Low Exposure"
+            ? "Capital utilization is light and risk capacity remains available."
+            : "No deployed capital yet in the live book.",
+    action:
+      exp.label === "High Exposure"
+        ? "Prioritize de-risking or tighten risk bands before adding new size."
+        : exp.label === "Medium Exposure"
+          ? "Add only if setups are high-confidence and non-correlated."
+          : "Use scanner-qualified setups to deploy with controlled sizing.",
+    tone: exp.tone,
+  });
+
   if (items.length === 0) {
-    return {
-      concentration:
-        "No deployed capital — concentration risk is zero until you open a line.",
-      weak: "No weak legs in the book; add positions to surface underperformers vs entry.",
-      sentimentShift:
-        "Posture is idle: decision engine has no live holdings to bias toward risk-on or risk-off.",
-    };
+    blocks.push({
+      id: "position-quality",
+      title: "Position quality",
+      state: "Ready to Deploy",
+      interpretation: "No active positions. System checks are clear for fresh deployment.",
+      action: "Go to Market Scanner and open only controlled, thesis-backed setups.",
+      tone: "good",
+    });
+    blocks.push({
+      id: "system-posture",
+      title: "System posture",
+      state: "Controlled",
+      interpretation: "No open-line stress signals because no capital is currently at risk.",
+      action: "Maintain discipline by enforcing thesis, behavior state, and risk brackets on entry.",
+      tone: "neutral",
+    });
+    return blocks;
   }
 
   const notionals = items.map((i) => {
@@ -56,44 +114,108 @@ function buildPortfolioIntel(items: DecisionCardProps[], summary: PortfolioSumma
   const top = [...notionals].sort((a, b) => b.n - a.n)[0];
   const topPct = totalN > 0 && top ? (top.n / totalN) * 100 : 0;
 
-  let concentration: string;
+  let concentrationState: string;
+  let concentrationInterpretation: string;
+  let concentrationAction: string;
+  let concentrationTone: SystemInsightBlock["tone"];
   if (totalN <= 0) {
-    concentration = "Sizing data is thin — concentration will sharpen as fills sync.";
+    concentrationState = "Sizing Sync Pending";
+    concentrationInterpretation = "Sizing data is still syncing; concentration profile is not yet stable.";
+    concentrationAction = "Wait for fills to sync before changing risk based on concentration.";
+    concentrationTone = "neutral";
   } else if (topPct > 48) {
-    concentration = `Heavy line: ${top.sym} is ~${topPct.toFixed(0)}% of estimated notional. Trim or hedge if policy caps single-name exposure.`;
+    concentrationState = "Concentrated";
+    concentrationInterpretation = `${top.sym} is ~${topPct.toFixed(0)}% of deployed notional, creating single-name concentration risk.`;
+    concentrationAction = "Trim size or add diversification before deploying new correlated positions.";
+    concentrationTone = "warn";
   } else if (topPct > 28) {
-    concentration = `Largest sleeve is ${top.sym} (~${topPct.toFixed(0)}% of book). Monitor correlation if you add beta in the same sector.`;
+    concentrationState = "Moderate concentration";
+    concentrationInterpretation = `${top.sym} is the largest sleeve at ~${topPct.toFixed(0)}% of the deployed book.`;
+    concentrationAction = "Check sector/correlation overlap before adding more beta exposure.";
+    concentrationTone = "neutral";
   } else {
-    concentration = `Book is spread — top name ~${topPct.toFixed(0)}% across ${items.length} open line(s).`;
+    concentrationState = "Balanced";
+    concentrationInterpretation = `Exposure is spread; top line is ~${topPct.toFixed(0)}% across ${items.length} deployed positions.`;
+    concentrationAction = "Keep adds selective and preserve spread quality.";
+    concentrationTone = "good";
   }
 
   const sortedByPnl = [...items].sort((a, b) => (a.meta?.pnlPct ?? 0) - (b.meta?.pnlPct ?? 0));
   const weakest = sortedByPnl[0];
   const wp = weakest?.meta?.pnlPct ?? 0;
-  let weak: string;
+  let weakState: string;
+  let weakInterpretation: string;
+  let weakAction: string;
+  let weakTone: SystemInsightBlock["tone"];
   if (wp < -2.5) {
-    weak = `Weakest mark: ${weakest.title} (${wp.toFixed(2)}% vs entry). Treat as first candidate for review or de-risk.`;
+    weakState = "Execution pressure";
+    weakInterpretation = `${weakest.title} is the weakest line at ${wp.toFixed(2)}% vs entry, signaling active drag.`;
+    weakAction = "Review this line first in the terminal and reduce risk if setup quality degraded.";
+    weakTone = "bad";
   } else if (wp < 0.5) {
-    weak = `Laggard: ${weakest.title} at ${wp.toFixed(2)}% — still inside band but worth watching if volatility picks up.`;
+    weakState = "Watchlist";
+    weakInterpretation = `${weakest.title} is lagging at ${wp.toFixed(2)}% but remains inside tolerable band.`;
+    weakAction = "Maintain current sizing and monitor for volatility expansion.";
+    weakTone = "warn";
   } else {
-    weak = `No meaningful drag — even the softest line (${weakest.title}) is ${wp.toFixed(2)}% vs entry.`;
+    weakState = "Healthy";
+    weakInterpretation = `No meaningful drag; weakest line (${weakest.title}) is ${wp.toFixed(2)}% vs entry.`;
+    weakAction = "Continue controlled execution and avoid over-trading strong positions.";
+    weakTone = "good";
   }
 
-  const blocks = items.filter((i) => i.decision.action === "BLOCK").length;
+  const blockedCount = items.filter((i) => i.decision.action === "BLOCK").length;
   const guides = items.filter((i) => i.decision.action === "GUIDE").length;
   const unreal = summary.unrealizedPnLPaise ?? 0;
   const bias = unreal > 0 ? "mark-to-market is net positive" : unreal < 0 ? "mark-to-market is net negative" : "unrealized P&L is flat";
 
-  let sentimentShift: string;
-  if (blocks > 0) {
-    sentimentShift = `Sentiment shift: defensive — ${blocks} position(s) at breach while ${bias}.`;
+  let postureState: string;
+  let postureInterpretation: string;
+  let postureAction: string;
+  let postureTone: SystemInsightBlock["tone"];
+  if (blockedCount > 0) {
+    postureState = "Execution Locked";
+    postureInterpretation = `${blockedCount} deployed position(s) are in breach while ${bias}.`;
+    postureAction = "Prioritize de-risking breached lines before new deployment.";
+    postureTone = "bad";
   } else if (guides > 0) {
-    sentimentShift = `Sentiment shift: cautious — ${guides} guided review(s); ${bias}.`;
+    postureState = "Controlled (Elevated)";
+    postureInterpretation = `${guides} line(s) require guided review while ${bias}.`;
+    postureAction = "Hold sizing discipline and review guided lines before adding capital.";
+    postureTone = "warn";
   } else {
-    sentimentShift = `Sentiment shift: stable — decisions read ACT across the book; ${bias}.`;
+    postureState = "Controlled";
+    postureInterpretation = `Decisions read ACT across deployed lines and ${bias}.`;
+    postureAction = "System is aligned; deploy incrementally only on high-edge setups.";
+    postureTone = "good";
   }
 
-  return { concentration, weak, sentimentShift };
+  blocks.push({
+    id: "concentration",
+    title: "Concentration",
+    state: concentrationState,
+    interpretation: concentrationInterpretation,
+    action: concentrationAction,
+    tone: concentrationTone,
+  });
+  blocks.push({
+    id: "weakest-line",
+    title: "Weakest line",
+    state: weakState,
+    interpretation: weakInterpretation,
+    action: weakAction,
+    tone: weakTone,
+  });
+  blocks.push({
+    id: "system-posture",
+    title: "System posture",
+    state: postureState,
+    interpretation: postureInterpretation,
+    action: postureAction,
+    tone: postureTone,
+  });
+
+  return blocks;
 }
 
 export default function PortfolioPage() {
@@ -102,9 +224,10 @@ export default function PortfolioPage() {
   const closed = useClosedPositions();
   const trace = useTraceData();
   const navigate = useNavigate();
-  const [tab, setTab] = useState<PortfolioTab>("Active Positions");
+  const [tab, setTab] = useState<PortfolioTab>("DEPLOYED");
   const [tradeBanner, setTradeBanner] = useState(false);
   const [panel, setPanel] = useState<{ symbol: string; ctx: TradePanelContext } | null>(null);
+  const [showEventLog, setShowEventLog] = useState(false);
 
   useEffect(() => {
     if (sessionStorage.getItem(TRADE_SUCCESS_SESSION_KEY) === "1") {
@@ -120,10 +243,7 @@ export default function PortfolioPage() {
 
   const exp = exposurePct(netEquity, invested);
   const riskPct = activeRiskPct(portfolio.items);
-  const intel = useMemo(
-    () => buildPortfolioIntel(portfolio.items, summary),
-    [portfolio.items, summary],
-  );
+  const intel = useMemo(() => buildPortfolioIntel(portfolio.items, summary, exp), [portfolio.items, summary, exp]);
   const eventEntries = useMemo(() => buildEventLogs(trace.lines, 16), [trace.lines]);
 
   const breachCount = useMemo(
@@ -174,6 +294,26 @@ export default function PortfolioPage() {
   const exposureDisplay =
     exp == null ? "—" : exp === 0 && invested <= 0 ? "0%" : `${exp.toFixed(1)}%`;
   const activeRiskDisplay = riskPct == null ? "—" : `${riskPct.toFixed(1)}%`;
+  const exposureState = exposureBand(exp);
+  const riskState = riskStateLabel(breachCount, atRiskCount, portfolio.items.length);
+  const pnlDisplay = netEquity > 0 ? formatSignedINR(unrealizedPnL) : "—";
+  const pnlPctDisplay = netEquity > 0 ? `${pnlPct > 0 ? "+" : ""}${pnlPct.toFixed(2)}%` : "—";
+  const statusInterpretation =
+    exposureState.label === "High Exposure"
+      ? "Exposure high — capital nearly fully deployed."
+      : exposureState.label === "Medium Exposure"
+        ? "Exposure medium — deployment is controlled with selective room to add."
+        : exposureState.label === "Low Exposure"
+          ? "Exposure low — system ready to deploy capital."
+          : "No active deployment — system ready to deploy capital.";
+  const riskToneClass =
+    riskState === "Execution Locked"
+      ? "text-rose-300"
+      : riskState === "Controlled (Elevated)"
+        ? "text-amber-300"
+        : riskState === "Controlled"
+          ? "text-emerald-300"
+          : "text-cyan-300";
 
   return (
     <AppLayout>
@@ -197,41 +337,66 @@ export default function PortfolioPage() {
             </div>
           )}
 
-          <section className="portfolio-state-metrics" aria-label="Portfolio state">
-            <MetricBlock
-              label="Total equity"
-              value={netEquity > 0 ? formatINR(netEquity) : "—"}
-              sub="Account value"
-            />
-            <MetricBlock
-              label="Unrealized PnL"
-              value={netEquity > 0 ? `${unrealizedPnL >= 0 ? "+" : ""}${formatINR(unrealizedPnL)}` : "—"}
-              sub="Open vs entry"
-            />
-            <MetricBlock
-              label="PnL %"
-              value={pnlPct !== 0 ? `${pnlPct > 0 ? "+" : ""}${pnlPct.toFixed(2)}%` : "—"}
-              sub="Vs cost basis"
-            />
-            <MetricBlock
-              label="Exposure %"
-              value={exposureDisplay}
-              sub="Invested / equity"
-            />
-            <MetricBlock
-              label="Active risk %"
-              value={activeRiskDisplay}
-              sub="From decision mix"
-              valueTone="status"
-            />
+          <section
+            className="rounded-xl border border-slate-800/90 bg-slate-900/60 px-4 py-4 md:px-5"
+            aria-label="Portfolio status"
+          >
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Portfolio status</p>
+                <p className="mt-1 text-sm leading-snug text-slate-300">{statusInterpretation}</p>
+              </div>
+              <span
+                className={`rounded-md border px-2.5 py-1 text-xs font-bold uppercase tracking-wide ${
+                  riskState === "Execution Locked"
+                    ? "border-rose-500/45 bg-rose-500/10 text-rose-100"
+                    : riskState === "Controlled (Elevated)"
+                      ? "border-amber-500/40 bg-amber-500/10 text-amber-100"
+                      : riskState === "Controlled"
+                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-100"
+                        : "border-cyan-500/40 bg-cyan-500/10 text-cyan-100"
+                }`}
+              >
+                {riskState}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+              <div className="rounded-lg border border-slate-800/80 bg-slate-950/35 px-3 py-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Equity</p>
+                <p className="mt-1 text-base font-semibold tabular-nums text-slate-100">
+                  {netEquity > 0 ? formatINR(netEquity) : "—"}
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-800/80 bg-slate-950/35 px-3 py-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">PnL</p>
+                <p className="mt-1 text-base font-semibold tabular-nums text-slate-100">
+                  {pnlDisplay} <span className="text-xs text-slate-400">({pnlPctDisplay})</span>
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-800/80 bg-slate-950/35 px-3 py-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Exposure</p>
+                <p className="mt-1 text-base font-semibold tabular-nums text-slate-100">{exposureDisplay}</p>
+                <p className="text-xs text-slate-400">{exposureState.label}</p>
+              </div>
+              <div className="rounded-lg border border-slate-800/80 bg-slate-950/35 px-3 py-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Risk state</p>
+                <p className={`mt-1 text-base font-semibold ${riskToneClass}`}>{riskState}</p>
+                <p className="text-xs text-slate-400">Active risk {activeRiskDisplay}</p>
+              </div>
+              <div className="rounded-lg border border-slate-800/80 bg-slate-950/35 px-3 py-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Positions</p>
+                <p className="mt-1 text-base font-semibold tabular-nums text-slate-100">{portfolio.items.length}</p>
+                <p className="text-xs text-slate-400">{summary.pendingOrders.length} queued</p>
+              </div>
+            </div>
           </section>
 
           <div className="portfolio-tabs" role="tablist" aria-label="Portfolio sections">
             {(
               [
-                ["Active Positions", portfolio.items.length] as const,
-                ["Pending Orders", summary.pendingOrders.length] as const,
-                ["Closed History", closed.trades.length] as const,
+                ["DEPLOYED", portfolio.items.length] as const,
+                ["QUEUED", summary.pendingOrders.length] as const,
+                ["COMPLETED", closed.trades.length] as const,
               ] as const
             ).map(([t, count]) => (
               <button
@@ -250,7 +415,7 @@ export default function PortfolioPage() {
 
         <div className="home-terminal__grid portfolio-body">
           <div className="home-terminal__main portfolio-main-stack">
-            {tab === "Active Positions" ? (
+            {tab === "DEPLOYED" ? (
               portfolio.isLoading ? (
                 <p className="page-loading page-note" style={{ padding: "var(--space-6)" }}>
                   Loading positions…
@@ -262,25 +427,25 @@ export default function PortfolioPage() {
               ) : portfolio.items.length === 0 ? (
                 <div className="portfolio-empty-action">
                   <div className="portfolio-empty-action__card">
-                    <h2 className="portfolio-empty-action__title">Start your first trade</h2>
+                    <h2 className="portfolio-empty-action__title">No active positions</h2>
                     <p className="portfolio-empty-action__body">
-                      You have no open positions. Explore the market scanner to place a trade.
+                      No active positions — system ready to deploy capital when a qualified setup appears.
                     </p>
                     <button
                       type="button"
                       className="portfolio-empty-action__cta"
                       onClick={() => navigate(ROUTES.markets)}
                     >
-                      Explore Markets
+                      Go to Market Scanner
                     </button>
                   </div>
                 </div>
               ) : (
                 <section className="home-panel portfolio-decisions-panel" aria-label="Open positions">
                   <header className="home-panel__head">
-                    <h2 className="home-panel__title">Open positions</h2>
+                    <h2 className="home-panel__title">Deployed positions</h2>
                     <p className="home-panel__lead">
-                      Decision strips — plan state drives the row; review opens the trade terminal.
+                      Controlled ledger of deployed capital. Review opens the execution terminal.
                     </p>
                   </header>
                   <div className="portfolio-decision-strips">
@@ -294,7 +459,7 @@ export default function PortfolioPage() {
                   </div>
                 </section>
               )
-            ) : tab === "Pending Orders" ? (
+            ) : tab === "QUEUED" ? (
               summaryLoading ? (
                 <p className="page-loading page-note" style={{ padding: "var(--space-6)" }}>
                   Loading queued orders…
@@ -306,23 +471,35 @@ export default function PortfolioPage() {
               ) : summary.pendingOrders.length === 0 ? (
                 <section className="home-panel portfolio-decisions-panel" aria-label="Pending orders">
                   <header className="home-panel__head">
-                    <h2 className="home-panel__title">Pending orders</h2>
+                    <h2 className="home-panel__title">Queued orders</h2>
                     <p className="home-panel__lead">
-                      Nothing in the execution queue. Orders you place outside cash market hours are held here
-                      until the session opens.
+                      No queued orders — system is clear. Orders placed outside market hours will appear here.
                     </p>
                   </header>
-                  <p className="page-note" style={{ padding: "var(--space-5)" }}>
-                    No pending orders.
-                  </p>
+                  <div className="portfolio-empty-action" style={{ minHeight: "min(260px, 38vh)" }}>
+                    <div className="portfolio-empty-action__card">
+                      <h3 className="portfolio-empty-action__title" style={{ fontSize: "var(--text-2xl)" }}>
+                        Queue is empty
+                      </h3>
+                      <p className="portfolio-empty-action__body">
+                        No queued orders — ready to deploy during active market session.
+                      </p>
+                      <button
+                        type="button"
+                        className="portfolio-empty-action__cta"
+                        onClick={() => navigate(ROUTES.markets)}
+                      >
+                        Go to Market Scanner
+                      </button>
+                    </div>
+                  </div>
                 </section>
               ) : (
                 <section className="home-panel portfolio-decisions-panel" aria-label="Pending orders">
                   <header className="home-panel__head">
-                    <h2 className="home-panel__title">Pending orders</h2>
+                    <h2 className="home-panel__title">Queued orders</h2>
                     <p className="home-panel__lead">
-                      Submitted while the market was closed or execution was deferred — fills when the exchange
-                      session is active.
+                      Submitted while the market was closed or deferred — executes when the session is active.
                     </p>
                   </header>
                   <div className="portfolio-decision-strips">
@@ -346,20 +523,36 @@ export default function PortfolioPage() {
                 <AlertTriangle size={12} /> Trade history unavailable — retrying
               </div>
             ) : closed.trades.length === 0 ? (
-              <section className="home-panel portfolio-decisions-panel" aria-label="Closed history">
+              <section className="home-panel portfolio-decisions-panel" aria-label="Completed history">
                 <header className="home-panel__head">
-                  <h2 className="home-panel__title">Closed history</h2>
-                  <p className="home-panel__lead">Completed trades will appear here.</p>
+                  <h2 className="home-panel__title">Completed history</h2>
+                  <p className="home-panel__lead">
+                    No completed trades yet. Execute controlled setups to build your feedback history.
+                  </p>
                 </header>
-                <p className="page-note" style={{ padding: "var(--space-5)" }}>
-                  No completed trades yet.
-                </p>
+                <div className="portfolio-empty-action" style={{ minHeight: "min(260px, 38vh)" }}>
+                  <div className="portfolio-empty-action__card">
+                    <h3 className="portfolio-empty-action__title" style={{ fontSize: "var(--text-2xl)" }}>
+                      History will build here
+                    </h3>
+                    <p className="portfolio-empty-action__body">
+                      No completed trades — system ready to deploy and record disciplined outcomes.
+                    </p>
+                    <button
+                      type="button"
+                      className="portfolio-empty-action__cta"
+                      onClick={() => navigate(ROUTES.markets)}
+                    >
+                      Go to Market Scanner
+                    </button>
+                  </div>
+                </div>
               </section>
             ) : (
-              <section className="home-panel portfolio-decisions-panel" aria-label="Closed history">
+              <section className="home-panel portfolio-decisions-panel" aria-label="Completed history">
                 <header className="home-panel__head">
-                  <h2 className="home-panel__title">Closed history</h2>
-                  <p className="home-panel__lead">Recently squared positions.</p>
+                  <h2 className="home-panel__title">Completed history</h2>
+                  <p className="home-panel__lead">Entry-to-exit outcomes with behavior and system alignment feedback.</p>
                 </header>
                 <div className="portfolio-decision-strips">
                   {closed.trades.map((trade) => (
@@ -367,7 +560,7 @@ export default function PortfolioPage() {
                       key={trade.tradeId}
                       trade={trade}
                       formatExitInr={(paise) => `₹${fromPaise(paise).toFixed(2)}`}
-                      formatPnlInr={(paise) => formatINR(paise)}
+                      formatPnlInr={(paise) => formatSignedINR(paise)}
                     />
                   ))}
                 </div>
@@ -378,36 +571,56 @@ export default function PortfolioPage() {
           <aside className="home-terminal__aside" aria-label="Portfolio context">
             <section className="home-panel home-panel--compact">
               <header className="home-panel__head">
-                <h2 className="home-panel__title">Portfolio intelligence</h2>
-                <p className="home-panel__lead">Derived from open lines and summary fields.</p>
+                <h2 className="home-panel__title">System insight</h2>
+                <p className="home-panel__lead">State, interpretation, and suggested action from live capital posture.</p>
               </header>
-              <div className="portfolio-intel">
-                <p className="portfolio-intel__block">
-                  <span className="portfolio-intel__label">Risk concentration</span>
-                  {intel.concentration}
-                </p>
-                <p className="portfolio-intel__block">
-                  <span className="portfolio-intel__label">Weak positions</span>
-                  {intel.weak}
-                </p>
-                <p className="portfolio-intel__block">
-                  <span className="portfolio-intel__label">Sentiment shift</span>
-                  {intel.sentimentShift}
-                </p>
+              <div className="portfolio-intel space-y-3">
+                {intel.slice(0, 3).map((block) => (
+                  <article key={block.id} className="rounded-lg border border-slate-800/80 bg-slate-950/35 p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{block.title}</p>
+                    <p
+                      className={`mt-1 text-sm font-semibold ${
+                        block.tone === "bad"
+                          ? "text-rose-300"
+                          : block.tone === "warn"
+                            ? "text-amber-300"
+                            : block.tone === "good"
+                              ? "text-emerald-300"
+                              : "text-slate-200"
+                      }`}
+                    >
+                      {block.state}
+                    </p>
+                    <p className="mt-1 text-xs leading-snug text-slate-400">{block.interpretation}</p>
+                    <p className="mt-2 text-xs leading-snug text-cyan-300">Suggested action: {block.action}</p>
+                  </article>
+                ))}
               </div>
             </section>
 
-            <section className="home-panel home-panel--compact">
+            <section className="home-panel home-panel--compact portfolio-event-log-panel">
               <header className="home-panel__head">
                 <h2 className="home-panel__title">Event log</h2>
-                <p className="home-panel__lead">Trace stream from the server.</p>
+                <p className="home-panel__lead">Low-priority trace stream.</p>
+                <button
+                  type="button"
+                  className="portfolio-strip__cta"
+                  onClick={() => setShowEventLog((v) => !v)}
+                  aria-expanded={showEventLog}
+                >
+                  {showEventLog ? "Collapse log" : "Expand log"}
+                </button>
               </header>
-              {trace.isLoading ? (
-                <p className="page-note" style={{ padding: "var(--space-3) var(--space-4)" }}>
+              {!showEventLog ? (
+                <p className="page-note text-xs" style={{ padding: "var(--space-3) var(--space-4)" }}>
+                  Event log collapsed by default. Expand only when diagnosing execution flow.
+                </p>
+              ) : trace.isLoading ? (
+                <p className="page-note text-xs" style={{ padding: "var(--space-3) var(--space-4)" }}>
                   Loading trace…
                 </p>
               ) : trace.isError ? (
-                <p className="page-note" style={{ padding: "var(--space-3) var(--space-4)" }}>
+                <p className="page-note text-xs" style={{ padding: "var(--space-3) var(--space-4)" }}>
                   Trace unavailable.
                 </p>
               ) : (

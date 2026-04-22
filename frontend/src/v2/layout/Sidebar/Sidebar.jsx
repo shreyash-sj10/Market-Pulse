@@ -1,6 +1,6 @@
-import { useCallback, useState } from "react";
+import { createElement, useCallback, useState } from "react";
 import { NavLink } from "react-router-dom";
-import { useAuth } from "../../../features/auth/AuthContext.jsx";
+import { useAuth } from "../../../features/auth/useAuth.jsx";
 import { ROUTES } from "../../routing/routes";
 import {
   LayoutDashboard,
@@ -10,6 +10,7 @@ import {
   User,
   Activity,
   PanelLeft,
+  CalendarDays,
 } from "lucide-react";
 
 const NAV_ITEMS = [
@@ -17,6 +18,7 @@ const NAV_ITEMS = [
   { key: "markets",   label: "Markets",   to: ROUTES.markets,   icon: BarChart2 },
   { key: "portfolio", label: "Portfolio", to: ROUTES.portfolio, icon: Briefcase },
   { key: "journal",   label: "Journal",   to: ROUTES.journal,   icon: BookOpen },
+  { key: "weekly",    label: "Weekly",    to: ROUTES.weeklyReport, icon: CalendarDays },
   { key: "profile",   label: "Profile",   to: ROUTES.profile,   icon: User },
   { key: "trace",     label: "Trace",     to: ROUTES.trace,     icon: Activity },
 ];
@@ -49,7 +51,7 @@ export default function Sidebar() {
       </div>
 
       <nav className="sidebar-nav" aria-label="Main navigation">
-        {NAV_ITEMS.map(({ key, label, to, icon: Icon }) => (
+        {NAV_ITEMS.map(({ key, label, to, icon }) => (
           <NavLink
             key={key}
             to={to}
@@ -58,7 +60,7 @@ export default function Sidebar() {
               isActive ? "sidebar-link is-active" : "sidebar-link"
             }
           >
-            <Icon className="sidebar-link__icon" size={16} />
+            {createElement(icon, { className: "sidebar-link__icon", size: 16 })}
             <span className="sidebar-link__label">{label}</span>
           </NavLink>
         ))}

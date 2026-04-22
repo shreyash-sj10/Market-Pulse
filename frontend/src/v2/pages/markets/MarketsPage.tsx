@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Search, RefreshCw, AlertTriangle } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import AppLayout from "../../layout/AppLayout/AppLayout.jsx";
 import DecisionPanel from "../../features/trade/DecisionPanel";
-import { useMarketExplorer, type MarketSegment } from "../../hooks/useMarketExplorer";
+import { useMarketExplorer, type MarketSegment, type MarketStock } from "../../hooks/useMarketExplorer";
 import {
   buildMarketRowFromExplorerStock,
   tradePanelContextFromMarketRow,
@@ -10,17 +10,10 @@ import {
 } from "../../hooks/useMarketDecisions";
 import { setTradePanelOpener } from "../../trade-flow";
 import type { TradePanelContext } from "../../trade-flow";
-import type { MarketStock } from "../../hooks/useMarketExplorer";
-import MarketList from "./components/MarketList";
-import DecisionWorkspace from "./components/DecisionWorkspace";
-import { sortMarketScanFeed } from "./sortMarketScan";
-
-const SEGMENT_OPTIONS: { id: MarketSegment; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "large", label: "Large cap" },
-  { id: "mid", label: "Mid cap" },
-  { id: "small", label: "Small cap" },
-];
+import MarketOpportunitiesHeader from "./components/MarketOpportunitiesHeader";
+import OpportunityList from "./components/OpportunityList";
+import DecisionDiscoveryPanel from "./components/DecisionDiscoveryPanel";
+import { sortMarketScanFeed, marketStockDecisionAction } from "./sortMarketScan";
 
 export default function MarketsPage() {
   const [search, setSearch] = useState("");
@@ -33,6 +26,13 @@ export default function MarketsPage() {
   const marketDecisions = useMarketDecisions();
 
   const sortedStocks = useMemo(() => sortMarketScanFeed(stocks), [stocks]);
+
+  const validTradeCount = useMemo(
+    () => sortedStocks.filter((s) => marketStockDecisionAction(s) === "ACT").length,
+    [sortedStocks],
+  );
+
+  const isDegraded = Boolean(meta.isFallback || meta.isSynthetic);
 
   useEffect(() => {
     setTradePanelOpener((symbol, ctx) => setPanel({ symbol, ctx }));
@@ -63,58 +63,39 @@ export default function MarketsPage() {
     });
   }, []);
 
+  const handleSearchChange = useCallback((q: string) => {
+    setSearch(q);
+    setSelected(null);
+  }, []);
+
+  const handleSegmentChange = useCallback((next: MarketSegment) => {
+    setSegment((prev) => (prev === next ? prev : next));
+  }, []);
+
   return (
     <AppLayout>
-      <div className="markets-terminal">
-        <div className="markets-terminal__grid" data-linked={selected ? "1" : "0"}>
-          <div className="markets-terminal__scan markets-scanner">
-            <div className="markets-scanner__toolbar">
-              <span className="markets-scanner__title">
-                Scanner
-                {meta.isFallback && <span className="markets-scanner__badge">FALLBACK</span>}
-                {(isFetchingMore || (isFetching && !isLoading)) && (
-                  <RefreshCw size={10} className="markets-scanner__spinner" aria-hidden />
-                )}
-              </span>
-              <div className="markets-scanner__toolbar-tail">
-                <div className="scanner-segment" role="group" aria-label="Market cap segment">
-                  {SEGMENT_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      className={`scanner-segment__pill ${segment === opt.id ? "scanner-segment__pill--active" : ""}`}
-                      onClick={() => {
-                        if (opt.id === segment) return;
-                        setSegment(opt.id);
-                      }}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="scanner-search">
-                  <Search className="scanner-search__icon" size={12} aria-hidden />
-                  <input
-                    type="text"
-                    className="scanner-search__input"
-                    placeholder="Search symbols…"
-                    value={search}
-                    onChange={(e) => {
-                      setSearch(e.target.value);
-                      setSelected(null);
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-
+      <div className="markets-terminal flex min-h-0 flex-1 flex-col">
+        {/* 60% list / 40% decision — bounded height so each column scrolls independently */}
+        <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[3fr_2fr] lg:grid-rows-1 lg:h-[calc(100dvh-var(--topbar-height,52px)-2.5rem)]">
+          <div className="flex min-h-0 min-w-0 flex-col overflow-hidden border-slate-800/80 lg:h-full lg:border-r">
+            <MarketOpportunitiesHeader
+              opportunityCount={sortedStocks.length}
+              validTradeCount={validTradeCount}
+              segment={segment}
+              onSegmentChange={handleSegmentChange}
+              search={search}
+              onSearchChange={handleSearchChange}
+              isFetching={isFetching}
+              isLoading={isLoading}
+              isDegraded={isDegraded}
+            />
             {isError && (
-              <div className="degraded-banner">
-                <AlertTriangle size={11} aria-hidden /> Market data unavailable — retrying
+              <div className="flex shrink-0 items-center gap-2 border-b border-amber-500/25 bg-amber-500/5 px-4 py-2 text-sm text-amber-100">
+                <AlertTriangle size={14} className="shrink-0" aria-hidden />
+                Market data unavailable — retrying
               </div>
             )}
-
-            <MarketList
+            <OpportunityList
               stocks={sortedStocks}
               selected={selected}
               onSelect={setSelected}
@@ -123,25 +104,29 @@ export default function MarketsPage() {
               hasMore={hasMore}
               isFetchingMore={isFetchingMore}
               loadMore={loadMore}
+              marketDecisionItems={marketDecisions.items}
             />
-
-            <div className="scanner-footer">
-              <span className="scanner-footer__text">{sortedStocks.length} instruments loaded</span>
-              <span className="scanner-footer__text">{meta.isSynthetic ? "SYNTHETIC DATA" : "LIVE DATA"}</span>
-            </div>
           </div>
 
-          <div className="markets-terminal__side">
+          <aside
+            className={`flex min-h-0 min-w-0 flex-col overflow-hidden bg-slate-950/60 lg:sticky lg:top-0 lg:z-10 lg:h-full lg:self-start lg:border-l ${
+              selected
+                ? "border-cyan-500/40 shadow-[inset_4px_0_0_0_rgba(34,211,238,0.35)]"
+                : "border-slate-800/80"
+            }`}
+          >
             {selected ? (
-              <DecisionWorkspace
+              <DecisionDiscoveryPanel
                 selected={selected}
                 marketDecisionItems={marketDecisions.items}
-                onOpenTradePanel={() => openPanel(selected)}
+                onBuildTradePlan={() => openPanel(selected)}
               />
             ) : (
-              <div className="markets-terminal__empty">Select a symbol from the scanner to view analysis.</div>
+              <div className="flex min-h-[12rem] flex-1 items-center justify-center p-8 text-center text-sm leading-relaxed text-slate-500 lg:min-h-0">
+                Select an opportunity to read the decision brief. Your next action stays here.
+              </div>
             )}
-          </div>
+          </aside>
         </div>
       </div>
 

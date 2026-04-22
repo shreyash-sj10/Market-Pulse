@@ -1,20 +1,25 @@
 type MetricBlockProps = {
   label: string;
   value: string;
-  sub?: string;
-  /** Use for status text (risk headline) — slightly smaller than currency figures */
-  valueTone?: "currency" | "status";
+  interpretation: string;
+  isLoading?: boolean;
 };
 
-/** System state metric — value dominant, subtext muted. Token-only surfaces. */
-export default function MetricBlock({ label, value, sub, valueTone = "currency" }: MetricBlockProps) {
-  const valueCls =
-    valueTone === "status" ? "home-metric__value home-metric__value--status" : "home-metric__value";
+export default function MetricBlock({ label, value, interpretation, isLoading = false }: MetricBlockProps) {
   return (
-    <div className="home-metric">
-      <p className="home-metric__label">{label}</p>
-      <p className={valueCls}>{value}</p>
-      {sub ? <p className="home-metric__sub">{sub}</p> : null}
-    </div>
+    <article className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-400">{label}</p>
+      {isLoading ? (
+        <div className="mt-4 space-y-2" aria-hidden>
+          <div className="h-8 w-28 animate-pulse rounded bg-slate-800" />
+          <div className="h-4 w-40 animate-pulse rounded bg-slate-800" />
+        </div>
+      ) : (
+        <div className="mt-4 space-y-2">
+          <p className="text-2xl font-semibold tabular-nums tracking-tight text-slate-100">{value}</p>
+          <p className="text-sm leading-relaxed text-slate-400">{interpretation}</p>
+        </div>
+      )}
+    </article>
   );
 }

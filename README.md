@@ -14,6 +14,12 @@ A paper trading simulation platform for the Indian equity market (NSE) that trea
 
 The platform simulates real brokerage constraints (T+1 settlement, IST market hours, NSE holiday calendar, intraday square-off at 15:20) without connecting to any live broker. Every trade decision passes through a deterministic multi-engine stack before execution is authorized. No AI system has decision authority. All BUY/AVOID verdicts are produced by auditable rule-based engines; AI is used solely for post-decision synthesis in plain English.
 
+### Frontend Navigation Note
+
+- The app now uses a single canonical trader profile route: `/profile`.
+- The separate `Evolution` navigation entry and `/evolution-profile` route were removed to avoid duplicate pages showing the same content.
+- Any profile-related UI references should point to `Profile`.
+
 **Supported trade types:**
 - Delivery (multi-day hold, no overnight intraday risk)
 - Intraday buy-only (must exit same day; auto-squared off at 15:20 IST)

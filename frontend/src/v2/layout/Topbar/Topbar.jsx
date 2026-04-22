@@ -1,5 +1,5 @@
 import { LogOut } from "lucide-react";
-import { useAuth } from "../../../features/auth/AuthContext.jsx";
+import { useAuth } from "../../../features/auth/useAuth.jsx";
 import { useTickerData } from "../../hooks/useTickerData";
 import { usePortfolioSummary } from "../../hooks/usePortfolioSummary";
 import { formatINR } from "../../../utils/currency.utils";

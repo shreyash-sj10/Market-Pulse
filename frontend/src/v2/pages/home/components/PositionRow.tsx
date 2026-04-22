@@ -3,6 +3,8 @@ type PositionRowProps = {
   entryDisplay: string;
   statusLabel: string;
   pnlPctDisplay: string;
+  riskNote: string;
+  actionLabel: string;
   onReview: () => void;
 };
 
@@ -11,17 +13,37 @@ export default function PositionRow({
   entryDisplay,
   statusLabel,
   pnlPctDisplay,
+  riskNote,
+  actionLabel,
   onReview,
 }: PositionRowProps) {
+  const statusTone =
+    statusLabel === "At risk"
+      ? "border-rose-500/40 bg-rose-500/10 text-rose-200"
+      : statusLabel === "Guided"
+        ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
+        : "border-emerald-500/40 bg-emerald-500/10 text-emerald-200";
+
   return (
-    <div className="home-pos-row">
-      <span className="home-pos-row__sym">{symbol}</span>
-      <span className="home-pos-row__entry">{entryDisplay}</span>
-      <span className="home-pos-row__status">{statusLabel}</span>
-      <span className="home-pos-row__pnl">{pnlPctDisplay}</span>
-      <button type="button" className="home-pos-row__cta" onClick={onReview}>
-        Review
+    <article className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-base font-semibold tabular-nums tracking-tight text-slate-100">{symbol}</p>
+        <span className={`rounded-md border px-2 py-1 text-xs font-semibold uppercase tracking-wide ${statusTone}`}>
+          {statusLabel}
+        </span>
+      </div>
+      <div className="mt-4 grid gap-2 text-sm leading-relaxed text-slate-300 md:grid-cols-2">
+        <p>Entry: {entryDisplay}</p>
+        <p>P&amp;L: {pnlPctDisplay}</p>
+      </div>
+      <p className="mt-2 text-sm leading-relaxed text-slate-400">{riskNote}</p>
+      <button
+        type="button"
+        className="mt-4 min-h-10 rounded-lg border border-cyan-500/50 px-3 py-2 text-sm font-medium text-cyan-300 transition hover:border-cyan-300 hover:text-cyan-200"
+        onClick={onReview}
+      >
+        {actionLabel}
       </button>
-    </div>
+    </article>
   );
 }

@@ -9,6 +9,7 @@ import V2PortfolioPage from "./v2/pages/portfolio/PortfolioPage";
 import V2MarketsPage from "./v2/pages/markets/MarketsPage";
 import V2HomePage from "./v2/pages/home/HomePage";
 import V2JournalPage from "./v2/pages/journal/JournalPage";
+import WeeklyDisciplineReportPage from "./v2/pages/reports/WeeklyDisciplineReportPage";
 import V2ProfilePage from "./v2/pages/profile/ProfilePage";
 import V2TracePage from "./v2/pages/trace/TracePage";
 import LandingPage from "./v2/pages/landing/LandingPage";
@@ -36,6 +37,7 @@ function App() {
           <Route path={ROUTES.markets}   element={<V2MarketsPage />} />
           <Route path={ROUTES.portfolio} element={<V2PortfolioPage />} />
           <Route path={ROUTES.journal}   element={<V2JournalPage />} />
+          <Route path={ROUTES.weeklyReport} element={<WeeklyDisciplineReportPage />} />
           <Route path={ROUTES.profile}   element={<V2ProfilePage />} />
           <Route path={ROUTES.trace}     element={<V2TracePage />} />
         </Route>

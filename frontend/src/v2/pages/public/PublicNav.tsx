@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { useAuth } from "../../../features/auth/AuthContext.jsx";
+import { useAuth } from "../../../features/auth/useAuth.jsx";
 import { ROUTES } from "../../routing/routes";
 
 type PublicNavProps = {
@@ -41,7 +41,7 @@ export default function PublicNav({ onCreatorPage = false }: PublicNavProps) {
               to={terminalTo}
               className="rounded-[var(--radius-md)] border border-[var(--v2-accent-border)] bg-[var(--v2-accent-soft)] px-2.5 py-1.5 text-[length:var(--text-2xs)] font-bold uppercase tracking-wide text-[var(--v2-text-accent)] no-underline"
             >
-              Launch Terminal
+              Enter terminal
             </Link>
           </div>
         </div>
@@ -50,11 +50,11 @@ export default function PublicNav({ onCreatorPage = false }: PublicNavProps) {
           className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 md:flex-1"
           aria-label="Site sections"
         >
-          <a className={linkCls} href={hash("product")}>
-            Product
+          <a className={linkCls} href={hash("system-surfaces")}>
+            Surfaces
           </a>
-          <a className={linkCls} href={hash("how-it-works")}>
-            How it Works
+          <a className={linkCls} href={hash("system-mechanics")}>
+            Pipeline
           </a>
           <a className={linkCls} href={hash("principles")}>
             Principles
@@ -72,7 +72,7 @@ export default function PublicNav({ onCreatorPage = false }: PublicNavProps) {
             to={terminalTo}
             className="rounded-[var(--radius-md)] border border-[var(--v2-accent-border)] bg-[var(--v2-accent-soft)] px-3 py-2 text-[length:var(--text-xs)] font-bold uppercase tracking-wide text-[var(--v2-text-accent)] no-underline transition-opacity hover:opacity-90"
           >
-            Launch Terminal
+            Enter terminal
           </Link>
         </div>
       </div>

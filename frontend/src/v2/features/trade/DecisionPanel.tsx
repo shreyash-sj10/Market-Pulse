@@ -13,9 +13,12 @@ import { queryClient } from "../../../queryClient";
 import { queryKeys } from "../../queryKeys";
 import { TRADE_SUCCESS_SESSION_KEY } from "../../trade-flow";
 import TradePanelOverlay from "./terminal/TradePanelOverlay";
-import TradeHeader from "./terminal/TradeHeader";
 import TradeInputs from "./terminal/TradeInputs";
-import ValidationEngineView from "./terminal/ValidationEngineView";
+import TradeSystemStateHeader from "./terminal/TradeSystemStateHeader";
+import type { SetupGateState } from "./terminal/TradeSystemStateHeader";
+import TradeExecutionBar from "./terminal/TradeExecutionBar";
+import ExecutionReadinessPanel from "./terminal/ExecutionReadinessPanel";
+import type { ReadinessRow } from "./terminal/ExecutionReadinessPanel";
 import { useSymbolIntelligence } from "../../hooks/useSymbolIntelligence";
 import TradeTerminalSharedIntel from "./terminal/TradeTerminalSharedIntel";
 import ExecutionConsequenceBlock from "./terminal/ExecutionConsequenceBlock";
@@ -25,15 +28,8 @@ import PreTradeEmotionSelect from "./terminal/PreTradeEmotionSelect";
 import type { PreTradeEmotionId } from "./terminal/preTradeEmotions";
 import type { TradeOutcomeVisual } from "./terminal/DecisionResult";
 import { buildTradeEvaluation, type TradeEvaluation } from "./terminal/tradeEvaluation";
-import DecisionActionBar from "./terminal/DecisionActionBar";
 import TradeSystemContext from "./terminal/TradeSystemContext";
-import TradeSystemVerdict from "./terminal/TradeSystemVerdict";
-import {
-  analyzeButtonLabel,
-  executeButtonLabel,
-  reviewGateVerdict,
-  setupGateVerdict,
-} from "./terminal/executionGateUi";
+import { reviewGateVerdict, setupGateVerdict, type GateVerdict } from "./terminal/executionGateUi";
 
 type Phase = "SETUP" | "ANALYZING" | "REVIEW" | "EXECUTING" | "SUCCESS" | "ERROR";
 
@@ -60,8 +56,6 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
   const { quote } = useMarketQuote(open ? symbol : null);
   const livePriceINR = quote ? fromPaise(quote.pricePaise).toFixed(2) : "";
   const sharedIntel = useSymbolIntelligence(open ? symbol : null);
-  const trendLabel = context?.meta?.trend != null ? String(context.meta.trend) : null;
-
   const [side, setSide] = useState<"BUY" | "SELL">("BUY");
   const [productType, setProductType] = useState<"DELIVERY" | "INTRADAY">("DELIVERY");
   const [quantity, setQuantity] = useState("1");
@@ -192,9 +186,6 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
 
   const reviewJudgmentMessage = evaluation?.messages?.length ? evaluation.messages[0] : "";
 
-  const decisionResultVisual: TradeOutcomeVisual =
-    phase === "SETUP" || phase === "ANALYZING" ? "pending" : phase === "REVIEW" ? reviewJudgmentOutcome : "pending";
-
   const localGate = useMemo(
     () =>
       hasBlockingLocalIssues({
@@ -244,43 +235,90 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
   const thesisOk = thinking.trim().length >= thesisMin;
   const riskBandOk = decision.action !== "BLOCK";
 
-  const setupChecklist = useMemo(
-    () => [
+  const setupGateState = useMemo<SetupGateState>(() => {
+    if (decision.action === "BLOCK") return "locked_market";
+    if (canAnalyze) return "ready_analyze";
+    return "incomplete";
+  }, [decision.action, canAnalyze]);
+
+  const setupReadinessRows = useMemo((): ReadinessRow[] => {
+    return [
       {
         id: "stop",
-        ok: stopOk,
+        status: stopOk ? "valid" : "missing",
         label:
-          side === "BUY"
-            ? "Stop loss valid (below entry, target above)"
-            : "Limit price and quantity valid for exit",
+          side === "BUY" ? "Stop and target frame your entry" : "Exit price and quantity are set",
       },
-      { id: "thesis", ok: thesisOk, label: `Thesis entered (≥ ${thesisMin} chars)` },
+      {
+        id: "thesis",
+        status: thesisOk ? "valid" : "missing",
+        label: `Thesis meets minimum length (${thesisMin} chars)`,
+      },
       {
         id: "emotion",
-        ok: Boolean(preTradeEmotion),
-        label: "Emotional state selected (behaviour log)",
+        status: Boolean(preTradeEmotion) ? "valid" : "missing",
+        label: "Behavior state selected",
       },
-      { id: "risk", ok: riskBandOk, label: "Market risk band acceptable (not BLOCK)" },
-    ],
-    [stopOk, thesisOk, riskBandOk, side, thesisMin, qtyIntForGate, preTradeEmotion],
-  );
-
-  const reviewChecklist = useMemo(
-    () => [
-      { id: "stop", ok: stopOk, label: side === "BUY" ? "Stop loss valid" : "Exit price & size valid" },
-      { id: "thesis", ok: thesisOk, label: "Thesis on file" },
-      { id: "emotion", ok: Boolean(preTradeEmotion), label: "Emotional state on file" },
       {
         id: "risk",
-        ok: evaluation?.status === "VALID",
-        label: "Risk evaluation: acceptable for submit",
+        status: riskBandOk ? "valid" : "blocked",
+        label: "Market posture allows this ticket",
       },
-    ],
-    [stopOk, thesisOk, evaluation?.status, side, preTradeEmotion],
-  );
+    ];
+  }, [stopOk, thesisOk, preTradeEmotion, riskBandOk, side, thesisMin]);
 
-  const analyzeLabel = analyzeButtonLabel(localGate, decision, canAnalyze, systemPolicy);
-  const executeLabel = executeButtonLabel(canExecute, evaluation, systemPolicy);
+  const reviewReadinessRows = useMemo((): ReadinessRow[] => {
+    let riskStatus: ReadinessRow["status"] = "missing";
+    if (evaluation?.status === "BLOCKED") riskStatus = "blocked";
+    else if (evaluation?.status === "VALID") riskStatus = "valid";
+    else if (evaluation?.status === "ADJUST") riskStatus = "missing";
+    return [
+      {
+        id: "stop",
+        status: stopOk ? "valid" : "missing",
+        label: side === "BUY" ? "Bracket still valid" : "Exit inputs valid",
+      },
+      { id: "thesis", status: thesisOk ? "valid" : "missing", label: "Thesis still on file" },
+      {
+        id: "emotion",
+        status: Boolean(preTradeEmotion) ? "valid" : "missing",
+        label: "Behavior state on file",
+      },
+      { id: "risk", status: riskStatus, label: "Server risk gate" },
+    ];
+  }, [evaluation?.status, stopOk, thesisOk, preTradeEmotion, side]);
+
+  const systemHeaderMode = useMemo(() => {
+    if (phase === "SETUP") return "setup" as const;
+    if (phase === "REVIEW") return "review" as const;
+    if (phase === "ANALYZING" || phase === "EXECUTING") return "busy" as const;
+    if (phase === "SUCCESS") return "success" as const;
+    return "error" as const;
+  }, [phase]);
+
+  const headerStatusLine = useMemo(() => {
+    if (phase === "SETUP") return setupJudgment.explanation;
+    if (phase === "REVIEW")
+      return reviewJudgment.explanation || reviewJudgmentMessage || "Review server checks before submit.";
+    if (phase === "ANALYZING") return "Running risk evaluation — keep this window open.";
+    if (phase === "EXECUTING") return "Submitting your order…";
+    if (phase === "SUCCESS")
+      return submissionOutcome === "queued"
+        ? "Order queued for the next session open."
+        : "Order accepted — portfolio and journal refresh automatically.";
+    if (phase === "ERROR") return errorMsg || "Something blocked this step.";
+    return "";
+  }, [
+    phase,
+    setupJudgment.explanation,
+    reviewJudgment.explanation,
+    reviewJudgmentMessage,
+    submissionOutcome,
+    errorMsg,
+  ]);
+
+  const headerExecutionVerdict: GateVerdict | undefined =
+    phase === "REVIEW" ? reviewJudgment.verdict : undefined;
 
   const handleAnalyze = async () => {
     if (!symbol) return;
@@ -452,7 +490,7 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
   return (
     <TradePanelOverlay open={open} onClose={onClose} backdrop={overlayBackdrop}>
       <div
-        className={`trade-terminal${backdrop === "markets" ? " trade-terminal--dock" : ""}`}
+        className={`trade-terminal flex min-h-0 flex-col${backdrop === "markets" ? " trade-terminal--dock" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="trade-terminal-title"
@@ -461,208 +499,247 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
           <X size={18} />
         </button>
 
-        <TradeHeader
+        <TradeSystemStateHeader
           symbol={symbol}
           priceDisplay={headerPriceDisplay}
           changePct={changePct}
-          signal={decision.action}
-          trendLabel={trendLabel}
-          confidencePct={decision.confidence}
-          subline="Decision terminal — context first, then minimal order inputs"
+          decision={decision}
+          orderSide={side}
+          mode={systemHeaderMode}
+          statusLine={headerStatusLine}
+          executionVerdict={headerExecutionVerdict}
+          setupGateState={phase === "SETUP" ? setupGateState : undefined}
+          executionHeld={phase === "REVIEW" ? !canExecute : undefined}
         />
 
-        <div className="trade-terminal__body">
-          {phase === "SETUP" && (
-            <>
-              <TradeTerminalSharedIntel
-                isLoading={sharedIntel.isLoading}
-                isError={sharedIntel.isError}
-                sentiment={sharedIntel.sentiment}
-                bullets={sharedIntel.bullets}
-              />
-              <TradeSystemContext
-                policy={systemPolicy}
-                decision={decision}
-                breachPositionCount={breachPositionCount}
-                stressedPositionCount={stressedPositionCount}
-                openPositionCount={openPositionCount}
-              />
-              <TradeSystemVerdict verdict={setupJudgment.verdict} explanation={setupJudgment.explanation} />
-              <ThesisInput
-                value={thinking}
-                onChange={setThinking}
-                minLength={thesisMin}
-                mandatory={systemPolicy.behaviorLayer.thesisMandatory}
-              />
-              <PreTradeEmotionSelect value={preTradeEmotion} onChange={setPreTradeEmotion} />
-              <TradeInputs
-                side={side}
-                onSideChange={setSide}
-                productType={productType}
-                onProductTypeChange={setProductType}
-                price={price}
-                onPriceChange={setPrice}
-                quantity={quantity}
-                onQuantityChange={setQuantity}
-                stopLoss={stopLoss}
-                onStopLossChange={setStopLoss}
-                target={target}
-                onTargetChange={setTarget}
-                livePriceHint={livePriceINR ? ` · Live reference ₹${livePriceINR}` : undefined}
-                quantitySystemHint={quantitySystemHint}
-                stopSystemNote={stopSystemNote}
-                showPortfolioExit={showPortfolioExit}
-                exitMaxQuantity={portfolioExitQty}
-              />
-              <ValidationEngineView
-                outcome={localGate ? "adjust" : "pending"}
-                message={
-                  localGate
-                    ? "System checks failed — fix items in the gate list, then run ANALYZE RISK."
-                    : "Sizing and bracket checks below. Run ANALYZE RISK when the list is clear."
-                }
-                mode="local"
-                side={side}
-                price={price}
-                quantity={quantity}
-                stopLoss={stopLoss}
-                target={target}
-                thesis={thinking}
-                thesisMin={thesisMin}
-                preTradeEmotion={preTradeEmotion}
-                scalingBlocked={scalingBlocked}
-                snapshot={null}
-                authorityVerdict={null}
-                analyzing={false}
-              />
-              <DecisionActionBar
-                phase="setup"
-                primaryLabel={analyzeLabel}
-                canPrimary={canAnalyze}
-                onPrimary={handleAnalyze}
-                onCancel={onClose}
-                checklist={setupChecklist}
-              />
-            </>
-          )}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="trade-terminal__body min-h-0 flex-1">
+            {phase === "SETUP" && (
+              <>
+                <TradeSystemContext
+                  policy={systemPolicy}
+                  decision={decision}
+                  breachPositionCount={breachPositionCount}
+                  stressedPositionCount={stressedPositionCount}
+                  openPositionCount={openPositionCount}
+                />
+                <TradeTerminalSharedIntel
+                  isLoading={sharedIntel.isLoading}
+                  isError={sharedIntel.isError}
+                  sentiment={sharedIntel.sentiment}
+                  bullets={sharedIntel.bullets}
+                />
+                <ThesisInput
+                  value={thinking}
+                  onChange={setThinking}
+                  minLength={thesisMin}
+                  mandatory={systemPolicy.behaviorLayer.thesisMandatory}
+                />
+                <PreTradeEmotionSelect value={preTradeEmotion} onChange={setPreTradeEmotion} />
+                <TradeInputs
+                  side={side}
+                  onSideChange={setSide}
+                  productType={productType}
+                  onProductTypeChange={setProductType}
+                  price={price}
+                  onPriceChange={setPrice}
+                  quantity={quantity}
+                  onQuantityChange={setQuantity}
+                  stopLoss={stopLoss}
+                  onStopLossChange={setStopLoss}
+                  target={target}
+                  onTargetChange={setTarget}
+                  livePriceHint={livePriceINR ? ` · Live reference ₹${livePriceINR}` : undefined}
+                  quantitySystemHint={quantitySystemHint}
+                  stopSystemNote={stopSystemNote}
+                  showPortfolioExit={showPortfolioExit}
+                  exitMaxQuantity={portfolioExitQty}
+                  executionSurface
+                />
+                <ExecutionReadinessPanel
+                  outcome={localGate ? "adjust" : canAnalyze ? "valid" : "pending"}
+                  inlineNote={
+                    localGate
+                      ? "Fix the flagged lines below, then run the risk check."
+                      : canAnalyze
+                        ? "Local checks satisfied — you may request server evaluation."
+                        : undefined
+                  }
+                  rows={setupReadinessRows}
+                  mode="local"
+                  side={side}
+                  price={price}
+                  quantity={quantity}
+                  stopLoss={stopLoss}
+                  target={target}
+                  thesis={thinking}
+                  thesisMin={thesisMin}
+                  preTradeEmotion={preTradeEmotion}
+                  scalingBlocked={scalingBlocked}
+                  snapshot={null}
+                  authorityVerdict={null}
+                  analyzing={false}
+                />
+              </>
+            )}
 
-          {phase === "ANALYZING" && (
-            <div className="trade-terminal-center">
-              <Loader size={28} className="dp-spinner" aria-hidden />
-              <p className="trade-terminal-center__title">Evaluating trade</p>
-              <p className="trade-terminal-center__sub">Risk, behavior, and rule alignment</p>
-            </div>
+            {phase === "ANALYZING" && (
+              <div className="trade-terminal-center">
+                <Loader size={28} className="dp-spinner" aria-hidden />
+                <p className="trade-terminal-center__title">Evaluating trade</p>
+                <p className="trade-terminal-center__sub">Risk, behavior, and rule alignment</p>
+              </div>
+            )}
+
+            {phase === "REVIEW" && snap && (
+              <>
+                <TradeSystemContext
+                  policy={systemPolicy}
+                  decision={decision}
+                  breachPositionCount={breachPositionCount}
+                  stressedPositionCount={stressedPositionCount}
+                  openPositionCount={openPositionCount}
+                />
+                <TradeTerminalSharedIntel
+                  isLoading={sharedIntel.isLoading}
+                  isError={sharedIntel.isError}
+                  sentiment={sharedIntel.sentiment}
+                  bullets={sharedIntel.bullets}
+                />
+                <section
+                  className="rounded-xl border border-slate-800/80 bg-slate-900/35 px-3 py-3 text-xs leading-snug text-slate-300 md:px-4"
+                  aria-label="Execution snapshot"
+                >
+                  <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    Execution snapshot
+                  </p>
+                  <p>
+                    <span className="font-semibold text-slate-200">{symbol}</span> ·{" "}
+                    {side === "SELL" ? "EXIT" : side} · {quantity} @ ₹{parseFloat(price || "0").toFixed(2)}
+                    {side === "BUY" ? ` · ${productType}` : ""}
+                    {side === "BUY"
+                      ? ` · SL ₹${parseFloat(stopLoss || "0").toFixed(2)} · TP ₹${parseFloat(target || "0").toFixed(2)}`
+                      : ""}
+                    {preTradeEmotion ? <span className="text-slate-500"> · {preTradeEmotion}</span> : null}
+                  </p>
+                </section>
+                <ExecutionConsequenceBlock />
+                <ExecutionReadinessPanel
+                  outcome={reviewJudgmentOutcome}
+                  inlineNote={reviewJudgmentMessage || undefined}
+                  rows={reviewReadinessRows}
+                  mode="server"
+                  side={side}
+                  price={price}
+                  quantity={quantity}
+                  stopLoss={stopLoss}
+                  target={target}
+                  thesis={thinking}
+                  thesisMin={thesisMin}
+                  preTradeEmotion={preTradeEmotion}
+                  scalingBlocked={scalingBlocked}
+                  snapshot={snap}
+                  authorityVerdict={authorityVerdict}
+                  analyzing={false}
+                />
+              </>
+            )}
+
+            {phase === "EXECUTING" && (
+              <div className="trade-terminal-center">
+                <Loader size={28} className="dp-spinner" aria-hidden />
+                <p className="trade-terminal-center__title">Executing trade</p>
+                <p className="trade-terminal-center__sub">
+                  {side} · {symbol}
+                </p>
+              </div>
+            )}
+
+            {phase === "SUCCESS" && (
+              <div className="trade-terminal-center">
+                <CheckCircle size={36} className="trade-terminal-center__ok" aria-hidden />
+                <p className="trade-terminal-center__title">Trade executed</p>
+                <p className="trade-terminal-center__sub">
+                  {submissionOutcome === "queued"
+                    ? "Order queued for the next market open (09:15 IST). Cash remains reserved until execution or expiry."
+                    : "Portfolio and journal entry log updated · trace recorded · Markets and other tabs refresh automatically"}
+                </p>
+              </div>
+            )}
+
+            {phase === "ERROR" && (
+              <div className="flex items-start gap-2 rounded-lg border border-slate-800/80 bg-slate-900/35 px-3 py-2 text-sm text-slate-200">
+                <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-300" aria-hidden />
+                <p className="min-w-0 leading-snug">
+                  <span className="font-semibold">Execution blocked.</span>{" "}
+                  <span className="text-slate-300">{errorMsg || "System could not complete this step."}</span>
+                </p>
+              </div>
+            )}
+          </div>
+
+          {phase === "SETUP" && (
+            <TradeExecutionBar
+              stateHeadline={
+                setupGateState === "locked_market"
+                  ? "Execution locked"
+                  : setupGateState === "ready_analyze"
+                    ? "Ready for risk check"
+                    : "Complete requirements"
+              }
+              primaryLabel="Run risk check"
+              canPrimary={canAnalyze}
+              onPrimary={handleAnalyze}
+              onCancel={onClose}
+            />
           )}
 
           {phase === "REVIEW" && snap && (
-            <>
-              <TradeTerminalSharedIntel
-                isLoading={sharedIntel.isLoading}
-                isError={sharedIntel.isError}
-                sentiment={sharedIntel.sentiment}
-                bullets={sharedIntel.bullets}
-              />
-              <TradeSystemContext
-                policy={systemPolicy}
-                decision={decision}
-                breachPositionCount={breachPositionCount}
-                stressedPositionCount={stressedPositionCount}
-                openPositionCount={openPositionCount}
-              />
-              <ValidationEngineView
-                outcome={decisionResultVisual}
-                message={
-                  reviewJudgmentMessage ||
-                  "Risk evaluation complete. Review system checks before execution."
-                }
-                mode="server"
-                side={side}
-                price={price}
-                quantity={quantity}
-                stopLoss={stopLoss}
-                target={target}
-                thesis={thinking}
-                thesisMin={thesisMin}
-                preTradeEmotion={preTradeEmotion}
-                scalingBlocked={scalingBlocked}
-                snapshot={snap}
-                authorityVerdict={authorityVerdict}
-                analyzing={false}
-              />
-              <p className="trade-terminal-recap">
-                <span className="trade-terminal-recap__sym">{symbol}</span>
-                <span className="trade-terminal-recap__side">{side === "SELL" ? "EXIT" : side}</span>
-                <span>
-                  {quantity} @ ₹{parseFloat(price || "0").toFixed(2)}
-                </span>
-                {side === "BUY" ? <span> · {productType}</span> : null}
-                {side === "BUY" ? (
-                  <span>
-                    {" "}
-                    · SL ₹{parseFloat(stopLoss || "0").toFixed(2)} · TP ₹{parseFloat(target || "0").toFixed(2)}
-                  </span>
-                ) : null}
-                {preTradeEmotion ? (
-                  <span className="trade-terminal-mono"> · Mood: {preTradeEmotion}</span>
-                ) : null}
-              </p>
-              <TradeSystemVerdict verdict={reviewJudgment.verdict} explanation={reviewJudgment.explanation} />
-              <DecisionActionBar
-                phase="review"
-                primaryLabel={executeLabel}
-                canPrimary={canExecute}
-                onPrimary={handleExecute}
-                onCancel={onClose}
-                checklist={reviewChecklist}
-                preActions={<ExecutionConsequenceBlock />}
-              />
-            </>
+            <TradeExecutionBar
+              stateHeadline={canExecute ? "Ready to execute" : "Complete requirements"}
+              primaryLabel={canExecute ? "Execute trade" : "Complete requirements"}
+              canPrimary={canExecute}
+              onPrimary={handleExecute}
+              onCancel={onClose}
+            />
           )}
 
-          {phase === "EXECUTING" && (
-            <div className="trade-terminal-center">
-              <Loader size={28} className="dp-spinner" aria-hidden />
-              <p className="trade-terminal-center__title">Executing trade</p>
-              <p className="trade-terminal-center__sub">
-                {side} · {symbol}
-              </p>
-            </div>
-          )}
-
-          {phase === "SUCCESS" && (
-            <div className="trade-terminal-center">
-              <CheckCircle size={36} className="trade-terminal-center__ok" aria-hidden />
-              <p className="trade-terminal-center__title">Trade executed</p>
-              <p className="trade-terminal-center__sub">
-                {submissionOutcome === "queued"
-                  ? "Order queued for the next market open (09:15 IST). Cash remains reserved until execution or expiry."
-                  : "Portfolio and journal entry log updated · trace recorded · Markets and other tabs refresh automatically"}
-              </p>
-            </div>
+          {(phase === "ANALYZING" || phase === "EXECUTING") && (
+            <TradeExecutionBar
+              stateHeadline="Working"
+              stateDetail={phase === "ANALYZING" ? "Server risk evaluation in progress." : "Sending order to the broker path."}
+              primaryLabel=""
+              canPrimary={false}
+              onCancel={onClose}
+              showPrimary={false}
+            />
           )}
 
           {phase === "ERROR" && (
-            <div className="trade-terminal-error">
-              <AlertTriangle size={28} aria-hidden />
-              <p className="trade-terminal-error__msg">{errorMsg || "Something went wrong."}</p>
-              <div className="trade-terminal-actions trade-terminal-actions--inline">
-                <button
-                  type="button"
-                  className="trade-terminal-btn trade-terminal-btn--primary"
-                  onClick={() => {
-                    setPreTrade(null);
-                    setEvaluation(null);
-                    setPhase("SETUP");
-                    setErrorMsg("");
-                  }}
-                >
-                  Back to inputs
-                </button>
-                <button type="button" className="trade-terminal-btn trade-terminal-btn--secondary" onClick={onClose}>
-                  Close
-                </button>
-              </div>
-            </div>
+            <TradeExecutionBar
+              stateHeadline="Execution blocked"
+              stateDetail={errorMsg || undefined}
+              primaryLabel="Return to setup"
+              canPrimary
+              onPrimary={() => {
+                setPreTrade(null);
+                setEvaluation(null);
+                setPhase("SETUP");
+                setErrorMsg("");
+              }}
+              onCancel={onClose}
+            />
+          )}
+
+          {phase === "SUCCESS" && (
+            <TradeExecutionBar
+              stateHeadline="Order submitted"
+              stateDetail={submissionOutcome === "queued" ? "Queued for session open." : "Filled or accepted path complete."}
+              primaryLabel=""
+              canPrimary={false}
+              onCancel={onClose}
+              showPrimary={false}
+            />
           )}
         </div>
       </div>

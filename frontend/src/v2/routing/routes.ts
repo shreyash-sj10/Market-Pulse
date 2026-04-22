@@ -7,6 +7,7 @@ export const ROUTES = {
   markets: "/markets",
   portfolio: "/portfolio",
   journal: "/journal",
+  weeklyReport: "/weekly-discipline-report",
   profile: "/profile",
   trace: "/trace",
 } as const;

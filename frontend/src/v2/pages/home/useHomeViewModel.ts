@@ -10,12 +10,14 @@ import { useProfileDecisions } from "../../hooks/useProfileDecisions";
 import { useTraceData } from "../../hooks/useTraceData";
 import {
   buildSystemState,
+  buildSystemStatus,
   buildNextAction,
   buildBehaviorInsight,
   buildEventLogs,
   sortAttentionByUrgency,
   takeAttentionSlice,
   type SystemStateVM,
+  type SystemStatusVM,
   type NextActionVM,
   type BehaviorInsightVM,
   type EventLogEntryVM,
@@ -23,6 +25,7 @@ import {
 import type { DecisionCardProps } from "../../components/decision/DecisionCard";
 
 export type HomeViewModel = {
+  systemStatus: SystemStatusVM;
   systemState: SystemStateVM;
   nextAction: NextActionVM;
   attentionTop3: DecisionCardProps[];
@@ -64,18 +67,32 @@ export function useHomeViewModel(): HomeViewModel {
       sortedAttention,
       positionCount,
     );
+    const hasAnyError =
+      portfolio.isError ||
+      attention.isError ||
+      profile.isError ||
+      trace.isError ||
+      Boolean(portfolio.summaryFetchFailed);
+    const systemStatus = buildSystemStatus(
+      portfolio.isLoading,
+      attention.isLoading,
+      hasAnyError,
+      sortedAttention,
+    );
 
     const nextAction = buildNextAction(
       portfolio.isLoading,
       attention.isLoading,
       portfolio.items,
       sortedAttention,
+      profile.items,
     );
 
     const behaviorInsight = buildBehaviorInsight(profile.items);
     const eventLogs       = buildEventLogs(trace.lines, 8);
 
     return {
+      systemStatus,
       systemState,
       nextAction,
       attentionTop3,

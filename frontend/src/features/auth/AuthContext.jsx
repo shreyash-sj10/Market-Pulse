@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { AuthContext } from "./authContext.js";
 import { getMe, logoutUser } from "../../v2/api/auth.api.js";
 import { setAccessToken, clearAccessToken, getAccessToken } from "../../v2/api/accessTokenStore.js";
 import {
@@ -6,16 +7,6 @@ import {
   setStoredCsrfToken,
   clearStoredCsrfToken,
 } from "../../v2/api/api.js";
-
-const AuthContext = createContext();
-
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error("useAuth must be used within an AuthProvider");
-  }
-  return context;
-};
 
 /**
  * Path A (P0-C): access JWT in memory only + HttpOnly refresh cookie + SameSite=strict (server).

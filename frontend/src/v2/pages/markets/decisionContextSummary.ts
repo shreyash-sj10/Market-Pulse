@@ -117,7 +117,7 @@ export function buildDecisionContextSummaryLines(decision: Decision, stock: Mark
 export function buildMarketSignalLines(stock: MarketStock, decision: Decision): string[] {
   const sig = scannerSignalFromStock(stock);
   return [
-    `Scanner: ${sig.action} · ${stock.trend} · ${stock.changePercent >= 0 ? "+" : ""}${stock.changePercent.toFixed(2)}%.`,
+    `Scanner: ${sig.action} · ${stock.trend} · ${stock.changePercent > 0 ? "+" : ""}${stock.changePercent.toFixed(2)}%.`,
     `Engine posture: ${decision.action} · ${decision.confidence}% confidence.`,
   ];
 }
