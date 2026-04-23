@@ -1,4 +1,4 @@
-# Behavior-Aware Trading Intelligence Platform
+# Behavior-Aware Trading Intelligence Platform: NOESIS
 
 ![CI](https://github.com/shreyash-beyond/trading-platform/actions/workflows/ci.yml/badge.svg)
 ![Node](https://img.shields.io/badge/node-20.x-brightgreen)

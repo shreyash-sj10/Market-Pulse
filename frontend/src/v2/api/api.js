@@ -11,6 +11,7 @@ const CSRF_SESSION_KEY = "auth.csrfToken";
 function resolveApiBaseUrl() {
   const raw =
     import.meta.env.VITE_API_BASE_URL ||
+    import.meta.env.VITE_API_URL ||
     import.meta.env.VITE_BACKEND_URL ||
     "http://localhost:5001";
   const trimmed = String(raw).replace(/\/+$/, "");
