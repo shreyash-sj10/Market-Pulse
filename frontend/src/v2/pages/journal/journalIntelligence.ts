@@ -468,7 +468,7 @@ export type JournalRowSource = {
   insight: string;
   verdict: string;
   tagList: string[];
-  confidence: number;
+  confidence: number | null;
   allowed: boolean;
   riskScore: number;
   warnings: boolean | string[];

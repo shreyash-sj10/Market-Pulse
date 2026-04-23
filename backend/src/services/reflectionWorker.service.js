@@ -44,24 +44,31 @@ const processTradeClosedEvent = async ({ tradeId, userId }) => {
         exitPricePaise: trade.pricePaise,
         pnlPaise: trade.pnlPaise,
       });
+      const reflectionScore = Math.max(0, 100 - (reflection.deviationScore || 0));
       trade.learningOutcome = {
         verdict: reflection.verdict,
         insight: reflection.insight,
         improvementSuggestion: reflection.improvement,
       };
-      trade.decisionSnapshot = {
-        verdict: reflection.verdict,
-        score: Math.max(0, 100 - (reflection.deviationScore || 0)),
-        pillars: {
-          market: { verdict: "N/A" },
-          behavior: { verdict: reflection.verdict },
-          risk: { verdict: "EXIT" },
-          rr: { verdict: "N/A" },
+      const timeline = trade.intelligenceTimeline && typeof trade.intelligenceTimeline === "object"
+        ? trade.intelligenceTimeline
+        : {};
+      trade.intelligenceTimeline = {
+        ...timeline,
+        preTrade: timeline.preTrade || trade.intelligenceTimeline?.preTrade || {},
+        postTrade: {
+          ...(timeline.postTrade || {}),
+          outcome: reflection.executionPattern,
+          behavioralFlags: Array.isArray(reflection.tags) ? reflection.tags : [],
+          alignment: reflection.verdict || timeline.postTrade?.alignment,
+          insightSummary: reflection.insight || timeline.postTrade?.insightSummary,
+          observations:
+            Array.isArray(timeline.postTrade?.observations) && timeline.postTrade.observations.length > 0
+              ? timeline.postTrade.observations
+              : [reflection.insight].filter(Boolean),
         },
       };
-      trade.intelligenceTimeline = {
-        postTrade: { outcome: reflection.executionPattern, behavioralFlags: reflection.tags },
-      };
+      trade.markModified("intelligenceTimeline");
       trade.trace.timeline.push({
         stage: "REFLECTION_COMPLETED",
         metadata: { verdict: reflection.verdict },
@@ -180,7 +187,7 @@ const processTradeClosedEvent = async ({ tradeId, userId }) => {
         closedTrade: finishedTrade,
         reflection: {
           mistakeTag: finishedTrade.intelligenceTimeline?.postTrade?.outcome,
-          deviationScore: finishedTrade.decisionSnapshot?.score ? 100 - finishedTrade.decisionSnapshot.score : 0,
+          deviationScore: 0,
         },
         behavior: null,
         mistakeAnalysis: { primaryMistake: finishedTrade.intelligenceTimeline?.postTrade?.outcome },

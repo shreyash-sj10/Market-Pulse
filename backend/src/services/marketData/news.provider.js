@@ -8,7 +8,7 @@ const logger = require("../../utils/logger");
  */
 const getNews = async (symbol) => {
   const normalizedSymbol = symbol.split('.')[0];
-  const finnhubKey = process.env.FINNHUB_API_KEY || process.env.VITE_FINNHUB_API_KEY;
+  const finnhubKey = process.env.FINNHUB_API_KEY;
   const finnhubSymbol = normalizedSymbol.startsWith("^") ? normalizedSymbol : `NSE:${normalizedSymbol}`;
 
   try {

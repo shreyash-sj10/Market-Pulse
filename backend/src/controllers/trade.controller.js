@@ -8,6 +8,17 @@ const { sendSuccess } = require("../utils/response.helper");
 
 const { adaptTrade } = require("../adapters/trade.adapter");
 
+const deriveTradeLifecycleState = (trade) => {
+  if (!trade || typeof trade !== "object") return "ACTIVE";
+  if (trade.status === "FAILED" || trade.reflectionStatus === "FAILED") return "FAILED";
+  if (trade.status === "PENDING_EXECUTION") return "PENDING";
+  if (trade.status === "EXECUTED_PENDING_REFLECTION" || trade.reflectionStatus === "PENDING") {
+    return "PROCESSING";
+  }
+  if (trade.status === "COMPLETE" || trade.status === "EXECUTED") return "COMPLETE";
+  return "ACTIVE";
+};
+
 // ================= BUY TRADE =================
 /**
  * POST /trades/buy
@@ -48,7 +59,7 @@ const buyTrade = async (req, res, next) => {
         executionBalance,
         currentBalance,
       },
-      state: trade.status === "PENDING_EXECUTION" ? "PENDING" : "COMPLETE",
+      state: deriveTradeLifecycleState(trade),
       meta: {
         systemStateVersion,
         ...(replayApproximateBalance ? { replayApproximateBalance: true } : {}),
@@ -108,7 +119,7 @@ const sellTrade = async (req, res, next) => {
         executionBalance,
         currentBalance,
       },
-      state: trade.status === "PENDING_EXECUTION" ? "PENDING" : "COMPLETE",
+      state: deriveTradeLifecycleState(trade),
       meta: {
         systemStateVersion,
         ...(replayApproximateBalance ? { replayApproximateBalance: true } : {}),

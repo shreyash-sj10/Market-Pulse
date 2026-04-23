@@ -9,6 +9,7 @@ const { startSweeper } = require("./services/sweeper.service");
 const { startExecutionExecutor } = require("./services/execution.executor");
 const { startMarketCalendarWorker } = require("./workers/marketCalendar.worker");
 const { isRedisAvailable } = require("./infra/redisHealth");
+const redisClient = require("./utils/redisClient");
 const runtimeState = require("./infra/runtimeState");
 
 const PORT = process.env.PORT || 8080; // Define the port
@@ -67,7 +68,7 @@ const startServer = async () => {
     }
 
     // Reflection worker is Redis-backed and remains optional in degraded mode.
-    if (isRedisAvailable() && process.env.NODE_ENV !== "test") {
+    if (isRedisAvailable() && redisClient.supportsBullMQ && process.env.NODE_ENV !== "test") {
       require("./queue/workers/reflection.worker");
     } else if (process.env.NODE_ENV !== "test") {
       logger.warn({

@@ -31,7 +31,7 @@ const tradeRateLimitBody = (req) => ({
 
 /**
  * Trade execution: limit by authenticated user (not raw IP).
- * With Redis (USE_REDIS=true + REDIS_URL): shared counters across horizontally scaled instances.
+ * With Redis (USE_REDIS=true): shared counters across horizontally scaled instances.
  * Without Redis: in-memory store — correct per-user keying for single instance; scale-out needs Redis.
  */
 const tradeLimiter = rateLimit({
@@ -60,7 +60,7 @@ const tradeLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  ...(redisClient
+  ...(redisClient && redisClient.supportsRateLimitStore
     ? {
         store: new RedisStore({
           sendCommand: (...args) => redisClient.call(...args),
@@ -138,7 +138,8 @@ const { isMarketOpen } = require("../services/marketHours.service");
 const logger = require("../utils/logger");
 
 const checkMarketClock = (req, res, next) => {
-  if (!isMarketOpen()) {
+  const allowClosedMarketExecution = process.env.ALLOW_CLOSED_MARKET_EXECUTION === "true";
+  if (!isMarketOpen() && !allowClosedMarketExecution) {
     logger.warn({
       action: "MARKET_CLOSED_EXECUTION",
       userId: req.user?._id,

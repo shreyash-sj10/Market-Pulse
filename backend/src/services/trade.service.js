@@ -829,9 +829,9 @@ const runAtomicTradeExecution = async (userDoc, payload, type) => {
       { session }
     );
 
-    const allowClosedMarketInTest =
-      process.env.NODE_ENV === "test" && process.env.ALLOW_CLOSED_MARKET_EXECUTION === "true";
-    const marketClosed = !isMarketOpen() && !allowClosedMarketInTest;
+    const allowClosedMarketExecution =
+      process.env.ALLOW_CLOSED_MARKET_EXECUTION === "true";
+    const marketClosed = !isMarketOpen() && !allowClosedMarketExecution;
 
     let finalResult = placeResult;
     if (!marketClosed) {

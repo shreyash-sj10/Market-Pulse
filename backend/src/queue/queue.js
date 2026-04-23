@@ -11,7 +11,8 @@ const { isRedisAvailable } = require("../infra/redisHealth");
  * 2. Fallback Mode: Direct synchronous execution (Dev/Infra Failure)
  */
 
-const realQueue = redisClient ? new Queue("tradeQueue", { connection: redisClient }) : null;
+const bullConnection = redisClient && redisClient.supportsBullMQ ? redisClient : null;
+const realQueue = bullConnection ? new Queue("tradeQueue", { connection: bullConnection }) : null;
 
 const inlineHandlers = {
   TRADE_CLOSED: async (payload) => {
@@ -42,7 +43,7 @@ const processJobInline = async (jobName, payload) => {
 const tradeQueue = {
   add: async (jobName, payload, options = {}) => {
     // MODE 1: ASYNC (Redis ON & Healthy)
-    if (redisClient && isRedisAvailable()) {
+    if (bullConnection && isRedisAvailable()) {
       try {
         const queued = await realQueue.add(jobName, payload, options);
         return {
@@ -90,7 +91,7 @@ const tradeQueue = {
 
 module.exports = { 
   tradeQueue, 
-  connection: redisClient, 
+  connection: bullConnection, 
   isRedisConnected: isRedisAvailable,
   registerInlineJobHandler,
 };

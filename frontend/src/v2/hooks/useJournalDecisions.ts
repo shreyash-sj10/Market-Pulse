@@ -138,16 +138,20 @@ function mapJournalEntryToRow(entry: Record<string, unknown>): JournalRowSource 
     isObservation = true;
   }
 
-  const confidence = Number(ls.confidence ?? 50);
-  const riskScore = Math.min(100, Math.max(0, Math.round(Number.isFinite(confidence) ? confidence : 50)));
+  const confidenceRaw = Number(ls.confidence);
+  const confidence = Number.isFinite(confidenceRaw) ? confidenceRaw : null;
+  const riskScore =
+    confidence == null ? 0 : Math.min(100, Math.max(0, Math.round(confidence)));
   const tags = Array.isArray(ls.tags) ? (ls.tags as string[]).map((t) => String(t)) : [];
 
-  const input: BuildDecisionInput = {
-    allowed: true,
-    riskScore,
-    warnings: tags.length > 0 ? tags : false,
-  };
-  const decision = buildDecision(input);
+  const decision =
+    confidence == null
+      ? { action: "GUIDE" as const, confidence: 0, reason: "Confidence unavailable in reflection output." }
+      : buildDecision({
+          allowed: true,
+          riskScore,
+          warnings: tags.length > 0 ? tags : false,
+        } as BuildDecisionInput);
 
   const moodRaw = entry.preTradeEmotionAtEntry;
   const preTradeEmotion =
@@ -163,7 +167,7 @@ function mapJournalEntryToRow(entry: Record<string, unknown>): JournalRowSource 
     insight: insight || "—",
     verdict,
     tagList: tags,
-    confidence: riskScore,
+    confidence,
     allowed: input.allowed,
     riskScore,
     warnings: input.warnings,

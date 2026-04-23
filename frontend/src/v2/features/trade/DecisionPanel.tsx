@@ -6,7 +6,7 @@ import { useJournalPage } from "../../hooks/useJournalDecisions";
 import { usePortfolioSummary } from "../../hooks/usePortfolioSummary";
 import { usePortfolioDecisions } from "../../pages/portfolio/usePortfolioDecisions";
 import { buildTradingSystemPolicy } from "../../behavior/behavioralSystemPolicy";
-import { runPreTrade, executeTrade } from "../../api/trade.api";
+import { runPreTrade, executeTrade, getTradeExecutionStatus } from "../../api/trade.api";
 import type { PreTradeResult } from "../../api/trade.api";
 import { fromPaise } from "../../../utils/currency.utils";
 import { queryClient } from "../../../queryClient";
@@ -74,6 +74,7 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
   const [evaluation, setEvaluation] = useState<TradeEvaluation | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [submissionOutcome, setSubmissionOutcome] = useState<"executed" | "queued">("executed");
+  const [reflectionPending, setReflectionPending] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -90,6 +91,7 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
       executionIdempotencyKeyRef.current = null;
       setExecutedPricePaise(null);
       setSubmissionOutcome("executed");
+      setReflectionPending(false);
     }
   }, [open, symbol]);
 
@@ -451,6 +453,23 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
       // balance as the executed price in the trade success header.
       const queued = execRes.state === "PENDING" || execRes.data?.status === "PENDING_EXECUTION";
       setSubmissionOutcome(queued ? "queued" : "executed");
+      const tradeId = execRes.data?.tradeId;
+      if (!queued && tradeId) {
+        setReflectionPending(true);
+        for (let i = 0; i < 4; i += 1) {
+          const statusRes = await getTradeExecutionStatus(tradeId);
+          const derived = statusRes.data?.executionDerivedStatus;
+          if (derived === "COMPLETED" || derived === "FAILED") {
+            setReflectionPending(derived !== "COMPLETED");
+            break;
+          }
+          await new Promise((resolve) => {
+            window.setTimeout(resolve, 350);
+          });
+        }
+      } else {
+        setReflectionPending(false);
+      }
       const ep = execRes.data?.executionPricePaise ?? execRes.data?.pricePaise;
       if (!queued && typeof ep === "number" && Number.isFinite(ep)) {
         setExecutedPricePaise(ep);
@@ -472,7 +491,7 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
 
       setTimeout(() => {
         onClose();
-      }, 900);
+      }, 1200);
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
@@ -658,11 +677,15 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
             {phase === "SUCCESS" && (
               <div className="trade-terminal-center">
                 <CheckCircle size={36} className="trade-terminal-center__ok" aria-hidden />
-                <p className="trade-terminal-center__title">Trade executed</p>
+                <p className="trade-terminal-center__title">
+                  {submissionOutcome === "queued" ? "Order queued" : "Execution accepted"}
+                </p>
                 <p className="trade-terminal-center__sub">
                   {submissionOutcome === "queued"
                     ? "Order queued for the next market open (09:15 IST). Cash remains reserved until execution or expiry."
-                    : "Portfolio and journal entry log updated · trace recorded · Markets and other tabs refresh automatically"}
+                    : reflectionPending
+                      ? "Execution committed. Reflection and journal synchronization are still processing."
+                      : "Execution and reflection complete. Portfolio and journal refresh automatically."}
                 </p>
               </div>
             )}
@@ -734,7 +757,13 @@ export default function DecisionPanel({ open, symbol, context, onClose, backdrop
           {phase === "SUCCESS" && (
             <TradeExecutionBar
               stateHeadline="Order submitted"
-              stateDetail={submissionOutcome === "queued" ? "Queued for session open." : "Filled or accepted path complete."}
+              stateDetail={
+                submissionOutcome === "queued"
+                  ? "Queued for session open."
+                  : reflectionPending
+                    ? "Execution complete. Reflection pending."
+                    : "Execution and reflection complete."
+              }
               primaryLabel=""
               canPrimary={false}
               onCancel={onClose}

@@ -3,7 +3,7 @@ const redisClient = require("../../utils/redisClient");
 const squareoffService = require("../../services/squareoff.service");
 const logger = require("../../utils/logger");
 
-if (!redisClient) {
+if (!redisClient || !redisClient.supportsBullMQ) {
   module.exports = null;
 } else {
   try {

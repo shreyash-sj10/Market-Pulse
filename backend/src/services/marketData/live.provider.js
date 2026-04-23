@@ -5,8 +5,7 @@ const { getQuoteCache, setQuoteCache } = require("../../utils/marketQuoteCache")
 const { toYahooSymbol } = require("../../utils/symbol.utils");
 const logger = require("../../utils/logger");
 
-const finnhubApiKey = () =>
-  process.env.FINNHUB_API_KEY || process.env.VITE_FINNHUB_API_KEY;
+const finnhubApiKey = () => process.env.FINNHUB_API_KEY;
 
 /** Indian equities on Finnhub use NSE:SYMBOL (INR). */
 const toFinnhubSymbol = (symbol) => {

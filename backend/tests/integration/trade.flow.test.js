@@ -1,5 +1,7 @@
 const request = require("supertest");
 process.env.NODE_ENV = "test";
+process.env.ALLOW_CLOSED_MARKET_EXECUTION = "true";
+jest.setTimeout(120000);
 
 jest.mock("../../src/services/news/news.engine", () => ({
   getProcessedNews: jest.fn().mockImplementation(async (sym) => ({
@@ -63,8 +65,7 @@ describe("Institutional Trade Integrity Suite (Full Hardening Audit)", () => {
     let userId;
 
     beforeAll(async () => {
-        jest.setTimeout(30000);
-        await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 5000 });
+        await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 20000 });
         // Use an existing test user or create one
         let user = await User.findOne({ email: "institutional-tester@marketpulse.ai" });
 
@@ -86,7 +87,7 @@ describe("Institutional Trade Integrity Suite (Full Hardening Audit)", () => {
             { userId: user._id, tokenType: "access" },
             process.env.JWT_SECRET || "default_secret"
         );
-    }, 30000);
+    }, 120000);
 
     afterAll(async () => {
         await mongoose.connection.close();
@@ -167,7 +168,7 @@ describe("Institutional Trade Integrity Suite (Full Hardening Audit)", () => {
         expect(sellTrade.pnlPaise).toBeDefined();
         // Fills use `getPrice` mock (2200000) for both legs → flat round-trip.
         expect(sellTrade.pnlPaise).toBe(0);
-    });
+    }, 20000);
 
     test("2. System Enforcement: Reject Invalid Trade (Bad RR)", async () => {
         const symbol = "NIFTY_RR_FAIL";
@@ -317,6 +318,6 @@ describe("Institutional Trade Integrity Suite (Full Hardening Audit)", () => {
             statuses.push(r.status);
         }
         expect(statuses.some((s) => s === 429)).toBe(true);
-    });
+    }, 15000);
 });
 

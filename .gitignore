@@ -3,6 +3,8 @@ node_modules/
 dist/
 frontend/dist/
 backend/logs/
+backend/coverage/
+frontend/tmp/
 
 # Environment
 .env

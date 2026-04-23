@@ -143,12 +143,12 @@ No automated action modifies user capital without an explicit pre-trade token. S
 | Frontend | React + React Query | Atomic per-engine cached state |
 | Backend | Node.js 20 + Express | Modular service-oriented |
 | Database | MongoDB + Mongoose | Replica set required for transactions |
-| Cache / Queue | Redis + Bull | Optional; system degrades without it |
+| Cache / Queue | Redis (optional) + fallback queue wrapper | Optional infra; core flow remains correct without Redis |
 | Market Data | yahoo-finance2 | PQueue throttled: 1 req / 12s |
-| AI Synthesis | Anthropic Claude | Post-decision explanation only |
+| AI Synthesis | Gemini (optional) | Best-effort; returns `UNAVAILABLE`/fallback when unavailable |
 | Deployment | Railway (single instance) | See §12 on worker scaling constraints |
 | CI | GitHub Actions | backend tests + frontend build on every push |
-| Logging | Pino (structured JSON) | traceId + userId on every log line |
+| Logging | Winston (structured JSON) | traceId + userId on every log line |
 | Validation | Zod | Two separate schemas: pre-trade vs execution |
 
 ---
@@ -283,7 +283,7 @@ POST /api/intelligence/pre-trade       [validatePreTradePayload → preTradeGuar
     │
     ├─ LAYER 5: AI Synthesis (non-blocking, best-effort)
     │   explainDecision(snapshot) → plain-English reasoning
-    │   If Claude unavailable → status: UNAVAILABLE (never fake output)
+    │   If Gemini unavailable → status: UNAVAILABLE (never fake output)
     │
     ├─ Issue preTradeToken if verdict ≠ BLOCK:
     │   token = crypto.randomUUID()
@@ -1125,7 +1125,7 @@ CORS is locked to an explicit origin whitelist (`FRONTEND_URL` in production; Vi
 
 ### Logging Strategy
 
-Pino structured JSON logging. Every log line includes:
+Winston structured logging with JSON output in production. Every log line includes:
 
 ```javascript
 {
@@ -1139,7 +1139,7 @@ Pino structured JSON logging. Every log line includes:
 }
 ```
 
-Morgan HTTP access logs are piped through Pino (`logger.info(message.trim())`).
+Morgan HTTP access logs are piped through the same logger transport (`logger.info(...)`), keeping HTTP and domain traces correlated by `traceId`.
 
 ### Trace System
 
@@ -1226,26 +1226,50 @@ When market data is unavailable: `UNAVAILABLE` tag displayed, PnL shown as `--`,
 
 ## 16. Configuration & Environment
 
-Key environment variables (see `.env.example` for full list):
+Key environment variables (see `backend/.env.example` and `frontend/.env.example` for full list):
+
+### Backend
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `JWT_SECRET` | **Yes** | — | JWT signing + HMAC key. Process fails to start if missing. |
-| `MONGO_URI` | **Yes** | — | MongoDB replica set URI |
 | `NODE_ENV` | **Yes** | — | `development` \| `production` \| `test` |
-| `FRONTEND_URL` | Prod only | — | CORS origin whitelist in production |
-| `REDIS_URL` | No | — | Redis connection. Omit for degraded sync mode. |
+| `MONGO_URI` | **Yes** | — | MongoDB replica set URI (transactions required) |
+| `JWT_SECRET` | **Yes** | — | JWT signing + HMAC seed for payload integrity |
+| `FRONTEND_URL` | **Prod: Yes** | — | CORS + cookie origin; should be HTTPS in production |
+| `ALLOW_CLOSED_MARKET_EXECUTION` | No (blocked in prod) | `false` | Demo/test switch for market-hours bypass |
+| `SKIP_CSRF_DEV` | No (blocked in prod) | `false` | Dev-only CSRF bypass for local automation |
+| `USE_REDIS` | No | `false` | Enables optional Redis infrastructure |
+| `UPSTASH_REDIS_REST_URL` | If `USE_REDIS=true` | — | Upstash REST endpoint |
+| `UPSTASH_REDIS_REST_TOKEN` | If `USE_REDIS=true` | — | Upstash REST token |
+| `GEMINI_API_KEY` | No | — | Optional AI enrichment; system degrades safely without it |
+| `GEMINI_MODEL` | No | `gemini-1.5-flash` | Gemini model used by AI services |
+| `FINNHUB_API_KEY` | No | — | Market/news fallback for resilience |
 | `SQUAREOFF_TIME_IST` | No | `15:20` | Intraday square-off trigger time (HH:MM) |
-| `TRADING_CALENDAR_URL` | No | — | External calendar Docker service URL |
-| `CALENDAR_EXCHANGE_MIC` | No | `XNSE` | Exchange: `XNSE` (NSE) or `XBOM` (BSE) |
-| `MIN_RR` | No | `1.2` | Minimum risk:reward for trade approval |
-| `TRADE_RATE_LIMIT_MAX` | No | `5` (prod) | Max trades per TRADE_RATE_LIMIT_WINDOW_MS |
-| `TRADE_RATE_LIMIT_WINDOW_MS` | No | `10000` | Rate limit window in ms |
+| `SQUAREOFF_CONCURRENCY` | No | `10` | Parallel liquidation cap for intraday square-off |
+| `TRADE_RATE_LIMIT_MAX` | No | `5` (prod) | Max trades per `TRADE_RATE_LIMIT_WINDOW_MS` |
+| `TRADE_RATE_LIMIT_WINDOW_MS` | No | `10000` | Trade rate-limit window (ms) |
 | `OUTBOX_POLL_MS` | No | `5000` | Outbox worker poll interval |
-| `ACCESS_TOKEN_TTL` | No | `15m` | JWT access token lifetime |
-| `REFRESH_TOKEN_TTL` | No | `7d` | JWT refresh token lifetime |
-| `ALLOW_CLOSED_MARKET_EXECUTION` | Test only | `false` | `true` in test env to bypass market hours |
-| `ANTHROPIC_API_KEY` | No | — | Claude API key for AI synthesis |
+| `ACCESS_TOKEN_TTL` | No | `15m` | Access token lifetime |
+| `REFRESH_TOKEN_TTL` | No | `7d` | Refresh token lifetime |
+
+### Frontend
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `VITE_API_BASE_URL` | **Yes** | — | Backend base URL (`https://<api>/api` in production) |
+| `VITE_ENV` | No | `development` | Frontend environment marker |
+| `VITE_FINNHUB_API_KEY` | No | — | Optional direct frontend US quote/search integration |
+
+### Environment verification
+
+Run before deployment:
+
+```bash
+cd backend
+npm run verify:env
+```
+
+`verify-env` enforces production safety gates (e.g., blocks `ALLOW_CLOSED_MARKET_EXECUTION=true` and `SKIP_CSRF_DEV=true` when `NODE_ENV=production`).
 
 ---
 
@@ -1254,7 +1278,7 @@ Key environment variables (see `.env.example` for full list):
 **Stack:** Jest + `mongodb-memory-server` (MongoMemoryReplSet — replica set for transaction support)
 
 ```
-npm test               # all suites, --runInBand --forceExit
+npm test               # all suites, --runInBand --detectOpenHandles
 npm run test:unit      # engines, middleware, services
 npm run test:integration # full HTTP flows with real DB
 npm run test:coverage  # coverage report (thresholds: 75–90% by engine)
@@ -1293,7 +1317,7 @@ npm run test:coverage  # coverage report (thresholds: 75–90% by engine)
 
 ### Failure Simulation
 
-- AI unavailable: trade executes, `aiExplanationStatus: PENDING` returned (no 500)
+- AI unavailable: trade executes; AI surfaces return `UNAVAILABLE` / fallback, never crash execution
 - Redis unavailable: system continues in degraded mode (in-memory fallback)
 - MongoDB primary election: `TransientTransactionError` retry succeeds
 
@@ -1308,10 +1332,10 @@ npm run test:coverage  # coverage report (thresholds: 75–90% by engine)
 | In-process background workers | Cannot scale horizontally (duplicate execution risk) | Railway single-instance deployment; see `docs/BACKGROUND_WORKERS_SCALE.md` |
 | New users bypass behavioral engine | First 3 trades get `behaviorScore=70` (safe default) | Insufficient history for statistical patterns |
 | preTradeToken TTL: 2 min | Beginner wizard (6 steps) can expire token | UX vs security tradeoff; reissue flow needed |
-| Single Railway region | No failover, no multi-AZ | Cost constraint for paper trading platform |
+| Single region deployment | No failover, no multi-AZ | Cost-conscious demo/interview setup |
 | MongoDB Atlas M0 | Shared cluster, 500 connections max, limited IOPS | Development/demo tier only |
 | No real broker integration | Paper-only simulation | Deliberate design decision; Phase 2 planned |
-| AI explanation is best-effort | `UNAVAILABLE` state shown when Claude unreachable | Non-blocking by design; trades never wait on AI |
+| AI explanation is best-effort | `UNAVAILABLE` state shown when Gemini unavailable | Non-blocking by design; trades never wait on AI |
 
 ---
 
@@ -1338,28 +1362,58 @@ npm run test:coverage  # coverage report (thresholds: 75–90% by engine)
 
 ## 20. Deployment Guide
 
-**Railway (current setup):**
-```
-Web service:    Node.js 20, npm start, PORT=auto
-Redis addon:    Managed Redis (USE_REDIS=true, REDIS_URL auto-injected)
-MongoDB:        External Atlas M0 (MONGO_URI in Railway env)
-Replicas:       1 (required — in-process workers, see §12)
-```
+### Recommended deployment topology (current architecture)
 
-**Required environment variables on Railway:**
+- **Backend:** single Node.js API instance (`replicas=1`) due to in-process background workers
+- **Database:** MongoDB Atlas replica set (M0+)
+- **Frontend:** Vite static deploy (Vercel / Netlify / similar)
+- **Redis:** optional Upstash REST; correctness must not depend on Redis
+
+### Production backend env checklist
+
+Required:
+
 ```
-JWT_SECRET         (min 32 chars, random)
-JWT_REFRESH_SECRET
-MONGO_URI          (Atlas M0 replica set URI)
-FRONTEND_URL       (Railway frontend deployment URL)
 NODE_ENV=production
+MONGO_URI=<atlas-replica-set-uri>
+JWT_SECRET=<long-random-secret>
+FRONTEND_URL=https://<your-frontend-domain>
 ```
 
-**Atlas setup:**
-- Cluster tier: M0 or M2+ (M0 for demo, M2+ for real load)
-- Replica set: enabled by default on Atlas
-- Network access: allow Railway egress IPs or `0.0.0.0/0` with connection string auth
-- Indexes: Mongoose `syncIndexes` runs on startup (or run `npm run migrate:strict`)
+Safety:
+
+```
+ALLOW_CLOSED_MARKET_EXECUTION=false
+SKIP_CSRF_DEV=false
+```
+
+Optional infrastructure:
+
+```
+USE_REDIS=true
+UPSTASH_REDIS_REST_URL=<upstash-rest-url>
+UPSTASH_REDIS_REST_TOKEN=<upstash-rest-token>
+```
+
+Optional intelligence/reliability:
+
+```
+GEMINI_API_KEY=<gemini-key>
+FINNHUB_API_KEY=<finnhub-key>
+```
+
+### Deployment gates
+
+```bash
+cd backend
+npm run verify:env
+```
+
+Deploy only when verify-env passes cleanly (warnings understood and accepted).
+
+### Operational note on Redis mode
+
+With Upstash REST, Redis remains **optional** and safe-degraded. Queue/rate-limit Redis features are guarded; business correctness remains on MongoDB + deterministic service logic.
 
 ---
 
@@ -1368,7 +1422,7 @@ NODE_ENV=production
 ### Prerequisites
 - Node.js 20+
 - MongoDB 6+ replica set OR use `mongodb-memory-server` (auto-used by tests)
-- Redis (optional; system degrades gracefully)
+- Redis optional (`USE_REDIS=false` works in degraded mode)
 
 ### Backend setup
 ```bash
@@ -1383,6 +1437,7 @@ npm run dev          # nodemon src/server.js, hot-reload
 ### Frontend setup
 ```bash
 cd frontend
+cp .env.example .env
 npm install
 npm run dev          # Vite dev server
 ```
@@ -1396,7 +1451,7 @@ npm test             # starts MongoMemoryReplSet automatically
 ### Verify environment
 ```bash
 cd backend
-node scripts/verify-env.js
+npm run verify:env
 ```
 
 ---
@@ -1513,6 +1568,11 @@ backend/
 │   │   ├── requestMetrics.js         # prom-client instrumentation
 │   │   └── error.middleware.js       # Global error handler (AppError → structured response)
 │   │
+│   ├── infra/
+│   │   ├── redisClient.js            # Upstash REST client (lazy singleton, safe fallback)
+│   │   ├── redisHealth.js            # Redis availability state + degraded signaling
+│   │   └── runtimeState.js           # Worker/runtime capability markers
+│   │
 │   ├── models/                       # Mongoose schemas with index definitions
 │   │   ├── trade.model.js
 │   │   ├── holding.model.js
@@ -1527,7 +1587,7 @@ backend/
 │   │   ├── transaction.js            # runInTransaction with 8-retry + write conflict handling
 │   │   ├── marketHours.util.js       # isMarketOpen (calendar-authoritative), squareoff gate
 │   │   ├── paise.js                  # toPaise, enforcePaise — integer currency enforcement
-│   │   ├── logger.js                 # Pino structured logger
+│   │   ├── logger.js                 # Winston structured logger
 │   │   ├── AppError.js               # Domain error with HTTP code + error code
 │   │   └── systemPreLock.js          # Redis NX lock (acquirePreLock)
 │   │
@@ -1536,8 +1596,8 @@ backend/
 │   │   └── marketCalendar.worker.js  # Calendar cache refresh + external sync
 │   │
 │   └── queue/
-│       ├── queue.js                  # Bull queue setup (Redis-backed)
-│       └── squareoff.schedule.js     # Squareoff scheduler bootstrap
+│       ├── queue.js                  # Queue wrapper: Redis async when available, inline fallback otherwise
+│       └── squareoff.schedule.js     # BullMQ schedule when supported, interval fallback otherwise
 │
 ├── tests/
 │   ├── unit/                         # Engine and service unit tests
@@ -1601,7 +1661,7 @@ The `LUCKY_PROFIT` classification is the single most important design decision i
 
 **Token TTL must match the longest user journey.** A 2-minute preTradeToken TTL is too short for a 6-step guided wizard. Beginners taking their time through the checklist hit token expiry and see an opaque error. This is a known UX deficiency (documented in §18).
 
-**The "Winston" comment in `app.js` survived a logger migration.** A single stale code comment (`// Intercept Morgan logs and push them into Winston`) was left when the project migrated from Winston to Pino. This is the kind of discrepancy that erodes trust in code reviews. Comments must be updated at the point of change.
+**Documentation and comments must follow runtime truth.** A stale logging comment once drifted from runtime implementation. This was a reminder that operational docs/comments are part of system correctness, not polish.
 
 ---
 

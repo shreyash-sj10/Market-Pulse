@@ -10,7 +10,7 @@ const { startSquareOff } = require("../services/squareoff.service");
  * Falls back to legacy interval scheduler if Redis is unavailable (dev / degraded).
  */
 async function startSquareOffQueueOrPoll() {
-  const redisOk = Boolean(redisClient && isRedisAvailable());
+  const redisOk = Boolean(redisClient && redisClient.supportsBullMQ && isRedisAvailable());
   if (!redisOk) {
     startSquareOff();
     runtimeState.mark("squareoffMode", "interval");

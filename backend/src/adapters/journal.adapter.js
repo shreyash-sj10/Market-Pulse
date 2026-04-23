@@ -6,13 +6,9 @@ const adaptJournal = (tradeOrCard) => {
   const insight = tradeOrCard.insight?.what || tradeOrCard.learningOutcome?.insight || "N/A";
   const correction = tradeOrCard.insight?.improvement || tradeOrCard.learningOutcome?.improvementSuggestion || "N/A";
   
-  let confidence = tradeOrCard.confidence || tradeOrCard.learningSurface?.confidence;
+  let confidence = tradeOrCard.confidence ?? tradeOrCard.learningSurface?.confidence;
   if (confidence === undefined || confidence === null) {
-      if (tradeOrCard.learningOutcome?.confidence !== undefined) {
-         confidence = tradeOrCard.learningOutcome.confidence;
-      } else {
-         confidence = 50;
-      }
+    confidence = tradeOrCard.learningOutcome?.confidence ?? null;
   }
 
   let tags = [];

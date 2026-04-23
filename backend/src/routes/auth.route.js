@@ -12,7 +12,7 @@ const redisClient = require("../utils/redisClient");
  * This mirrors the pattern already used in trade.route.js.
  */
 const buildRedisStore = (prefix) =>
-  redisClient
+  redisClient && redisClient.supportsRateLimitStore
     ? {
         store: new RedisStore({
           sendCommand: (...args) => redisClient.call(...args),

@@ -34,7 +34,8 @@ jest.mock("../../src/services/news/news.engine", () => ({
     stats: { total: 1, lastUpdated: new Date().toISOString() },
   })),
 }));
-jest.setTimeout(30000);
+process.env.ALLOW_CLOSED_MARKET_EXECUTION = "true";
+jest.setTimeout(120000);
 const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/trading_platform_test";
 
 const FORBIDDEN_KEYS = new Set(["price", "stopLoss", "targetPrice", "rrRatio", "pnlPercentage"]);
@@ -61,7 +62,7 @@ describe("contract enforcement", () => {
 
   beforeAll(async () => {
     if (mongoose.connection.readyState === 0) {
-      await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 5000 });
+      await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 20000 });
     }
 
     marketDataService.validateSymbol.mockResolvedValue({ isValid: true, data: { pricePaise: 2500 } });

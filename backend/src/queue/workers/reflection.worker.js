@@ -7,7 +7,10 @@ const Trade = require("../../models/trade.model");
 const logger = require("../../utils/logger");
 const { runWithTrace } = require("../../context/traceContext");
 
-const reflectionWorker = new Worker(
+let reflectionWorker = null;
+
+if (connection) {
+  reflectionWorker = new Worker(
   "tradeQueue",
   async (job) => {
     const traceId = job.data?.traceId || `bullmq-${job.id}`;
@@ -71,43 +74,44 @@ const reflectionWorker = new Worker(
       backoff: { type: "exponential", delay: 4000 },
     },
   }
-);
+  );
 
-try {
-  require("../../infra/runtimeState").mark("bullmqReflectionWorker", true);
-} catch {
-  /* optional */
-}
-
-reflectionWorker.on("completed", (job) => {
-  logger.info({
-    service: "reflection.worker",
-    step: "BULLMQ_COMPLETED",
-    status: "SUCCESS",
-    traceId: job?.data?.traceId,
-    data: { jobId: job?.id },
-    timestamp: new Date().toISOString(),
-  });
-});
-
-reflectionWorker.on("failed", async (job, err) => {
-  logger.error({
-    service: "reflection.worker",
-    step: "BULLMQ_FAILED",
-    status: "FAILURE",
-    traceId: job?.data?.traceId,
-    data: { jobId: job?.id, message: err?.message },
-    timestamp: new Date().toISOString(),
-  });
-  if (!job || job.name !== "TRADE_CLOSED" || !job.data?.tradeId) return;
-  const max = job.opts?.attempts || 5;
-  if (job.attemptsMade < max) return;
   try {
-    await Trade.findByIdAndUpdate(job.data.tradeId, { $set: { reflectionStatus: "FAILED" } });
-    logger.error({ action: "REFLECTION_JOB_EXHAUSTED", tradeId: job.data.tradeId, attempts: job.attemptsMade });
-  } catch (e) {
-    logger.error({ action: "REFLECTION_FAILED_MARK_ERROR", message: e?.message });
+    require("../../infra/runtimeState").mark("bullmqReflectionWorker", true);
+  } catch {
+    /* optional */
   }
-});
+
+  reflectionWorker.on("completed", (job) => {
+    logger.info({
+      service: "reflection.worker",
+      step: "BULLMQ_COMPLETED",
+      status: "SUCCESS",
+      traceId: job?.data?.traceId,
+      data: { jobId: job?.id },
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  reflectionWorker.on("failed", async (job, err) => {
+    logger.error({
+      service: "reflection.worker",
+      step: "BULLMQ_FAILED",
+      status: "FAILURE",
+      traceId: job?.data?.traceId,
+      data: { jobId: job?.id, message: err?.message },
+      timestamp: new Date().toISOString(),
+    });
+    if (!job || job.name !== "TRADE_CLOSED" || !job.data?.tradeId) return;
+    const max = job.opts?.attempts || 5;
+    if (job.attemptsMade < max) return;
+    try {
+      await Trade.findByIdAndUpdate(job.data.tradeId, { $set: { reflectionStatus: "FAILED" } });
+      logger.error({ action: "REFLECTION_JOB_EXHAUSTED", tradeId: job.data.tradeId, attempts: job.attemptsMade });
+    } catch (e) {
+      logger.error({ action: "REFLECTION_FAILED_MARK_ERROR", message: e?.message });
+    }
+  });
+}
 
 module.exports = reflectionWorker;

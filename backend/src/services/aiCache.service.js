@@ -3,25 +3,10 @@
  * Redis-backed caching + distributed circuit breaker.
  * Circuit state shared across all instances via Redis INCR + TTL.
  */
-const IORedis = require("ioredis");
 const logger = require("../utils/logger");
+const redisClient = require("../utils/redisClient");
 
-const useRedis = process.env.USE_REDIS === "true";
-
-const redis = useRedis
-  ? new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
-      maxRetriesPerRequest: 1,
-      enableOfflineQueue: false,
-      lazyConnect: true,
-      retryStrategy: (times) => Math.min(times * 500, 10000),
-    })
-  : null;
-
-if (redis) {
-  redis.on("error", (err) => {
-    logger.error({ action: "AI_REDIS_ERROR", error: err.message });
-  });
-}
+const redisReady = () => Boolean(redisClient && redisClient.status === "ready");
 
 // ─── DISTRIBUTED CIRCUIT BREAKER (Redis-backed) ───────────────────────────────
 // Key: ai:failures        → INCR counter with auto-expiry reset
@@ -35,9 +20,9 @@ let _inProcFailures = 0;
 let _inProcCircuitOpenUntil = 0;
 
 const isCircuitOpen = async () => {
-  if (!redis) return _inProcCircuitOpenUntil > Date.now();
+  if (!redisReady()) return _inProcCircuitOpenUntil > Date.now();
   try {
-    const open = await redis.get("ai:circuit_open");
+    const open = await redisClient.get("ai:circuit_open");
     return open === "1";
   } catch {
     return false;
@@ -45,7 +30,7 @@ const isCircuitOpen = async () => {
 };
 
 const recordAIFailure = async () => {
-  if (!redis) {
+  if (!redisReady()) {
     _inProcFailures += 1;
     if (_inProcFailures >= FAILURE_THRESHOLD) {
       _inProcCircuitOpenUntil = Date.now() + CIRCUIT_TTL_SECONDS * 1000;
@@ -54,10 +39,10 @@ const recordAIFailure = async () => {
     return;
   }
   try {
-    const count = await redis.incr("ai:failures");
-    await redis.expire("ai:failures", FAILURE_WINDOW_SECONDS);
+    const count = await redisClient.incr("ai:failures");
+    await redisClient.expire("ai:failures", FAILURE_WINDOW_SECONDS);
     if (count >= FAILURE_THRESHOLD) {
-      await redis.set("ai:circuit_open", "1", "EX", CIRCUIT_TTL_SECONDS);
+      await redisClient.set("ai:circuit_open", "1", "EX", CIRCUIT_TTL_SECONDS);
       logger.warn(`AI circuit breaker opened after ${count} failures (${CIRCUIT_TTL_SECONDS}s cooldown)`);
     }
   } catch {
@@ -66,14 +51,14 @@ const recordAIFailure = async () => {
 };
 
 const recordAISuccess = async () => {
-  if (!redis) {
+  if (!redisReady()) {
     _inProcFailures = 0;
     _inProcCircuitOpenUntil = 0;
     return;
   }
   try {
-    await redis.del("ai:failures");
-    await redis.del("ai:circuit_open");
+    await redisClient.del("ai:failures");
+    await redisClient.del("ai:circuit_open");
   } catch {
     // non-critical
   }
@@ -82,10 +67,10 @@ const recordAISuccess = async () => {
 // ─── CACHE GET / SET ──────────────────────────────────────────────────────────
 
 const acquireLock = async (_key) => {
-  if (!redis) return true; // Fail open when Redis not configured
+  if (!redisReady()) return true; // Fail open when Redis not configured
   try {
     const lockKey = `lock:${_key}`;
-    const lock = await redis.set(lockKey, "1", "NX", "EX", 15);
+    const lock = await redisClient.set(lockKey, "1", "NX", "EX", 15);
     return !!lock;
   } catch {
     return true; // Fail open
@@ -93,9 +78,9 @@ const acquireLock = async (_key) => {
 };
 
 const getCachedAI = async (key) => {
-  if (!redis) return null;
+  if (!redisReady()) return null;
   try {
-    const cached = await redis.get(`ai:${key}`);
+    const cached = await redisClient.get(`ai:${key}`);
     return cached ? JSON.parse(cached) : null;
   } catch {
     return null;
@@ -103,15 +88,15 @@ const getCachedAI = async (key) => {
 };
 
 const setCachedAI = async (key, value, ttlSeconds) => {
-  if (!redis) return;
+  if (!redisReady()) return;
   // RULE: Never cache UNAVAILABLE or null responses
   if (!value || value.status === "UNAVAILABLE") return;
   if (ttlSeconds === "permanent") return;
   try {
     if (ttlSeconds) {
-      await redis.set(`ai:${key}`, JSON.stringify(value), "EX", ttlSeconds);
+      await redisClient.set(`ai:${key}`, JSON.stringify(value), "EX", ttlSeconds);
     } else {
-      await redis.set(`ai:${key}`, JSON.stringify(value));
+      await redisClient.set(`ai:${key}`, JSON.stringify(value));
     }
   } catch {
     // non-critical
